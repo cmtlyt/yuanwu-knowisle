@@ -15,7 +15,7 @@
 
 ## 技术栈
 
-Nuxt 4.6.4 · Vue 3.5 · TypeScript 7.0.2 · Nuxt Content 3 · Nuxt UI 4 · Tailwind 4 · Tiptap 3。代码质量用 oxlint + oxfmt + tsgolint，提交门禁用 husky + lint-staged + commitlint。
+Nuxt 4.6.4 · Vue 3.5 · TypeScript 7.0.2 · Nuxt UI 4 · Tailwind 4 · Tiptap 3。代码质量用 oxlint + oxfmt + tsgolint，提交门禁用 husky + lint-staged + commitlint。
 
 ## 运行
 
@@ -37,8 +37,8 @@ PORT=3100 node .output/server/index.mjs   # 生产预览
 /courses/effect-ts/dashboard       学情仪表盘（KPI / 雷达 / 掌握度 / 归因）
 /courses/effect-ts/review          复习中心（遗忘曲线队列 / 错题本）
 /courses/effect-ts/teacher         长期教学准备（版本基线 / 课时质量表）
+/courses/effect-ts/design          教学设计说明书（绑定课程数据的版本基线 / 路径 / 依赖图 / 学情模型）
 /courses/effect-ts/settings        设置与 JSON 导入导出
-/docs/effect-course-design         课程设计说明书（Nuxt Content）
 ```
 
 ## 目录结构
@@ -57,16 +57,15 @@ PORT=3100 node .output/server/index.mjs   # 生产预览
 | `app/layouts/default.vue` | 顶栏 / 底部标签栏 / 课程目录抽屉 / 主题 |
 | `app/pages/*` | 上述路由的页面 |
 | `app/assets/css/main.css` | 浅深双主题 + 桌面/平板/手机三档响应式 |
-| `content/docs/*.md` | 课程设计说明书等长文档（Nuxt Content） |
 | `docs/NNNNN-*/` | 按任务编号组织的历史记录，入口 `docs/README.md` |
 | `scripts/verify-course.mjs` | 数据一致性 + 学情引擎冒烟 |
 | `scripts/cdp.py` / `scripts/smoke.py` | 真实视口 CDP 客户端 / 路由与视口冒烟 |
-| `.workbuddy/skills/` | 随仓库共享的 `course-builder` 与 `pitfall-resolver` 两个项目级 skill |
+| `.workbuddy/skills/` | 随仓库共享的项目级 skill：自研 `course-builder` / `pitfall-resolver` 与 5 个 Cloudflare 官方部署 skill |
 | `.*rc.json`、`.husky/` | lint / 格式 / 提交规范 / Git hooks 配置 |
 
 ## 架构
 
-- **内容用类型化 TS 数据，不用 Markdown**：课时含讲解块、代码块、提示框、术语、误区、题目与演练标识，结构化数据才能联动测验、概念图谱与学情归因；长篇说明书走 `content/docs/` 由 Nuxt Content 渲染。
+- **内容用类型化 TS 数据，不用 Markdown**：课时含讲解块、代码块、提示框、术语、误区、题目与演练标识，结构化数据才能联动测验、概念图谱与学情归因；项目不依赖内容型 CMS。
 - **演练内核由 Vue 托管**：35KB 的 DOM 演练逻辑机械迁移为 ESM 模块，`course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器，交互能力完整保留。
 - **学情按课程隔离**：`createAnalytics(course, storageKey)` 用闭包捕获课程与 localStorage key，多课程互不串数据；`useLearning` 用 `useState` 保证 SSR 首屏一致，真实档案在 `onMounted` 载入，避免 hydration mismatch。
 - **内容 / 引擎 / 视图三层解耦**：引擎不引用 DOM，内容不 import 视图，视图不硬编码课时列表。
@@ -82,7 +81,6 @@ PORT=3100 node .output/server/index.mjs   # 生产预览
 | `README.md` | 项目介绍（本文件） |
 | `AGENTS.md` | AI agent 与维护者的协作约定：命令、门禁、提交规范、命名与工具链约束 |
 | `docs/README.md` | 任务记录索引：一次任务一个编号目录，含各任务总览与迁移映射 |
-| `content/docs/effect-course-design.md` | 课程设计说明书，渲染于 `/docs/effect-course-design` |
 
 ## 使用须知
 

@@ -73,7 +73,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 
 ## 5. 文件命名
 
-新增文件统一 **kebab-case**（全小写 + 连字符），如 `use-learning.ts`、`quiz-card.vue`、`effect-course-design.md`。
+新增文件统一 **kebab-case**（全小写 + 连字符），如 `use-learning.ts`、`quiz-card.vue`、`check-course.mjs`。
 
 例外（改动会破坏识别或无法 import）：
 
@@ -101,7 +101,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 演练内核由 `course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器；改动 widget 后跑 `check-course.mjs` + `pnpm verify`。
 - 学情数据只存 localStorage 且可导出；按课程隔离 storage key，导入时校验版本字段并拒绝非法备份。
 - 移动优先：≤780px 底部标签栏 + 抽屉导航，图示 / 代码块 / 表格各自独立横滑，触控目标 ≥40px，输入框 16px，处理刘海屏安全区。
-- 长篇说明书走 `content/docs/` 由 Nuxt Content 渲染；不要把结构化课时改写成 Markdown 内容源。
+- 课程内容全部由类型化 TS 数据驱动，项目不使用 Nuxt Content；不要把结构化课时改写成 Markdown 内容源。
 
 ## 8. 项目级 Skill 与仓库范围
 
@@ -109,7 +109,10 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 |---|---|
 | `.workbuddy/skills/course-builder/` | 课程构建 8 阶段流程、数据契约、通用自检脚本与数据骨架 |
 | `.workbuddy/skills/pitfall-resolver/` | 按症状检索的问题排查与解决方案库（6 个主题参考文件），采用「先查库 → 再修 → 后回写」闭环 |
+| `.workbuddy/skills/` 下 5 个 Cloudflare 官方目录 | `frameworks-on-cloudflare`（含 Nuxt → Workers 适配）、`wrangler`、`cf-cli`、`cloudflare-app-bootstrap`、`workers-best-practices` |
 
+- 这 5 个是 Cloudflare 官方仓库 `cloudflare/skills` 的快照（commit `cbf893b`，Apache-2.0；许可证全文见 `.workbuddy/skills/cloudflare-license.md`），全部只有 Markdown，不进入 lint-staged 的代码扩展名 glob。
+- 部署相关问题仍先走 `pitfall-resolver` 闭环，可同时参考上述官方 skill；它们是上游快照、不会自动更新，升级时重新 clone 覆盖同名目录并在新任务目录记录来源 commit。
 - `course-builder` 任何阶段遇到问题同样先加载 `pitfall-resolver`；它不再自带踩坑清单。
 - **不要重新引入** `archive/` 归档目录、`.gitignore` 里的 `dist` 单文件例外，也不要提交 `.workbuddy/memory/`。工作区内容未整体并入仓库；当前课程代码只以 `app/` 与 `content/` 为准。
 - 仓库中不存在 `dist/course-builder.zip`；需要分发 skill 时从 `.workbuddy/skills/` 现场打包。
@@ -126,7 +129,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 只读探查用 `GIT_INDEX_FILE` 临时索引、系统临时目录里的临时配置，不污染真实索引与仓库文件。
 - 未经明确指示不要执行 `git add` / `git commit`，也不要改动真实索引；提交前确认 `pre-commit` 与 `commit-msg` 两个 hook 均通过。
 - 每完成一个模块立即验，不堆积未验证代码；失败时先读完整错误信息定位根因，一次性修复后重跑**全部**相关回归，不逐个补丁试；同一问题连续三次未解决，停下来说明已尝试方案并请求协助。
-- 断言不得把「元素缺失」「没抛异常」当成通过；收尾清理临时脚本、探针文件、截图与临时服务。
+- 断言不得把「元素缺失」「没抛异常」当成通过；**回归链用 `set -o pipefail`**（`cmd | tail` 会吞掉失败退出码，制造假「全绿」）；收尾清理临时脚本、探针文件、截图与临时服务。
 - 记录回归结果要写清命令、退出码与关键数字，不要只写「通过」；一次性的搜索结果、临时路径与个人上下文写进 `.workbuddy/memory/`，不要写进 skill 知识库。
 
 ## 11. 任务记录组织

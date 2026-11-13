@@ -8,7 +8,7 @@
 - 每个目录至少一份 `overview.md`（目标 / 变更 / 验证 / 注意事项）；涉及迁入、映射或工具链切换时另写 `migration.md`。
 - 记录按任务发生时的状态写。后续结论变化时在**新目录**里说明，并在旧目录标注「以 NNNNN 为准」，不改写历史结论。
 - 拆分前的累积文件（根目录 `overview.md`、`docs/migration.md`）已废弃，内容按任务迁入下列目录；引用请改用本索引或具体目录。
-- 站点内容 `content/docs/effect-course-design.md` 是 Nuxt Content 渲染的课程设计说明书，不属于本索引。
+- 站点课程内容全部由 `app/data/*.ts` 驱动；仓库已移除 Nuxt Content 与 `content/` 目录，根 `docs/` 仅用于任务记录。
 
 ## 目录
 
@@ -30,3 +30,5 @@
 | `00014-readme-agents-split` | README 收敛为项目介绍，新增 AGENTS.md | 2026-11-13 | [总览](00014-readme-agents-split/overview.md) · [文档分工](00014-readme-agents-split/migration.md) |
 | `00015-scripts-and-docs-reorg` | 清理无效 npm script + 任务记录目录化 | 2026-11-13 | [总览](00015-scripts-and-docs-reorg/overview.md) |
 | `00016-git-commit-split` | 按任务主题把最终工作区拆分为多个提交 | 2026-11-13 | [总览](00016-git-commit-split/overview.md) |
+| `00017-cloudflare-skills-and-module-cleanup` | 移除未使用的 Nuxt Content / image，安装 Cloudflare 官方部署 skill | 2026-11-13 | [总览](00017-cloudflare-skills-and-module-cleanup/overview.md) |
+| `00018-course-design-as-data` | 教学设计说明书转成绑定课程的数据并渲染，skill 补这一步 | 2026-11-13 | [总览](00018-course-design-as-data/overview.md) |
