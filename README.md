@@ -21,12 +21,17 @@ Nuxt 4.6.4 · Vue 3.5 · TypeScript 7.0.2 · Nuxt UI 4 · Tailwind 4 · Tiptap 3
 
 ```bash
 pnpm install
-pnpm dev                 # http://localhost:3000
-pnpm build               # 生产构建
-PORT=3100 node .output/server/index.mjs   # 生产预览
+pnpm dev                 # http://localhost:3000（Nuxt 本地开发）
+pnpm build               # 生产构建（cloudflare_module preset → .output）
+pnpm preview             # 本地用 Workers 运行时预览（wrangler dev）
+pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrangler login）
 ```
 
 需要 Node 22+ 与 pnpm 11。**质量检查、提交规范、命名约定与协作规则见 [`AGENTS.md`](AGENTS.md)**。
+
+## 部署到 Cloudflare Workers
+
+本项目以 **Workers Static Assets** 方式部署（非 Pages）：`nuxt.config.ts` 设 `nitro.preset: 'cloudflare_module'` + `cloudflare: { deployConfig: true, nodeCompat: true }`；`wrangler.jsonc` 仅声明 `name` / `compatibility_date` / `observability`，`main` 与 `assets` 由 Nitro 构建时生成。学情数据纯前端 localStorage，无需服务端存储。部署前本地验证：`pnpm build && pnpm preview`。
 
 ## 课程路由
 

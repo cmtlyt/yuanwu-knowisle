@@ -12,9 +12,10 @@
 
 ```bash
 pnpm install                 # postinstall: nuxt prepare；prepare: husky
-pnpm dev                     # http://localhost:3000
-pnpm build                   # Nuxt 生产构建
-PORT=3100 node .output/server/index.mjs   # 生产预览
+pnpm dev                     # http://localhost:3000（Nuxt 本地开发）
+pnpm build                   # 生产构建（cloudflare_module preset → .output）
+pnpm preview                 # 本地用 Workers 运行时预览（wrangler dev）
+pnpm deploy                  # 部署到 Cloudflare Workers（需先 pnpm exec wrangler login）
 
 pnpm fmt:check               # oxfmt 只检查格式
 pnpm fmt                     # oxfmt 写回
@@ -22,7 +23,8 @@ pnpm lint                    # oxlint 快速规则
 pnpm lint:fix                # 自动修复
 pnpm typecheck               # oxlint --type-aware --type-check
 pnpm verify                  # 内容一致性 + 学情引擎全轨迹
-PORT=3199 node .output/server/index.mjs &
+pnpm build                   # 先构建产出 .output
+pnpm exec wrangler --cwd .output dev --port 3199 &   # 本地 Worker 预览（.output 已由 build 产出）
 python scripts/smoke.py --base http://127.0.0.1:3199
 ```
 
@@ -33,7 +35,7 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
   app/data/effect-course.ts app/lib/widgets.ts
 ```
 
-- **`generate` / `preview` / `smoke` 三个 npm script 已移除**：本项目不做静态生成，生产预览用 `PORT=3100 node .output/server/index.mjs`；冒烟统一直接调用 `python scripts/smoke.py --base ...`（pnpm 11 会把 `--` 原样透传给 Python，且 smoke.py 默认 base 是 3100，与实际 3199 临时服务不符）。脚本文件 `scripts/smoke.py` 保留不变。
+- `generate` / `smoke` 两个 npm script 已移除；新增 `preview` / `deploy` / `cf-typegen`（Cloudflare 部署）。生产预览与冒烟改用 Workers 运行时：先 `pnpm build` 产出 `.output`，再 `pnpm exec wrangler --cwd .output dev --port 3199`，**不再用 `node .output/server/index.mjs`**（cloudflare_module 产物是 Worker 入口，非 Node 服务）。冒烟统一直接调用 `python scripts/smoke.py --base ...`（pnpm 11 会把 `--` 原样透传给 Python，且 smoke.py 默认 base 是 3100，与实际 3199 临时服务不符）。脚本文件 `scripts/smoke.py` 保留不变。
 - 冒烟服务用 3199 等独立端口，跑完立即关闭；不要重启用户正在使用的 3100 预览服务。
 
 ## 3. 质量门禁与覆盖范围
@@ -89,6 +91,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - `oxlint@1.93.0`、`oxfmt@0.78.0`、`oxlint-tsgolint@7.0.2007` 在 `package.json` **精确锁定**：tsgolint 版本与 TS 7 小版本绑定（如 `7.0.2007` 对应 7.0.2），升级 TS 时须同步更换。husky / commitlint / lint-staged 用 `^` 范围，实际版本由 `pnpm-lock.yaml` 锁定，`--frozen-lockfile` 仍可复现。
 - 不要重新引入 `eslint.config.mjs`、`@nuxt/eslint` 依赖或 `nuxt.config.ts` 里的模块注册。
 - `pnpm-workspace.yaml` 中 7 条 `minimumReleaseAgeExclude` 由 pnpm 11 为放行新发布的 tsgolint 二进制包写入，**保留**。
+- `allowBuilds.workerd: true` 由安装 `wrangler` 引入（非交互安装可能写入占位串 `set this to true or false`，须改回 `true`），否则 `wrangler dev` / `wrangler deploy` 依赖的 workerd 二进制无法构建。
 - `pnpm peers check` 的两条 unmet peer（`unctx` 期望 `oxc-parser>=0.140`、`unplugin^3.3.0`）来自既有 Nuxt 依赖，不阻塞构建。
 - Nuxt 构建撞上残留锁且记录的 PID 已不存在时，用 `NUXT_IGNORE_LOCK=1 pnpm build` 绕过。
 
