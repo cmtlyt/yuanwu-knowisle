@@ -8,7 +8,15 @@
   "env": {
     "builtin": true
   },
-  "ignorePatterns": [".nuxt/**", ".output/**", ".data/**", "dist/**", "node_modules/**", "archive/**"],
+  "ignorePatterns": [
+    ".nuxt/**",
+    ".output/**",
+    ".data/**",
+    ".vscode/**",
+    "dist/**",
+    "node_modules/**",
+    "archive/**"
+  ],
   "rules": {
     "eslint/no-unused-vars": "warn",
     "typescript/no-explicit-any": "off",

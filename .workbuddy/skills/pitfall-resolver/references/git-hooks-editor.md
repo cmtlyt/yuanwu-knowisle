@@ -7,6 +7,7 @@
 | `pre-commit` 失败，oxfmt 报 `Expected at least one target file. All matched files may have been excluded by ignore rules.`，退出 2 | lint-staged 按扩展名把**已暂存**文件传给工具，但工具的 `ignorePatterns` 又把这些路径排除了；工具拿到空目标集就报错 | **让工具侧不再忽略任何可生成、可追踪的目录**：从 `.oxlintrc.json` / `.oxfmtrc.json` 的 `ignorePatterns` 删掉 `.workbuddy/**`、`content/**`、`public/**` 等；只保留 `.nuxt/`、`.output/`、`.data/`、`dist/`、`node_modules/` 这类**不可追踪**的生成/产物目录。然后把这些目录下的代码文件格式化一次，让 `fmt:check` 归零 |
 | `pnpm lint` 对某目录报 `No files found to lint`（退出 1） | 该目录整体在 `ignorePatterns` 里 | 若目录可追踪且含代码，移除忽略并纳入门禁；不要靠改 lint-staged 配置绕过 |
 | 想让 lint-staged 排除某些文件 | 官方文档：忽略应配置在**任务工具本身**，而不是 lint-staged | 实在无法改工具时，用 JS 函数式配置 + `picomatch.isMatch(file, '!pattern')` 过滤；JSON 配置里可用 negation pattern（如 `!(*.ts)`）解决 glob 重叠导致的竞态 |
+| 给 `.lintstagedrc.json` 加了顶级 `"ignores": [".vscode/**"]` 想排除某目录 | lint-staged v17 的 object 配置**没有 `ignores` 这个顶级键**——加了会被当作一个名为 `ignores` 的 glob 任务（值为数组、无 task），schema 校验报错或语义错误，反而阻断提交。且本项目的 `*.{json,jsonc}` 是**单层 `*`**，不匹配嵌套路径 `.vscode/settings.json`，该文件本就**不会被**交给 oxfmt | 不要在 lint-staged 里加 `ignores`。真正的门禁修复放在**工具侧** `ignorePatterns`（`fmt:check`/`lint` 是全仓库扫描）：在 `.oxfmtrc.json` 与 `.oxlintrc.json` 的 `ignorePatterns` 各加 `".vscode/**"`，再 `pnpm fmt` 写回一次（改 rc 自身会触发 oxfmt 重排版，避免 `fmt:check` 报 `.oxlintrc.json` 格式问题）。lint-staged 无需改动 |
 
 验证方法（不触碰真实索引）：
 

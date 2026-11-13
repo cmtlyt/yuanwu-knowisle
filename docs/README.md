@@ -35,3 +35,4 @@
 | `00019-cloudflare-workers-deploy-config` | 配置 Nuxt 部署到 Cloudflare Workers（本地配置与验证，未上线） | 2026-11-13 | [总览](00019-cloudflare-workers-deploy-config/overview.md) |
 | `00020-github-actions-ci-cd` | 用 GitHub Actions 接管质量门禁与 Cloudflare 部署，替代本地手动命令 | 2026-11-13 | [总览](00020-github-actions-ci-cd/overview.md) |
 | `00021-cloudflare-custom-domain` | 自定义域名 yuanwu-knowisle.cmtlyt.top（根 wrangler.jsonc 加 routes + workers_dev=false） | 2026-11-13 | [总览](00021-cloudflare-custom-domain/overview.md) |
+| `00022-ignore-vscode-in-gates` | lint/格式化门禁忽略 `.vscode`，并把 `.vscode` 纳入版本库 | 2026-11-13 | [总览](00022-ignore-vscode-in-gates/overview.md) |

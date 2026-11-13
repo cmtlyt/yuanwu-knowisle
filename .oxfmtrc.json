@@ -11,6 +11,7 @@
     ".nuxt/**",
     ".output/**",
     ".data/**",
+    ".vscode/**",
     "dist/**",
     "node_modules/**",
     "pnpm-lock.yaml",
