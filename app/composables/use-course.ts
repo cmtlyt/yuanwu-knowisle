@@ -1,5 +1,12 @@
+import type { ComputedRef } from 'vue'
 import { COURSES, getCourse, courseBase } from '~/data/courses'
 import type { CourseEntry, EffectCourseData, Lesson } from '~/types/course'
+
+/** useRequiredCourse 收窄后的返回类型：course / data 已 404 拦截，必然非 undefined。 */
+export type RequiredCourseContext = ReturnType<typeof useCourse> & {
+  course: ComputedRef<CourseEntry>
+  data: ComputedRef<EffectCourseData>
+}
 
 /** 当前路由所属课程；首页返回 undefined。 */
 export function useCourse() {
@@ -34,11 +41,18 @@ export function useCourse() {
   }
 }
 
-/** 课程作用域页面使用；未注册的 slug 直接 404，避免 undefined 扩散。 */
-export function useRequiredCourse() {
+/** 课程作用域页面使用；未注册的 slug 直接 404，避免 undefined 扩散。
+ *  返回类型收窄：course / data 经 404 拦截后必然非 undefined。 */
+export function useRequiredCourse(): RequiredCourseContext {
   const ctx = useCourse()
-  if (!ctx.course.value || !ctx.data.value) {
+  if (!isCourseReady(ctx)) {
     throw createError({ statusCode: 404, statusMessage: '这门课程不存在' })
   }
+  // 守卫已通过：ctx.course / ctx.data 收窄为非 undefined，直接返回，无需类型断言。
   return ctx
+}
+
+/** 判断课程上下文已就绪（course 与 data 均非 undefined），供 404 拦截与类型收窄使用。 */
+function isCourseReady(ctx: ReturnType<typeof useCourse>): ctx is RequiredCourseContext {
+  return !!ctx.course.value && !!ctx.data.value
 }
