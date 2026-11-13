@@ -56,12 +56,13 @@ jobs:
   deploy:
     name: Deploy to Cloudflare Workers
     needs: test
-    # 仅 main 分支 + 非 PR + 已配置 Cloudflare Token 时才部署。
-    # 未配置密钥时本 job 自动跳过，不会误上线（对应本地「先别部署」的约束）。
+    # 仅 main 分支 + 非 PR 才进入本 job。
+    # 注意：job 级 if 不能引用 secrets 上下文（GitHub 解析期会报
+    # "Unrecognized named-value: 'secrets'" 并导致 0 job 生成），
+    # 因此「未配密钥不部署」的判断放到 deploy step 的 step 级 if。
     if: >-
       github.ref == 'refs/heads/main' &&
-      github.event_name != 'pull_request' &&
-      secrets.CLOUDFLARE_API_TOKEN != ''
+      github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -82,6 +83,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Deploy (build + wrangler deploy)
+        # 未配置 Cloudflare Token 时本 step 跳过（step 级 if 允许引用 secrets，
+        # 而 job 级 if 不允许，故把判空放这里）；不会误上线。
+        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
         run: pnpm deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

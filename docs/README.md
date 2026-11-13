@@ -36,3 +36,4 @@
 | `00020-github-actions-ci-cd` | 用 GitHub Actions 接管质量门禁与 Cloudflare 部署，替代本地手动命令 | 2026-11-13 | [总览](00020-github-actions-ci-cd/overview.md) |
 | `00021-cloudflare-custom-domain` | 自定义域名 yuanwu-knowisle.cmtlyt.top（根 wrangler.jsonc 加 routes + workers_dev=false） | 2026-11-13 | [总览](00021-cloudflare-custom-domain/overview.md) |
 | `00022-ignore-vscode-in-gates` | lint/格式化门禁忽略 `.vscode`，并把 `.vscode` 纳入版本库 | 2026-11-13 | [总览](00022-ignore-vscode-in-gates/overview.md) |
+| `00023-github-actions-secrets-if` | 修复 CI/CD「job 级 if 引用 secrets」导致 workflow 解析失败、0 job | 2026-11-13 | [总览](00023-github-actions-secrets-if/overview.md) |

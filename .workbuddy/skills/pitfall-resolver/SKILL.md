@@ -1,6 +1,6 @@
 ---
 name: pitfall-resolver
-description: 遇到任何问题都必须先加载本 skill 查找解决方案，解决并回归通过后必须更新或新增解决方案条目。通用问题排查与解决方案库（症状 → 根因 → 处理），采用「先查库 → 再修 → 后回写」闭环：报错、构建失败、lint 或类型检查不通过、格式化冲突、依赖与 peer 冲突、Git hook 阻断、提交信息被拒、SSR hydration 警告、移动端横向溢出、无头浏览器断言假阳性、工具报「无目标文件」、命令或参数失效、结果不符合预期、方案不确定、被用户纠正、卡住或反复试错、验证不通过等，不限于已收录的症状。加载后按症状速查定位参考文件再动手；回写规则是命中已有条目则更新（新解法、版本变化、失效修正），未命中则新增条目，查库未帮上忙也要补记实际有效解法。关键词：任何问题、报错、失败、异常、不生效、被阻断、冲突、警告、卡住、不符合预期、不确定、已解决、回写、更新方案、新增方案、TS 7、typescript-eslint、oxlint、oxfmt、tsgolint、pnpm、husky、lint-staged、commitlint、lint-staged ignores 顶级键、门禁忽略 .vscode、body-max-line-length、提交正文超长、Format issues found、静态资源校验失败、删除文件后验证失败、管道吞掉退出码、Nuxt、CDP、VSCode、troubleshooting、pitfall、known issue、how to fix、Cloudflare、wrangler、Workers、compatibilityDate、workerd、原生模块、better-sqlite3。This skill must be loaded first whenever the agent hits any problem, error, failure, unexpected result, blocked step, or uncertainty, before attempting a fix; after the fix is verified with regressions, update the existing solution or add a new one.
+description: 遇到任何问题都必须先加载本 skill 查找解决方案，解决并回归通过后必须更新或新增解决方案条目。通用问题排查与解决方案库（症状 → 根因 → 处理），采用「先查库 → 再修 → 后回写」闭环：报错、构建失败、lint 或类型检查不通过、格式化冲突、依赖与 peer 冲突、Git hook 阻断、提交信息被拒、SSR hydration 警告、移动端横向溢出、无头浏览器断言假阳性、工具报「无目标文件」、命令或参数失效、结果不符合预期、方案不确定、被用户纠正、卡住或反复试错、验证不通过等，不限于已收录的症状。加载后按症状速查定位参考文件再动手；回写规则是命中已有条目则更新（新解法、版本变化、失效修正），未命中则新增条目，查库未帮上忙也要补记实际有效解法。关键词：任何问题、报错、失败、异常、不生效、被阻断、冲突、警告、卡住、不符合预期、不确定、已解决、回写、更新方案、新增方案、TS 7、typescript-eslint、oxlint、oxfmt、tsgolint、pnpm、husky、lint-staged、commitlint、lint-staged ignores 顶级键、门禁忽略 .vscode、body-max-line-length、提交正文超长、Format issues found、静态资源校验失败、删除文件后验证失败、管道吞掉退出码、Nuxt、CDP、VSCode、troubleshooting、pitfall、known issue、how to fix、Cloudflare、wrangler、Workers、compatibilityDate、workerd、原生模块、better-sqlite3、GitHub Actions、job 级 if 引用 secrets、0 个 job、workflow file issue、gh workflow run。This skill must be loaded first whenever the agent hits any problem, error, failure, unexpected result, blocked step, or uncertainty, before attempting a fix; after the fix is verified with regressions, update the existing solution or add a new one.
 agent_created: true
 ---
 
@@ -45,6 +45,7 @@ agent_created: true
 | `Format issues found in above 1 files`、`fmt:check` 单文件格式差异、`pnpm verify` 静态资源 `✗`、删除文件后校验失败、管道吞掉退出码 / 假「全绿」 | `references/toolchain.md`、`references/verification.md` |
 | 何时验、验什么、临时探针与临时服务怎么清理、门禁顺序 | `references/verification.md` |
 | wrangler 部署、`workerd` 占位值、`compatibilityDate` 阈值、`wrangler.jsonc` 不写 main/assets、原生模块不能进 Worker、`wrangler dev` 首启 crash #1 | `references/cloudflare-deploy.md` |
+| GitHub Actions 运行全部 `failure` 且 `0 个 job` / 同秒完成 / `run_completed_at=null`、`gh run view` 提示 "workflow file issue"、job 级 `if` 引用 `secrets` 报 `Unrecognized named-value: 'secrets'`、`gh workflow run` 解析失败 | `references/github-actions.md` |
 | **任何未列出的问题 / 症状不明 / 全新问题** | 先按主题挑最接近的文件扫一遍；解决后按下节规则**新增**条目并补速查表关键词 |
 
 ## 解决后回写（强制）

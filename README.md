@@ -40,7 +40,7 @@ pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrang
 质量门禁与部署已迁移到 GitHub Actions（[`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml)），**替代本地手动执行**：
 
 - **门禁**：push 或 PR 到 `main` 时自动运行 `fmt:check → lint → typecheck → verify → build`，任一失败即阻断合并 / 上线。
-- **部署**：push 到 `main` 且仓库已配置 Cloudflare 密钥后，自动执行 `pnpm deploy`（`nuxt build && wrangler deploy`）。未配置密钥时部署 job 自动跳过，**不会误上线**。
+- **部署**：push 到 `main` 且仓库已配置 Cloudflare 密钥后，自动执行 `pnpm deploy`（`nuxt build && wrangler deploy`）。未配置密钥时该部署 **step** 自动跳过（`if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}`），**不会误上线**。注意：job 级 `if` 不能引用 `secrets` 上下文（会导致 workflow 解析失败、0 job），故判空必须放在 step 级。
 
 上线前在仓库 **Settings → Secrets and variables → Actions** 添加：
 
