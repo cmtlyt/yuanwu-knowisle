@@ -42,3 +42,4 @@
 | `00024-rxjs-course-multicourse` | 新增 RxJS 7.8.2 深度课，落地多课程架构（类型契约 / 校验脚本 / 共享视图层去硬编码） | 2026-11-13 | [总览](00024-rxjs-course-multicourse/overview.md) |
 | `00025-required-course-type-narrowing` | `useRequiredCourse` 类型收窄（composable 层类型守卫，修复多课程页面 `CourseEntry \| undefined` 报错） | 2026-11-13 | [总览](00025-required-course-type-narrowing/overview.md) |
 | `00026-course-restructure-dynamic-quantity` | 动态课时密度 + 面向完整性驱动题目数（Effect 24→26 / RxJS 24→26 重构、3 道同面向题改写、skill 同步、verify 正确率自洽化、pitfall-resolver 回写） | 2026-11-13 | [总览](00026-course-restructure-dynamic-quantity/overview.md) |
+| `00027-course-dir-layout` | 课程数据层目录化（巨型单文件 → 同名目录 + index.ts + 章节拆分；共享 course-builders.ts；目录内带 `.ts` 导入；verify/check 脚本改目录发现；course-builder skill 落地目录模板） | 2026-11-13 | [总览](00027-course-dir-layout/overview.md) |

@@ -26,13 +26,13 @@ python scripts/smoke.py --base http://127.0.0.1:3199
 
 提交前 hooks 只跑 `oxfmt` + `oxlint`（暂存文件）与 commitlint；`typecheck` / `verify` / `build` 不在 hook 内，由手动或 CI 承担。
 
-数据层单独验（逐门跑；`pnpm verify` 已动态扫描 `app/data/*-course.ts` 全量）：
+数据层单独验（逐门跑；`pnpm verify` 已动态扫描 `app/data/*-course/` 目录全量；课程数据层已目录化，传**目录**即可，脚本自动补 `index.ts`）：
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/effect-course.ts app/lib/widgets.ts
+  app/data/effect-course app/lib/widgets.ts
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/rxjs-course.ts app/lib/widgets.ts
+  app/data/rxjs-course app/lib/widgets.ts
 ```
 
 ## 全量验证清单（课程 / 站点级交付）

@@ -43,6 +43,7 @@ agent_created: true
 | 新增第二门课后首页 / hero / 侧栏仍显示第一门课专属文案、`pnpm verify` 只查 Effect 一门、`node --experimental-strip-types` 直跑报 `ERR_MODULE_NOT_FOUND` 找不到 `./effect-course`（省略扩展名相对导入） | `references/course-content.md` |
 | `useRequiredCourse` 返回 `course.value` 类型仍是 `ComputedRef<CourseEntry \| undefined>`、页面 `stateOf(course.value)` 报「undefined 不能赋给 CourseEntry」、模板里 `course!` 非空断言 | `references/course-content.md` |
 | 批量脚本给某课「补第 N 题」后 `check-course` 报「题目概念引用有效 ✗ / 选项与答案索引 ✗」、诊断见该题 `text`/`options` 变 undefined（顶格漏逗号致 `q('题干'[选项],…)` 字符串下标坍缩）、高难度课「单概念堆 3 题」、课时数被固定 6×4、`verify` 硬编码「正确率 75%」在题数变化后失败、全局改课时 id 改漏 / 改出环（单遍映射重编号） | `references/course-content.md` |
+| 课程数据层改成目录（`effect-course/index.ts` + 章节文件）后 Node 直跑 import 目录 / `import './stages'` 报 `ERR_MODULE_NOT_FOUND`、`verify`/`check-course` 扫不到课程、巨型单文件拆不干净 | `references/course-content.md`（目录化布局 + Node 目录 index 不解析 + 显式 `.ts` 导入规范） |
 | 重建 `.output` 时 `pnpm build` 报 `[safe-delete] 操作失败 / Some operations were aborted`（后台预览服务占着文件句柄）、wrangler dev 预览起不来 | `references/nuxt-build.md` |
 | `pre-commit` 被阻断、`Expected at least one target file`、工具 ignore 与 lint-staged 冲突、无初始提交跳过 stash、commitlint 拒绝合法消息、`body-max-line-length`、`body's lines must not be longer than 100 characters`、提交正文超长、Windows hook 不执行、lint-staged 顶级 `ignores` 键（v17 不支持）、门禁忽略 `.vscode` 目录 | `references/git-hooks-editor.md` |
 | 大小写重命名不生效、Python 模块名含连字符、VSCode 文件嵌套规则不生效 / workspace 覆盖用户级 | `references/git-hooks-editor.md` |

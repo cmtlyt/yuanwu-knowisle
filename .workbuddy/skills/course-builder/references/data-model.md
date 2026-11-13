@@ -5,16 +5,55 @@
 ## 分层原则
 
 ```
-course-data.ts  ── 唯一内容源，不 import 任何视图
-      │
-      ├── analytics.ts  纯计算，零 DOM；createAnalytics(course, storageKey) 工厂
-      ├── widgets.ts    演练注册表，(host, ctx) => cleanup
-      └── types/*.ts    共享类型契约
-              │
-        pages / components / composables  ← 只消费，不硬编码课时列表
+<topic>-course/            一门课一个目录，唯一内容源，不 import 任何视图
+├── index.ts               唯一对外导出面：export const <TOPIC>_COURSE
+├── stages.ts / concepts.ts / meta.ts / design.ts
+├── lessons/
+│   ├── index.ts           聚合 LESSONS
+│   └── lNN.ts            一课时一文件
+        │
+        ├── course-builders.ts   跨课程共享构造器 prose/code/call/list/q/L（不与单课耦合）
+        ├── analytics.ts        纯计算，零 DOM；createAnalytics(course, storageKey) 工厂
+        ├── widgets.ts          演练注册表，(host, ctx) => cleanup
+        └── types/*.ts          共享类型契约
+                │
+          pages / components / composables  ← 只消费，不硬编码课时列表
 ```
 
-新增课时 = 往 `LESSONS` 追加一项并在 `CONCEPTS` 登记；地图、侧栏、测验、复习队列、诊断、教师报表全部自动接入。
+新增课时 = 新建 `<topic>-course/lessons/lNN.ts` 并在 `lessons/index.ts` 与 `concepts.ts` 登记；地图、侧栏、测验、复习队列、诊断、教师报表全部自动接入。
+
+## 文件组织（课程数据层目录化布局，标准实现）
+
+一门课 = 一个同名目录，巨型单文件拆成章节文件；`index.ts` 是唯一对外导出面。
+
+```
+app/data/
+├── courses.ts            # 注册表：import { TOPIC_COURSE } from './<topic>-course'（省略扩展名，不变）
+├── course-builders.ts    # 共享构造器 prose/code/call/list/q/L（跨课程复用，不与单课耦合）
+└── <topic>-course/
+    ├── index.ts          # export const TOPIC_COURSE = { STAGES, CONCEPTS, LESSONS, META, DESIGN }
+    ├── stages.ts         # export const STAGES: Stage[]
+    ├── concepts.ts       # export const CONCEPTS: Concept[]
+    ├── meta.ts           # export const META: CourseMeta
+    ├── design.ts         # export const DESIGN: CourseDesign
+    └── lessons/
+        ├── index.ts      # export const LESSONS: Lesson[] = [L01, …]
+        └── lNN.ts        # 一课时一文件：export const LNN = L('LNN', …)
+```
+
+**导入规范（关键——保证 Nuxt 与 Node 校验脚本两侧都能加载）：**
+
+| 导入位置 | 写法 | 原因 |
+|---|---|---|
+| 目录内兄弟**值**导入（`index.ts`→`stages.ts`、`lessons/index.ts`→`lNN.ts`、`lNN.ts`→`../../course-builders.ts`） | **显式 `.ts`**：`import { STAGES } from './stages.ts'` | Node `--experimental-strip-types` 要求显式扩展名；Nuxt `allowImportingTsExtensions` 放行 |
+| 类型导入 | `import type { Lesson } from '~/types/course'`（type-only） | 运行时擦除，Node 不解析；两侧安全 |
+| 外部消费方 `courses.ts` | `import { TOPIC_COURSE } from './<topic>-course'`（**省略扩展名，不变**） | 仅 Nuxt/Vite 浏览器侧用，自动解析到 `index.ts`；Node 侧不走这条路 |
+| 校验脚本入口 | `import('…/<topic>-course/index.ts')`（**显式 `index.ts`**） | Node 侧显式路径 |
+
+- 课时文件命名 `lNN.ts`（小写，对应课时 id `LNN`），符合 kebab-case。
+- 巨型单文件已难维护（近 2000 行）；**新增课程直接按目录布局生成**，不要再生成巨型单文件。
+- 校验脚本 `check-course.mjs` 支持传**目录**（自动补 `index.ts`）；`verify-course.mjs` 按 `*-course/` 目录动态发现课程。
+- **仓库级共享 vs 课程级**：`types`（`~/types/course`）与 `course-builders.ts`（构造器）是**仓库级、每个仓库只存一份**，所有课程共用；**新建课程只建课程级文件**（`index.ts` + 各章节 + `lessons/`），不要往课程目录里再拷 `types.ts` / `builders.ts`（各课各带一份会分叉、改签名要改 N 处）。skeleton 里自包含的 `types.ts` / `builders.ts` 只是**落地种子**：目标仓库尚无共享层时才把它们落成 `~/types/course` + `app/data/course-builders.ts`，**落一次**，之后每门课都复用这份共享层。
 
 ## 内容层契约
 

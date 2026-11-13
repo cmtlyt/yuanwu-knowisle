@@ -11,7 +11,7 @@
 | 迁移后内容丢失 | 手抄大体量数据（60KB+） | 写一次性脚本做机械转换（IIFE → ESM、全局变量 → 工厂闭包），转完做语法与首尾结构核对，再删脚本；**不要手抄** |
 | 新增课时后地图 / 侧栏 / 报表没出现 | 视图层硬编码了课时列表 | 内容数据层做唯一内容源，视图只消费数据；新增课时 = 往 `LESSONS` 追加一项并在 `CONCEPTS` 登记 |
 | 新增第二门课后，首页 / 侧栏 / hero 仍只显示第一门课的专属文案（如 Effect 的标语、导航项写死） | 共享视图层硬编码了第一门课的专属内容，第二门课注册进去后这些文案不会自动切换 | 课程专属文案必须**数据驱动**：hero 用 `course.tagline \|\| course.subtitle`、导航用 `availableCourses()` 遍历、正文用各课 `META` / `DESIGN`；任何写死某门课标题 / 标语的共享组件都是隐患，加第二门课时立刻暴露。新增课程后用 smoke 断言该课专属文案出现在自己的页面、不串到别的页 |
-| 新增课程后 `pnpm verify` 仍只检查 Effect 一门 | verify 脚本把 `effect-course.ts` 路径 / 变量名写死了 | verify 改为**动态扫描** `app/data/*-course.ts`，对每个匹配文件跑结构 / 引用 / DESIGN / 学情引擎 / 隔离性检查，新数据层文件放对位置即自动纳入，无需逐门改脚本 |
+| 新增课程后 `pnpm verify` 仍只检查 Effect 一门 | verify 脚本把 `effect-course` 路径 / 变量名写死了 | verify 改为**动态扫描 `app/data/*-course/` 目录**（课程数据层已目录化，每门课一个目录、`index.ts` 为入口），对每个目录的 `index.ts` 跑结构 / 引用 / DESIGN / 学情引擎 / 隔离性检查，新课程目录放对位置即自动纳入，无需逐门改脚本 |
 
 ## 引用完整性
 
@@ -23,16 +23,16 @@
 | 批量用脚本给某批课「补第 N 题」后，`check-course` 报「题目概念引用有效 ✗ / 选项与答案索引有效 ✗」，诊断发现该课第 N 题 `text`/`options` 变 undefined、`answer` 位置是 explain 文本、`concept` 变 undefined | 追加题时该题干行**顶格（col 0）且行尾漏逗号**；JS 把 `q('题干'['选项数组'],…)` 解析成**字符串下标访问**（逗号表达式取最后一个元素），整个 `q(...)` 坍缩、字段整体左移 | 批量加题务必保证题干/选项/答案/explain/概念五行的**缩进一致（8 空格）且每行尾逗号齐全**；加完立刻跑覆盖审计 + `check-course`，别只跑一次就收工。诊断：写脚本遍历每课每题，标出 `!conceptIds.has(q.concept)` 或 `answer` 越界的题，再看其源码行是否顶格 |
 
 
-通用自检脚本（接受数据模块与可选演练模块路径）：
+通用自检脚本（接受数据模块与可选演练模块路径；课程数据层目录化后可直接传**目录**，脚本自动补 `index.ts`）：
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/effect-course.ts app/lib/widgets.ts
+  app/data/effect-course app/lib/widgets.ts
 ```
 
 退出码 0 = 全绿，1 = 有失败项，2 = 参数错误。脚本只读数据，不写文件。**注意**：它是通用数据校验，与项目自带的 `pnpm verify`（内容一致性 + 学情引擎全轨迹）是互补关系，两者都要跑。
 
-**多课程时逐门跑**：`check-course.mjs` 是单门脚本，每加一门课就对它的 `*-course.ts` 单独跑一次（`rxjs-course.ts` 同理传 `app/lib/widgets.ts`）。项目自带的 `pnpm verify` 已改为动态扫描 `app/data/*-course.ts` 全量跑，无需逐门改。
+**多课程时逐门跑**：`check-course.mjs` 是单门脚本，每加一门课就对它的 `*-course/` 目录单独跑一次（`rxjs-course` 同理传 `app/lib/widgets.ts`）。项目自带的 `pnpm verify` 已改为动态扫描 `app/data/*-course/` 目录全量跑，无需逐门改。
 
 ## 题目密度：覆盖驱动，不按难度一刀切
 
@@ -51,7 +51,8 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 
 | 症状 | 根因 | 处理 |
 |---|---|---|
-| `node --experimental-strip-types` 直接 import `courses.ts` 报 `ERR_MODULE_NOT_FOUND`（找不到 `./effect-course`） | Node 原生 ESM 不做扩展名推断，`import './effect-course'` 这种**省略扩展名的相对导入**在 Node 运行时解析不到；Nuxt/Vite 构建期能补全，Node 直跑不能 | 校验脚本**不要 import 走 `courses.ts`**（它内部有省略扩展名的运行时导入），改为直接扫描 `app/data/*-course.ts`、按**完整 `.ts` 扩展名**逐个 import；`app/lib/widgets.ts` 同理 |
+| `node --experimental-strip-types` 直接 import `courses.ts` 报 `ERR_MODULE_NOT_FOUND`（找不到 `./effect-course`） | Node 原生 ESM 不做扩展名推断，`import './effect-course'` 这种**省略扩展名的相对导入**在 Node 运行时解析不到；Nuxt/Vite 构建期能补全，Node 直跑不能 | 校验脚本**不要 import 走 `courses.ts`**（它内部有省略扩展名的运行时导入），改为直接扫描 `app/data/*-course/` 目录、按 `.../index.ts` **显式路径**逐个 import（目录内兄弟值导入也须显式 `.ts`，见 course-builder 的导入规范）；`app/lib/widgets.ts` 同理 |
+| 课程数据层改成目录（`effect-course/index.ts` + `stages.ts` 等）后，Node 直跑 import 目录报 `ERR_MODULE_NOT_FOUND`，或 `import './stages'` 找不到 | Node ESM **不解析目录 `index.ts`、也不补相对导入扩展名**；把 `effect-course.ts` 拆成目录后，旧脚本若仍按文件路径 / 省略扩展名 import 就失效 | 目录化后：① 校验脚本入口显式 import `.../index.ts`（Node 不解目录 index）；② 目录内兄弟**值**导入一律显式 `.ts`（`./stages.ts`），靠 Nuxt `allowImportingTsExtensions` + Node strip-types 两侧放行；③ `verify-course.mjs` 发现逻辑由 `filter(f=>f.endsWith('-course.ts'))` 改为「扫 `*-course` 目录 + import 其 `index.ts`」；④ 外部 `courses.ts` 仍用省略扩展名 `./effect-course`（仅 Nuxt 侧，自动解析到 index.ts）。落地见 `docs/00027` |
 
 ## 类型收窄（composable 层）
 

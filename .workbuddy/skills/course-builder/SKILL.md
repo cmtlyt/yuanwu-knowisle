@@ -37,19 +37,20 @@ agent_created: true
 
 1. **先核实版本，再规划**。技术类课程若基于旧版 API 写正文，整门课会教错。锁定 `META.version` / `verifiedAt` / `docs` 并集中在数据层，正文严禁混用跨版本 API。
 2. **内容、引擎、视图必须解耦**。引擎不得引用 DOM；内容不得 import 视图；视图不得硬编码课时列表。**课程设计说明书（版本基线 / 路径 / 依赖图 / 学情公式 / 扩展机制）必须作为绑定到课程的数据（`DESIGN` 字段）写在内容层，由「教学设计」视图渲染，不写成独立 Markdown / Nuxt Content 文件**——否则内容与渲染会分叉、删除内容模块后说明书会悬空。
-3. **每课时结构统一**：目标、讲解块、代码块、提示/误区、关键术语、交互演练标识、随堂测验（**题目数由知识点要讲透的各面向决定**——列出每个知识点的定义/陷阱/选型/边界/易混淆等面向逐一定题，单知识点面向多就多出题、面向少就少出题；换角度补题是常态手段，与难度/weight 无关；**不按难度定死题数、不预设课程级题数**，详见 `references/data-model.md` 数量动态化原则）。
-4. **引用完整性必须自动校验**：阶段/概念/前置/题目概念/widget 标识/答案索引，任何悬空引用都要让自检脚本失败。
-5. **学情数据只存本机且可导出**；按课程隔离 storage key；导入时校验版本字段并拒绝非法备份。
-6. **移动优先**：≤780px 底部标签栏 + 抽屉导航，图示/代码块/表格各自独立横滑，触控目标 ≥40px，输入框 16px，处理刘海屏安全区。
-7. **文件名统一 kebab-case**；框架强制文件名（`nuxt.config.ts`、`app.vue`、`[slug]`、`SKILL.md`、`README.md`、`AGENTS.md` 等）与 Python 模块名（不含连字符）除外。文件内标识符仍按语言惯例。
-8. **每完成一阶段立即验证**，不堆积未验证代码。落地到工程化项目时按项目现行工具链跑质量门禁（本仓库为 `pnpm fmt:check` / `lint` / `typecheck` / `verify` / `build`），提交前遵守 Git hooks（`pre-commit` 的 oxfmt + oxlint、`commit-msg` 的 commitlint）；`typecheck` / `verify` / `build` 不在 hook 内，需手动或交给 CI。失败时先定位根因再一次性修复，同一问题连续三次未解决则暂停并说明。**任何阶段遇到任何问题（不限于验证失败）先加载 `pitfall-resolver` 查库，解决并回归通过后必须更新或新增其中的解决方案条目。**
+3. **内容层目录化布局**：一门课 = 一个同名目录（`<topic>-course/`），`index.ts` 为唯一对外导出面，章节按 `stages.ts` / `concepts.ts` / `meta.ts` / `design.ts` / `lessons/lNN.ts`（一课一文件）拆分；`prose/code/call/list/q/L` 构造器抽到课程数据层的**共享文件**（如 `course-builders.ts`）跨课程复用、不与单课耦合。**导入规范**（保证 Nuxt 与 Node 校验脚本两侧都能加载）：目录内兄弟**值**导入一律**显式 `.ts`**（`./stages.ts`）；类型走 `~/types/course` 的 type-only 导入（运行时擦除）；外部消费方（如 `courses.ts`）用**省略扩展名**的相对导入指向目录（`./<topic>-course`，Nuxt 自动解析到 `index.ts`，该语句不用改），Node 校验脚本则按 `.../index.ts` 显式路径 import。详见 `references/data-model.md` 的「文件组织」小节。
+4. **每课时结构统一**：目标、讲解块、代码块、提示/误区、关键术语、交互演练标识、随堂测验（**题目数由知识点要讲透的各面向决定**——列出每个知识点的定义/陷阱/选型/边界/易混淆等面向逐一定题，单知识点面向多就多出题、面向少就少出题；换角度补题是常态手段，与难度/weight 无关；**不按难度定死题数、不预设课程级题数**，详见 `references/data-model.md` 数量动态化原则）。
+5. **引用完整性必须自动校验**：阶段/概念/前置/题目概念/widget 标识/答案索引，任何悬空引用都要让自检脚本失败。
+6. **学情数据只存本机且可导出**；按课程隔离 storage key；导入时校验版本字段并拒绝非法备份。
+7. **移动优先**：≤780px 底部标签栏 + 抽屉导航，图示/代码块/表格各自独立横滑，触控目标 ≥40px，输入框 16px，处理刘海屏安全区。
+8. **文件名统一 kebab-case**；框架强制文件名（`nuxt.config.ts`、`app.vue`、`[slug]`、`SKILL.md`、`README.md`、`AGENTS.md` 等）与 Python 模块名（不含连字符）除外。文件内标识符仍按语言惯例。
+9. **每完成一阶段立即验证**，不堆积未验证代码。落地到工程化项目时按项目现行工具链跑质量门禁（本仓库为 `pnpm fmt:check` / `lint` / `typecheck` / `verify` / `build`），提交前遵守 Git hooks（`pre-commit` 的 oxfmt + oxlint、`commit-msg` 的 commitlint）；`typecheck` / `verify` / `build` 不在 hook 内，需手动或交给 CI。失败时先定位根因再一次性修复，同一问题连续三次未解决则暂停并说明。**任何阶段遇到任何问题（不限于验证失败）先加载 `pitfall-resolver` 查库，解决并回归通过后必须更新或新增其中的解决方案条目。**
 
 ## 资源
 
 - `references/workflow.md` — 8 阶段详细流程、每阶段验收标准、交付清单模板
 - `references/data-model.md` — 内容数据契约、学情状态结构、掌握度/遗忘/诊断公式、扩展机制
-- `scripts/check-course.mjs` — 通用数据一致性与引用完整性校验，接受课程数据模块路径参数
-- `assets/course-skeleton.ts` — 最小可扩充的课程数据骨架（复制到目标项目后改内容）
+- `scripts/check-course.mjs` — 通用数据一致性与引用完整性校验，接受课程数据路径参数（可传**目录**，自动补 `index.ts`）
+- `assets/course-skeleton/` — 目录化课程数据骨架（`index.ts` 入口 + `stages/concepts/meta/design.ts` 章节 + `lessons/lNN.ts` 一课一文件 + `builders.ts`/`types.ts` 共享层**种子** + `README.md` 落地说明）。复制到目标项目后改内容；**新建课程时只建课程级文件，`types.ts`/`builders.ts` 复用仓库级共享层、不逐课复制**（详见其 `README.md` 与 `references/workflow.md` 阶段 3 的「仓库级 vs 课程级」区分）。
 - 项目级 skill `pitfall-resolver`（`.workbuddy/skills/pitfall-resolver/`） — 独立的问题排查与解决方案库；**遇到任何问题先加载它查库，解决后回写**，本 skill 不再自带踩坑清单
 
 加载顺序：先读 `references/workflow.md` 确定当前阶段 → 涉及数据/公式时读 `references/data-model.md` → **任何阶段一遇到问题就先加载 `pitfall-resolver` skill**，按症状速查表定位参考文件，解决并回归通过后更新或新增其解决方案条目。

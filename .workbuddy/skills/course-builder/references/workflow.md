@@ -66,18 +66,23 @@
 
 **动作**
 
-1. 建类型契约（见 `data-model.md`），再建唯一内容源模块，导出 `META` / `STAGES` / `CONCEPTS` / `LESSONS`。
-2. 用小型构造器函数生成块（`prose` / `code` / `callout` / `list`），避免手写重复对象字面量。
-3. 从既有材料迁移时，写一次性脚本做机械转换（IIFE → ESM、全局变量 → 工厂闭包），**不手抄**；转换后立刻做语法检查与首尾结构核对，再删脚本。
+1. 建类型契约（见 `data-model.md`），再建**目录化**内容源（一门课一个 `<topic>-course/` 目录：`index.ts` 为唯一导出面，章节按 `stages.ts` / `concepts.ts` / `meta.ts` / `design.ts` / `lessons/lNN.ts` 拆分，布局见 `data-model.md` 的「文件组织」小节）。
+   - **区分「仓库级共享」与「课程级」两类文件，不要混淆落地位置**：
+     - **仓库级共享（每个仓库只存一份，不进课程目录）**：`types`（类型契约，如 `~/types/course`）与 `course-builders.ts`（构造器）。新建课程**只建课程级文件**（`index.ts` + 各章节 + `lessons/`），其章节文件 `import type … from '~/types/course'`、课时文件 `import { L, prose, … } from '../../course-builders.ts'`，**不要往课程目录里再拷一份 `types.ts` / `builders.ts`**——否则各课各带一份会分叉、改签名要改 N 处。
+     - **课程级（每门课目录内各有一份）**：`index.ts` / `stages.ts` / `concepts.ts` / `meta.ts` / `design.ts` / `lessons/lNN.ts`。
+   - **skeleton 里自包含的 `types.ts` / `builders.ts` 只是「种子」**：仅当目标仓库**尚无**共享类型模块与共享构造器时，把它们落地成该仓库的共享层（`~/types/course` + `app/data/course-builders.ts`），**落一次**；之后所有课程（含第二、三门课）都复用这份共享层，不再逐课复制。
+2. 构造器（`prose` / `code` / `call` / `list` / `q` / `L`）放在**仓库级共享文件**（如 `app/data/course-builders.ts`），跨课程复用、不与单课耦合；各课时文件从它 import 所用符号。**新建课程时直接 import 复用，不要往课程目录里再拷一份**（见动作 1 的「仓库级 vs 课程级」区分）。
+3. 从既有材料迁移时，写一次性脚本做机械转换（IIFE → ESM、全局变量 → 工厂闭包、巨型单文件 → 目录拆分），**不手抄**；转换后立刻做语法检查与首尾结构核对，再删脚本。
 4. 版本信息只存在于 `META`，正文里不得散落硬编码版本号。
 5. **题目数由「知识点要讲透的各面向是否全覆盖」决定，不按难度一刀切**：先列出每个知识点要讲透的**各个面向**（定义/语义、常见陷阱、选型对比、边界与例外、典型用法、易混淆点……），每个面向至少 1 题；同一知识点面向多时**可以有更多题**（哪怕单知识点出 10 题来覆盖它的全部面向），面向少则题少。**换角度补题是常态手段，与难度高低、weight 大小无关**，简单知识点该补就补；禁止按 `difficulty` 定死「每课 N 题」、禁止把「题数 = 概念数」当上下限、禁止把同一个面向反复堆题。判「讲没讲透」看的是「该课涉及的每个知识点是否都按它的面向被覆盖」，不是「难度高的课题多」。改题后务必重跑覆盖审计（该课每个知识点的各面向都有题；全课程无未被任何题覆盖的知识点）。
+6. **导入规范（目录化的关键约束）**：目录内兄弟**值**导入一律**显式 `.ts`**（`./stages.ts`）——Node 校验脚本 `--experimental-strip-types` 要求显式扩展名、Nuxt `allowImportingTsExtensions` 放行；类型走 `~/types/course` 的 type-only 导入（运行时擦除）；外部消费方（`courses.ts`）用**省略扩展名**相对导入指向目录（`./<topic>-course`，Nuxt 自动解析到 `index.ts`，该语句不用改），Node 脚本按 `.../index.ts` 显式路径 import。
 
-**产出**：`<topic>-course.ts` + `types/course.ts`。
-**验收**：通用数据自检全绿；新增一个虚拟课时后地图/侧栏/报表自动出现该课。脚本随 skill 提供，命令要写**完整路径**并带 type stripping flag：
+**产出**：`<topic>-course/` 目录（`index.ts` + 章节文件 + `lessons/`）+ 共享 `course-builders.ts` + `types/course.ts`。
+**验收**：通用数据自检全绿；新增一个虚拟课时（新建 `lessons/lNN.ts` 并在 `lessons/index.ts` / `concepts.ts` 登记）后地图/侧栏/报表自动出现该课。脚本随 skill 提供，命令写**完整路径**并带 type stripping flag（`check-course.mjs` 可传**目录**，自动补 `index.ts`）：
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  <course-data.ts> [widgets.ts]
+  <topic>-course/ [widgets.ts]
 ```
 
 它是通用的数据一致性校验；落地到具体项目后，还需跑项目自带的引擎全轨迹自检（本仓库为 `pnpm verify`），两者互补，缺一不可。
