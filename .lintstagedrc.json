@@ -1,0 +1,4 @@
+{
+  "*.{ts,vue,mjs,js,cjs}": ["oxfmt", "oxlint"],
+  "*.{json,jsonc}": ["oxfmt"]
+}
