@@ -15,10 +15,10 @@
 
 - 新增 `.github/workflows/ci-cd.yml`：
   - `test` job：`push`/`pull_request` 到 `main`、以及手动 `workflow_dispatch` 时运行全部门禁 + 构建（`pnpm install --frozen-lockfile` 锁定依赖）。
-  - `deploy` job：`needs: test`，job 级 `if` 仅查 `github.ref == main && 非 PR`；**未配置 `CLOUDFLARE_API_TOKEN` 时由 deploy step 级 `if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}` 跳过**。
+  - `deploy` job：`needs: test`，job 级 `if` 仅查 `github.ref == main && 非 PR`；secret 经 job 级 `env` 映射（`|| 'not-set'` 兜底），**未配置 `CLOUDFLARE_API_TOKEN` 时由 deploy step 级 `if: ${{ env.CLOUDFLARE_API_TOKEN != 'not-set' }}` 跳过**。
   - `concurrency` 按分支串行，避免重叠部署。
   - `permissions: contents: read`，最小权限；部署凭据走 Cloudflare API Token，不写仓库。
-- **修正（00023）**：首版把 secret 判空写在 job 级 `if`（`... && secrets.CLOUDFLARE_API_TOKEN != ''`），被 GitHub 解析期拒绝——job 级 `if` 不能引用 `secrets` 上下文，导致整个 workflow 解析失败、**0 job 生成**（运行表现为「同秒完成 + 0 job + `run_completed_at=null` + failure」）。改为 job 级只查 ref/event，secret 判空下沉到 deploy step 级 `if`。详见 `00023-github-actions-secrets-if`。
+- **修正（00023）**：首版把 secret 判空写在 job 级 `if`（`... && secrets.CLOUDFLARE_API_TOKEN != ''`），被 GitHub 解析期拒绝——**任何 `if` 条件（job 级与 step 级）都不能引用 `secrets` 上下文**，导致整个 workflow 解析失败、**0 job 生成**（运行表现为「同秒完成 + 0 job + `run_completed_at=null` + failure」）。改为**哨兵值模式**：secret 经 job 级 `env` 映射（`|| 'not-set'` 兜底），deploy step 级 `if` 检查 `env`。详见 `00023-github-actions-secrets-if`。
 - README.md：在「部署到 Cloudflare Workers」后新增「CI/CD（GitHub Actions）」小节，说明门禁/部署触发条件与所需密钥。
 - AGENTS.md：命令速查与提交规范处补充「门禁与部署已交给 CI」的说明。
 

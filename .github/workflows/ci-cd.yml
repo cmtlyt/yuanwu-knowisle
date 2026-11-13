@@ -57,13 +57,17 @@ jobs:
     name: Deploy to Cloudflare Workers
     needs: test
     # 仅 main 分支 + 非 PR 才进入本 job。
-    # 注意：job 级 if 不能引用 secrets 上下文（GitHub 解析期会报
-    # "Unrecognized named-value: 'secrets'" 并导致 0 job 生成），
-    # 因此「未配密钥不部署」的判断放到 deploy step 的 step 级 if。
+    # GitHub 的 if 条件（job 级与 step 级）都不能引用 secrets 上下文（解析期报
+    # "Unrecognized named-value: 'secrets'" 导致 0 job）。故把 secret 经 job 级
+    # env 映射（带 not-set 兜底，env 上下文允许引用 secrets），再在 step 级 if
+    # 检查 env。未配密钥时 deploy step 跳过，不会误上线。
     if: >-
       github.ref == 'refs/heads/main' &&
       github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || 'not-set' }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID || 'not-set' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -83,10 +87,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Deploy (build + wrangler deploy)
-        # 未配置 Cloudflare Token 时本 step 跳过（step 级 if 允许引用 secrets，
-        # 而 job 级 if 不允许，故把判空放这里）；不会误上线。
-        if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        # 未配置 Cloudflare Token 时本 step 跳过（env 哨兵 not-set 检测；
+        # if 表达式不能引用 secrets，故经 job 级 env 映射后再判）；不会误上线。
+        if: ${{ env.CLOUDFLARE_API_TOKEN != 'not-set' }}
         run: pnpm deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

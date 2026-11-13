@@ -1,10 +1,10 @@
 # GitHub Actions（workflow 表达式 / 触发 / 排障）
 
-## job 级 `if` 引用 `secrets` 上下文 → workflow 解析失败、0 job 生成
+## `if` 引用 `secrets` 上下文（job 级或 step 级）→ workflow 解析失败、0 job 生成
 
 | 症状 | 根因 | 处理 |
 |---|---|---|
-| 工作流 push 后运行**全部** `failure`，且表现为「`created == started == updated` 同秒 + `0 个 job` + `run_completed_at=null`」；`gh run view` 提示 "This run likely failed because of a workflow file issue" | **GitHub Actions 的 job 级 `if:` 表达式不能引用 `secrets` 上下文**（`github`/`inputs`/`needs`/`vars`/`env`/`matrix` 可以，`secrets` 在 job 级 `if` 里不可解析）。把 `secrets.X != ''` 写进 job 的 `if` 会让整个 workflow 在编译/解析阶段直接报错，一个 job 都不会被创建 | ① job 级 `if` 去掉 secrets 判空，只查 `github.ref` / `github.event_name`；② 「未配密钥则跳过」的判断**下沉到 step 级 `if`**（step 的 `if:` 允许引用 `secrets`），如 `if: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}`，配合该 step 的 `env:` 注入 token。未配密钥时该 step 显示 skipped（非失败），不会误上线 |
+| 工作流 push 后运行**全部** `failure`，且表现为「`created == started == updated` 同秒 + `0 个 job` + `run_completed_at=null`」；`gh run view` 提示 "This run likely failed because of a workflow file issue" | **任何 `if` 表达式（job 级与 step 级）都不能引用 `secrets` 上下文**，否则整个 workflow 在解析/编译阶段报错、0 job。`if` 里可用 `github`/`inputs`/`needs`/`vars`/`env`/`matrix`，唯独 `secrets` 不可解析。⚠️ 已实测纠正：「step 级 `if` 允许引用 secrets」是错的（`gh workflow run` 第二次 422 报 `Line 88: Unrecognized named-value: 'secrets'` 直接证伪） | **哨兵值模式（sentinel pattern）**：① 把 secret 经 **job 级 `env:`** 映射并加兜底——`CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN || 'not-set' }}`（`env` 上下文**允许**引用 `secrets`）；② 在 deploy step 级写 `if: ${{ env.CLOUDFLARE_API_TOKEN != 'not-set' }}`（`env` 上下文**允许**出现在 `if`）；③ job 级 `if` 只查 `github.ref` / `github.event_name`。未配密钥时 step 跳过（非失败），不会误上线 |
 
 定位手段（本地 `js-yaml`/`yaml@2` 只查语法、不查表达式上下文，会漏判）：
 
@@ -13,7 +13,7 @@
 - `gh run list` / `gh run view <id>` 看是否 0 job、同秒完成；`gh api repos/<owner>/<repo>/actions/runs/<id>` 看 `run_completed_at` 是否为 `null`。
 - 0 job 的运行没有日志 / annotations / check-runs 可读（相关 REST 端点返回 404），报错只能靠 `gh workflow run` 的解析阶段或浏览器 Actions 页获取。
 
-> 本项目实例：`00023-github-actions-secrets-if`。`deploy` job 首版 `if` 含 `secrets.CLOUDFLARE_API_TOKEN != ''` → 改为 job 级只查 ref + step 级判空。
+> 本项目实例：`00023-github-actions-secrets-if`。`deploy` job 首版 job 级 `if` 含 `secrets.CLOUDFLARE_API_TOKEN != ''`（Line 61 报 422）→ 误改到 step 级 `if`（Line 88 仍报 422，证伪「step 级可用」）→ 最终改**哨兵值模式**（job 级 `env` 映射 `|| 'not-set'` + step 级 `if` 检查 `env`）。
 
 ## 0 job / 同秒 failure 的排障顺序
 
