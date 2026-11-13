@@ -28,6 +28,8 @@ pnpm exec wrangler --cwd .output dev --port 3199 &   # 本地 Worker 预览（.o
 python scripts/smoke.py --base http://127.0.0.1:3199
 ```
 
+质量门禁与部署已迁移到 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地仍可用上述同名 script 复现，无需每次手敲。
+
 通用内容自检（可直接复用 skill 脚本）：
 
 ```bash
@@ -68,7 +70,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 
 - 提交正文只写一句短引用，任务关联编号可简写；较长的说明放 `docs/NNNNN-*/overview.md`。不确定时用 `printf ... | pnpm exec commitlint --quiet` 预验。
 
-- hooks 只做毫秒级暂存检查；`typecheck` / `verify` / `build` 不在 hook 内，提交前手动执行或交给 CI。
+- hooks 只做毫秒级暂存检查；`typecheck` / `verify` / `build` 不在 hook 内，统一交给 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地可用同名 script 复现。
 - 单独调试：`git hook run pre-commit`、`printf 'feat: 示例' | pnpm exec commitlint`。
 - hook 由 husky wrapper 以 `sh -e` 执行，不依赖可执行位；从 GUI 客户端提交需保证 `pnpm` 在 PATH 中。
 - 仓库尚无初始提交时 lint-staged 提示 `Skipping backup because there's no initial commit yet` 并跳过备份 stash，属预期；首次提交后恢复常规机制。
