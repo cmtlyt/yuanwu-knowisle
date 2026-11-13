@@ -1,0 +1,32 @@
+import type { Concept } from '~/types/course'
+
+/* ---------------- 知识点图谱 ---------------- */
+export const CONCEPTS: Concept[] = [
+  { id: 'program-value', name: '程序即值', stage: 0, weight: 3, prereqs: [] },
+  { id: 'three-channels', name: '三通道类型', stage: 0, weight: 3, prereqs: ['program-value'] },
+  { id: 'laziness', name: '惰性与不可变', stage: 0, weight: 2, prereqs: ['program-value'] },
+  { id: 'runners', name: '运行边界 run*', stage: 0, weight: 2, prereqs: ['laziness'] },
+  { id: 'composition', name: 'pipe 与组合子', stage: 1, weight: 3, prereqs: ['three-channels'] },
+  { id: 'gen', name: 'Effect.gen 与 yield*', stage: 1, weight: 3, prereqs: ['composition'] },
+  { id: 'constructors', name: '构造子全景', stage: 1, weight: 2, prereqs: ['three-channels'] },
+  { id: 'type-accumulation', name: 'E / R 通道累积', stage: 1, weight: 3, prereqs: ['gen'] },
+  { id: 'exit', name: 'Exit 与 Result', stage: 1, weight: 2, prereqs: ['runners'] },
+  { id: 'typed-error', name: '预期错误', stage: 2, weight: 3, prereqs: ['type-accumulation'] },
+  { id: 'defect', name: '缺陷 defect', stage: 2, weight: 3, prereqs: ['typed-error'] },
+  { id: 'cause', name: 'Cause.reasons', stage: 2, weight: 3, prereqs: ['typed-error', 'defect'] },
+  { id: 'recovery', name: '恢复策略', stage: 2, weight: 3, prereqs: ['cause'] },
+  { id: 'observability', name: '日志与追踪', stage: 2, weight: 2, prereqs: ['cause'] },
+  { id: 'context', name: 'Context.Service', stage: 3, weight: 3, prereqs: ['type-accumulation'] },
+  { id: 'layer', name: 'Layer 构造配方', stage: 3, weight: 3, prereqs: ['context'] },
+  { id: 'layer-graph', name: '依赖图与记忆化', stage: 3, weight: 3, prereqs: ['layer'] },
+  { id: 'scope', name: 'Scope 与 finalizer', stage: 3, weight: 3, prereqs: ['layer'] },
+  { id: 'fiber', name: 'Fiber 生命周期', stage: 4, weight: 3, prereqs: ['runners'] },
+  { id: 'runloop', name: '指令解释与 runLoop', stage: 4, weight: 4, prereqs: ['laziness', 'fiber'] },
+  { id: 'scheduler', name: '调度与协作让出', stage: 4, weight: 4, prereqs: ['runloop'] },
+  { id: 'concurrency', name: '结构化并发与中断', stage: 4, weight: 4, prereqs: ['fiber', 'scope'] },
+  { id: 'channel', name: 'Channel 通信原语', stage: 4, weight: 3, prereqs: ['concurrency'] },
+  { id: 'stream', name: 'Stream 与背压', stage: 5, weight: 3, prereqs: ['concurrency'] },
+  { id: 'schedule', name: 'Schedule 与重试', stage: 5, weight: 2, prereqs: ['recovery'] },
+  { id: 'stm', name: '并发原语与 STM', stage: 5, weight: 2, prereqs: ['concurrency'] },
+  { id: 'ecosystem', name: '生态与工程落地', stage: 5, weight: 2, prereqs: ['layer-graph', 'context'] },
+]

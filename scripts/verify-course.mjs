@@ -2,14 +2,17 @@
  * 课程内容 + 学情引擎自检：pnpm verify
  * 依赖 Node 22 的 --experimental-strip-types，直接加载 app/ 下的 TS 模块。
  *
- * 多课程化：动态扫描 app/data/*-course.ts，对每门课做
+ * 多课程化：动态扫描 app/data/*-course/ 目录（每门课一个目录，index.ts 为入口），
+ * 对每门课做
  *  ① 数据一致性 + 引用完整性 ② 学情引擎全轨迹 ③ 遗忘/导出导入/多课程隔离。
- * 任意一门课失败即整体失败。新增课程文件会自动被本脚本纳入，无需改动。
+ * 任意一门课失败即整体失败。新增课程目录会自动被本脚本纳入，无需改动。
  *
- * 说明：课程数据文件顶部的 `import type ... from '~/types/course'` 是 type-only 导入，
- * Node 的 type stripping 会在运行时擦除它，因此本脚本可安全地按 .ts 扩展名直接 import。
- * （不能改去 import courses.ts——那是运行时省略扩展名的相对导入，Nuxt/Vite 可解析但
- *  Node ESM strip-types 解析不了；课程清单本脚本直接扫描得到，与 courses.ts 注册解耦。）
+ * 说明：课程目录内 index.ts 对兄弟模块的相对值导入**带显式 .ts 扩展名**
+ * （如 './stages.ts'），Node 的 --experimental-strip-types 可直接解析；
+ * 而 index.ts 顶部的 `import type ... from '~/types/course'` 是 type-only 导入，
+ * 运行时被擦除。因此本脚本可按 `.../index.ts` 显式路径 import。
+ * （不要改去 import courses.ts——它内部是省略扩展名的相对导入，Node ESM strip-types 解析不了；
+ *  课程清单本脚本直接扫描目录得到，与 courses.ts 注册解耦。）
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -28,29 +31,30 @@ const ok = (cond, label, extra = '') => {
   }
 }
 
-/* ---------- 动态发现课程数据模块 ---------- */
+/* ---------- 动态发现课程数据模块（课程数据层已目录化：每门课一个 *-course/ 目录）---------- */
 const dataDir = path.join(ROOT, 'app', 'data')
-const courseFiles = fs
-  .readdirSync(dataDir)
-  .filter((f) => f.endsWith('-course.ts'))
-  .toSorted()
-if (!courseFiles.length) {
-  console.error('✗ app/data 下未找到 *-course.ts 课程数据模块')
+const courseDirs = fs
+  .readdirSync(dataDir, { withFileTypes: true })
+  .filter((d) => d.isDirectory() && d.name.endsWith('-course'))
+  .toSorted((a, b) => a.name.localeCompare(b.name))
+if (!courseDirs.length) {
+  console.error('✗ app/data 下未找到 *-course/ 课程数据目录（需含 index.ts）')
   process.exit(1)
 }
 
 const discovered = []
-for (const f of courseFiles) {
-  const mod = await import(pathToFileURL(path.join(dataDir, f)).href)
+for (const d of courseDirs) {
+  const entry = path.join(dataDir, d.name, 'index.ts')
+  const mod = await import(pathToFileURL(entry).href)
   const C = [mod.default, ...Object.values(mod)].find(
     (v) => v && Array.isArray(v.STAGES) && Array.isArray(v.LESSONS) && !!v.META,
   )
   if (!C) {
-    console.error('✗ ' + f + ' 未导出有效课程数据（需要 META / STAGES / CONCEPTS / LESSONS）')
+    console.error('✗ ' + d.name + '/index.ts 未导出有效课程数据（需要 META / STAGES / CONCEPTS / LESSONS）')
     failed++
     continue
   }
-  discovered.push({ label: f.replace(/-course\.ts$/, ''), C })
+  discovered.push({ label: d.name.replace(/-course$/, ''), C })
 }
 
 console.log('=== 可用课程数据模块（' + discovered.length + '）===')

@@ -76,8 +76,9 @@ const myProgress = computed(() =>
           <code>app/data/courses.ts</code> 注册。
         </li>
         <li>
-          <b>内容即数据</b>：课时、概念、题目、术语、误区集中在
-          <code>app/data/effect-course.ts</code>，加课时不改动引擎与视图。
+          <b>内容即数据</b>：每门课的课时、概念、题目、术语、误区集中在
+          <code>app/data/&lt;slug&gt;-course/</code> 目录（index.ts 聚合 +
+          逐课时文件），加课时不改动引擎与视图。
         </li>
         <li>
           <b>学情会遗忘</b
