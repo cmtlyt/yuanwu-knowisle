@@ -1,14 +1,6 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
-  modules: [
-    '@nuxt/a11y',
-    '@nuxt/content',
-    '@nuxt/hints',
-    '@nuxt/image',
-    '@nuxt/ui',
-    '@formkit/auto-animate',
-    '@nuxtjs/device',
-  ],
+  modules: ['@nuxt/a11y', '@nuxt/hints', '@nuxt/ui', '@formkit/auto-animate', '@nuxtjs/device'],
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   css: ['~/assets/css/main.css'],

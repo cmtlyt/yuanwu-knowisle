@@ -49,7 +49,6 @@ const meta = computed(() => data.value!.META)
         <a class="btn sm" :href="meta.release" target="_blank" rel="noopener">4.0 发布公告</a>
         <a class="btn sm" :href="meta.playground" target="_blank" rel="noopener">在线 Playground</a>
         <a class="btn sm" :href="meta.source" target="_blank" rel="noopener">源码仓库</a>
-        <NuxtLink to="/docs/effect-course-design" class="btn sm">课程设计说明书</NuxtLink>
       </div>
     </div>
 
