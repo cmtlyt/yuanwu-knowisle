@@ -32,3 +32,4 @@
 | `00016-git-commit-split` | 按任务主题把最终工作区拆分为多个提交 | 2026-11-13 | [总览](00016-git-commit-split/overview.md) |
 | `00017-cloudflare-skills-and-module-cleanup` | 移除未使用的 Nuxt Content / image，安装 Cloudflare 官方部署 skill | 2026-11-13 | [总览](00017-cloudflare-skills-and-module-cleanup/overview.md) |
 | `00018-course-design-as-data` | 教学设计说明书转成绑定课程的数据并渲染，skill 补这一步 | 2026-11-13 | [总览](00018-course-design-as-data/overview.md) |
+| `00019-cloudflare-workers-deploy-config` | 配置 Nuxt 部署到 Cloudflare Workers（本地配置与验证，未上线） | 2026-11-13 | [总览](00019-cloudflare-workers-deploy-config/overview.md) |
