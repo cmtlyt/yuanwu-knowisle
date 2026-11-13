@@ -31,14 +31,16 @@ const ok = (cond, label, extra = '') => {
 const warn = (label) => console.log('  ! ' + label)
 
 const mod = await load(dataArg)
-const candidate = [mod.COURSE, mod.EFFECT_COURSE, mod.COURSE_DATA, mod.default, mod].find(
-  (v) => v && Array.isArray(v.STAGES) && Array.isArray(v.LESSONS),
-)
-if (!candidate) {
+// 自动识别模块中任意课程数据导出：凡含 STAGES + LESSONS + META 的对象均视为课程。
+// 支持 EffectCourseData / CourseData / 任意 <Topic>Course 命名，无需为每门课改脚本。
+const looksLikeCourse = (v) => v && Array.isArray(v.STAGES) && Array.isArray(v.LESSONS) && !!v.META
+const candidates = [mod.default, ...Object.values(mod)].filter(looksLikeCourse)
+if (!candidates.length) {
   console.error('✗ 未在模块中找到课程数据（需要 META / STAGES / CONCEPTS / LESSONS）')
   process.exit(1)
 }
-const C = candidate
+// 取导出名最具体的候选（通常只有一个；多门课共享文件时取字段最全者）
+const C = candidates.reduce((a, b) => (Object.keys(b).length >= Object.keys(a).length ? b : a))
 
 console.log('=== 版本基线 ===')
 ok(!!C.META, 'META 存在')

@@ -20,7 +20,7 @@ from cdp import CDP, MEASURE_JS, find_browser
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ROUTES = [
-    ("/", 200, ["源悟的知识岛", "Effect 深度课", "更多课程在路上"]),
+    ("/", 200, ["源悟的知识岛", "Effect 深度课", "RxJS 深度课", "更多课程在路上"]),
     ("/courses/effect-ts", 200, ["从「程序即值」到「运行时指令解释」", "六个阶段", "L01"]),
     ("/courses/effect-ts/dashboard", 200, ["学情仪表盘", "能力雷达", "薄弱点归因"]),
     ("/courses/effect-ts/review", 200, ["复习中心", "最近错题"]),
@@ -30,6 +30,12 @@ ROUTES = [
     ("/courses/effect-ts/lessons/L18", 200, ["指令解释器", "关键术语", "随堂测验"]),
     ("/courses/effect-ts/lessons/L02", 200, ["三通道", "关键术语", "随堂测验"]),
     ("/courses/effect-ts/lessons/L10", 200, ["Cause", "关键术语", "随堂测验"]),
+    ("/courses/rxjs", 200, ["从「一段时间里的数据序列」", "六个阶段", "L01"]),
+    ("/courses/rxjs/dashboard", 200, ["学情仪表盘", "能力雷达", "薄弱点归因"]),
+    ("/courses/rxjs/review", 200, ["复习中心", "最近错题"]),
+    ("/courses/rxjs/design", 200, ["教学设计说明书", "版本基线", "知识点依赖图"]),
+    ("/courses/rxjs/lessons/L09", 200, ["嵌套流的心智模型", "关键术语", "随堂测验"]),
+    ("/courses/rxjs/lessons/L11", 200, ["switchMap", "关键术语", "随堂测验"]),
     ("/courses/nope", 404, []),
 ]
 
@@ -38,15 +44,18 @@ CLIENT_ROUTES = [
     ("/courses/effect-ts/lessons/L02", "三通道类型拼装台"),
     ("/courses/effect-ts/dashboard", "能力雷达"),
     ("/courses/effect-ts/design", "版本基线"),
+    ("/courses/rxjs/lessons/L11", "取最新 vs 排空"),
+    ("/courses/rxjs/lessons/L09", "嵌套流"),
 ]
 
 VIEWPORTS = [
     (320, 700, True, "极窄手机", ["/", "/courses/effect-ts", "/courses/effect-ts/lessons/L18", "/courses/effect-ts/dashboard"]),
     (390, 844, True, "主流手机", ["/", "/courses/effect-ts", "/courses/effect-ts/lessons/L18",
                                 "/courses/effect-ts/dashboard", "/courses/effect-ts/teacher",
-                                "/courses/effect-ts/design"]),
-    (768, 1024, True, "平板", ["/courses/effect-ts", "/courses/effect-ts/lessons/L18"]),
-    (1440, 900, False, "桌面", ["/", "/courses/effect-ts", "/courses/effect-ts/design"]),
+                                "/courses/effect-ts/design", "/courses/rxjs", "/courses/rxjs/lessons/L11"]),
+    (768, 1024, True, "平板", ["/courses/effect-ts", "/courses/effect-ts/lessons/L18", "/courses/rxjs"]),
+    (1440, 900, False, "桌面", ["/", "/courses/effect-ts", "/courses/effect-ts/design",
+                                 "/courses/rxjs", "/courses/rxjs/design"]),
 ]
 
 
