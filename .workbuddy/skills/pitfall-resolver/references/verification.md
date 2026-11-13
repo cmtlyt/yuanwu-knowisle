@@ -19,18 +19,20 @@ pnpm fmt:check          # 格式一致性（含 .workbuddy/skills/ 下的代码�
 pnpm lint               # oxlint 快速规则：0 errors
 pnpm typecheck          # --type-aware --type-check：0 errors
 pnpm verify             # 内容一致性 + 学情引擎全轨迹
-pnpm build              # Nuxt 生产构建
-PORT=3199 node .output/server/index.mjs &
+pnpm build              # Nuxt 生产构建（cloudflare_module 预设 → .output）
+pnpm exec wrangler --cwd .output dev --port 3199
 python scripts/smoke.py --base http://127.0.0.1:3199
 ```
 
 提交前 hooks 只跑 `oxfmt` + `oxlint`（暂存文件）与 commitlint；`typecheck` / `verify` / `build` 不在 hook 内，由手动或 CI 承担。
 
-数据层单独验：
+数据层单独验（逐门跑；`pnpm verify` 已动态扫描 `app/data/*-course.ts` 全量）：
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
   app/data/effect-course.ts app/lib/widgets.ts
+node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
+  app/data/rxjs-course.ts app/lib/widgets.ts
 ```
 
 ## 全量验证清单（课程 / 站点级交付）

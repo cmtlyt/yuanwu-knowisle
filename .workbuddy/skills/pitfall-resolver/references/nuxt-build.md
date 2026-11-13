@@ -8,7 +8,8 @@
 | 运行时新增的探针 HTML / 静态文件返回 404 | Nitro 生产服务器启动时快照了静态文件清单 | 在服务启动**之前**写入 public 探针，或让冒烟脚本自己托管服务器；更推荐改用 CDP 直接注入检查 |
 | 构建通过但运行时 500 | 构建不校验模板里未定义的自动导入变量 | 必跑 HTTP 路由冒烟 + 客户端渲染冒烟，不能只依赖 `pnpm build` |
 | Nuxt 4.6.4 构建报 Nitro 内部模块解析警告 | 框架自身问题，基线构建即存在 | 记录为已知限制，不作为改动失败的判据；不要为消警告去改依赖 |
-| 临时预览服务端口冲突 / 干扰用户正在用的服务 | 复用了默认 3000/3100 端口 | 临时服务用独立端口（如 3199），`PORT=3199 node .output/server/index.mjs`，跑完立即关闭 |
+| 临时预览服务端口冲突 / 干扰用户正在用的服务 | 复用了默认 3000/3100 端口 | 临时服务用独立端口（如 3199）：`pnpm build` 产出 `.output` 后 `pnpm exec wrangler --cwd .output dev --port 3199`（cloudflare_module 产物是 Worker 入口，**不再用 `node .output/server/index.mjs`**），跑完立即关闭 |
+| 重建 `.output` 时 `pnpm build` 报 `[safe-delete] 操作失败: .output ... Some operations were aborted`，Nitro `cleanDir` 把 `.output` 送回收站被中断 | 后台预览服务（wrangler dev / workerd）仍持有 `.output` 的文件句柄，Windows 回收站无法移入被占用目录，Nitro cleanDir 失败 | **重建前先 `TaskStop` 停掉预览服务**释放 `.output` 句柄，再 `pnpm build`；这是「改完代码重新预览」的固定顺序：停服务 → build → 重启服务 |
 
 ## SSR / hydration / 自动导入
 

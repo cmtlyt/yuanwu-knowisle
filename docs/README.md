@@ -37,3 +37,5 @@
 | `00021-cloudflare-custom-domain` | 自定义域名 yuanwu-knowisle.cmtlyt.top（根 wrangler.jsonc 加 routes + workers_dev=false） | 2026-11-13 | [总览](00021-cloudflare-custom-domain/overview.md) |
 | `00022-ignore-vscode-in-gates` | lint/格式化门禁忽略 `.vscode`，并把 `.vscode` 纳入版本库 | 2026-11-13 | [总览](00022-ignore-vscode-in-gates/overview.md) |
 | `00023-github-actions-secrets-if` | 修复 CI/CD「job 级 if 引用 secrets」导致 workflow 解析失败、0 job | 2026-11-13 | [总览](00023-github-actions-secrets-if/overview.md) |
+| `00024-rxjs-course-multicourse` | 新增 RxJS 7.8.2 深度课，落地多课程架构（类型契约 / 校验脚本 / 共享视图层去硬编码） | 2026-11-13 | [总览](00024-rxjs-course-multicourse/overview.md) |
+| `00025-required-course-type-narrowing` | `useRequiredCourse` 类型收窄（composable 层类型守卫，修复多课程页面 `CourseEntry \| undefined` 报错） | 2026-11-13 | [总览](00025-required-course-type-narrowing/overview.md) |
