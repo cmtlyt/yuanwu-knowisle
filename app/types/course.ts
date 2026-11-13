@@ -58,11 +58,39 @@ export interface Lesson {
   pitfalls: string[]
 }
 
+/**
+ * 课程设计说明书（绑定到课程的数据，而非独立 Markdown / Nuxt Content 文件）。
+ * 用数据渲染「教学设计」视图；新增章节只改数据，视图自动接入。
+ */
+export type DesignBlock =
+  | { type: 'prose'; title?: string; text: string }
+  | { type: 'list'; title?: string; items: string[] }
+  | { type: 'callout'; tone: 'tip' | 'warn' | 'deep'; title: string; text: string }
+  | { type: 'kv'; title?: string; rows: Array<{ k: string; v: string }> }
+  | { type: 'table'; title?: string; columns: string[]; rows: string[][] }
+  | { type: 'code'; title?: string; code: string; note?: string }
+  /** 从课程数据动态生成「学习路径总表」，避免与 LESSONS 重复维护 */
+  | { type: 'lessons' }
+
+export interface DesignSection {
+  id: string
+  title: string
+  intro?: string
+  blocks: DesignBlock[]
+}
+
+export interface CourseDesign {
+  title: string
+  summary: string
+  sections: DesignSection[]
+}
+
 export interface EffectCourseData {
   STAGES: Stage[]
   CONCEPTS: Concept[]
   LESSONS: Lesson[]
   META: CourseMeta
+  DESIGN?: CourseDesign
 }
 
 /** 知识岛中的一门课。新增课程只需往 COURSES 追加一项并提供 data。 */

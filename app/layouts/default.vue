@@ -40,6 +40,7 @@ const tabs = computed<Tab[]>(() =>
         { label: '学情仪表盘', short: '学情', icon: '📊', to: `${base.value}/dashboard` },
         { label: '复习中心', short: '复习', icon: '🔁', to: `${base.value}/review` },
         { label: '教学准备', short: '教学', icon: '🧰', to: `${base.value}/teacher` },
+        { label: '教学设计', short: '设计', icon: '📘', to: `${base.value}/design` },
         { label: '设置', short: '设置', icon: '⚙', to: `${base.value}/settings` },
       ]
     : [
