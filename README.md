@@ -31,7 +31,25 @@ pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrang
 
 ## 部署到 Cloudflare Workers
 
-本项目以 **Workers Static Assets** 方式部署（非 Pages）：`nuxt.config.ts` 设 `nitro.preset: 'cloudflare_module'` + `cloudflare: { deployConfig: true, nodeCompat: true }`；`wrangler.jsonc` 仅声明 `name` / `compatibility_date` / `observability`，`main` 与 `assets` 由 Nitro 构建时生成。学情数据纯前端 localStorage，无需服务端存储。部署前本地验证：`pnpm build && pnpm preview`。
+本项目以 **Workers Static Assets** 方式部署（非 Pages）：`nuxt.config.ts` 设 `nitro.preset: 'cloudflare_module'` + `cloudflare: { deployConfig: true, nodeCompat: true }`；`wrangler.jsonc` 声明 `name` / `compatibility_date` / `observability`，`main` 与 `assets` 由 Nitro 构建时生成并合并进 `.output/server/wrangler.json`。学情数据纯前端 localStorage，无需服务端存储。部署前本地验证：`pnpm build && pnpm preview`。
+
+**自定义域名**：`wrangler.jsonc` 已通过 `routes` 声明 `yuanwu-knowisle.cmtlyt.top`（`custom_domain: true`），并关闭默认的 `*.workers.dev` 子域；部署时 wrangler 会在 Cloudflare 账户内自动为该域名建 CNAME 并把 Worker 绑上去。`cmtlyt.top` 这个 zone 必须在本账户下；API Token 需具备该 zone 的 `Zone:Read`（解析 zone id）+ `Workers Routes:Edit`（绑定自定义域名）权限，详见下方 CI/CD 密钥说明。
+
+## CI/CD（GitHub Actions）
+
+质量门禁与部署已迁移到 GitHub Actions（[`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml)），**替代本地手动执行**：
+
+- **门禁**：push 或 PR 到 `main` 时自动运行 `fmt:check → lint → typecheck → verify → build`，任一失败即阻断合并 / 上线。
+- **部署**：push 到 `main` 且仓库已配置 Cloudflare 密钥后，自动执行 `pnpm deploy`（`nuxt build && wrangler deploy`）。未配置密钥时部署 job 自动跳过，**不会误上线**。
+
+上线前在仓库 **Settings → Secrets and variables → Actions** 添加：
+
+| Secret | 说明 |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | 自定义域名部署需：账户级 `Workers Scripts`（Edit/Write）+ `Account Settings:Read`；zone 级（作用范围选 `cmtlyt.top`）`Workers Routes`（Edit/Write，**绑定自定义域名就是它**）+ `Zone:Read`（解析 zone id）。**不需要 `DNS:Edit`**（自定义域名走 Workers 自定义域 API，不建原始 DNS 记录）。控制台「Zone」大类里资源名即 `Zone` / `Workers Routes` / `DNS` |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账户 ID（须与 `cmtlyt.top` 这个 zone 同账户） |
+
+本地仍可用同名 script 复现：`pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm verify && pnpm build`，部署 `pnpm deploy`（需 `wrangler login` 或本机环境变量）。
 
 ## 课程路由
 

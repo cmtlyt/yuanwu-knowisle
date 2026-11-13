@@ -5,4 +5,12 @@
   "observability": {
     "enabled": true,
   },
+  // 仅通过自定义域名暴露，关闭默认的 *.workers.dev 子域
+  "workers_dev": false,
+  "routes": [
+    {
+      "pattern": "yuanwu-knowisle.cmtlyt.top",
+      "custom_domain": true,
+    },
+  ],
 }

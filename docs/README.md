@@ -33,3 +33,5 @@
 | `00017-cloudflare-skills-and-module-cleanup` | 移除未使用的 Nuxt Content / image，安装 Cloudflare 官方部署 skill | 2026-11-13 | [总览](00017-cloudflare-skills-and-module-cleanup/overview.md) |
 | `00018-course-design-as-data` | 教学设计说明书转成绑定课程的数据并渲染，skill 补这一步 | 2026-11-13 | [总览](00018-course-design-as-data/overview.md) |
 | `00019-cloudflare-workers-deploy-config` | 配置 Nuxt 部署到 Cloudflare Workers（本地配置与验证，未上线） | 2026-11-13 | [总览](00019-cloudflare-workers-deploy-config/overview.md) |
+| `00020-github-actions-ci-cd` | 用 GitHub Actions 接管质量门禁与 Cloudflare 部署，替代本地手动命令 | 2026-11-13 | [总览](00020-github-actions-ci-cd/overview.md) |
+| `00021-cloudflare-custom-domain` | 自定义域名 yuanwu-knowisle.cmtlyt.top（根 wrangler.jsonc 加 routes + workers_dev=false） | 2026-11-13 | [总览](00021-cloudflare-custom-domain/overview.md) |
