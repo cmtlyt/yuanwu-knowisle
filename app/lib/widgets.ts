@@ -1241,6 +1241,970 @@ W.retry = function (root, onDone) {
   return c.cleanup
 }
 
+/* ===================== RxJS 7.8.x 课程演练（13 个） ===================== */
+
+/* ---------- RxJS 1. 源操作符节奏 ---------- */
+W.rxjsSource = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '源操作符节奏：同一序列，不同源发得不同',
+    '切换源类型，点「运行」看时间轴上值与 complete 标记的排布。',
+    onDone,
+  )
+  const modes = [
+    { label: 'of(1,2,3)', vals: [1, 2, 3], hot: false, note: '同步逐个发射、最后 complete' },
+    { label: 'interval(1s)+take(3)', vals: [0, 1, 2], hot: true, note: '每 1s 一个，take(3) 后 complete' },
+    { label: 'timer(200,1000)', vals: [0, 1, 2], hot: true, note: '先 200ms 首发射，之后每 1000ms' },
+    { label: 'from([1,2,3])', vals: [1, 2, 3], hot: false, note: '数组逐元素同步发射' },
+    { label: 'defer(工厂)', vals: [7], hot: false, note: '每次订阅重执行工厂，再发射' },
+  ]
+  let cur = 0
+  const g = h('div', 'w-btnrow')
+  modes.forEach((m, i) =>
+    g.appendChild(
+      button(
+        m.label,
+        () => {
+          cur = i
+          draw()
+        },
+        i === 0 ? 'primary' : '',
+      ),
+    ),
+  )
+  c.body.appendChild(g)
+  const chart = box(c.body, 'w-lanes')
+  const stats = box(c.body, 'w-explain')
+  function draw() {
+    Array.from(g.children).forEach((b, i) => b.classList.toggle('primary', i === cur))
+    const m = modes[cur]
+    const w = 620,
+      cell = 90
+    let content = '<line x1="8" y1="70" x2="' + (w - 8) + '" y2="70" stroke="currentColor" opacity="0.3"/>'
+    content += '<text x="8" y="24" font-size="11" fill="currentColor">' + esc(m.label) + '</text>'
+    m.vals.forEach((v, i) => {
+      const x = 40 + i * cell
+      content += '<circle cx="' + x + '" cy="70" r="10" fill="#3fb984"/>'
+      content += '<text x="' + x + '" y="74" font-size="11" text-anchor="middle" fill="#fff">' + v + '</text>'
+    })
+    content += '<text x="' + (40 + m.vals.length * cell) + '" y="74" font-size="16" fill="#e46a70">|</text>'
+    chart.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' 120" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    stats.innerHTML =
+      '<p><strong>' +
+      esc(m.note) +
+      '</strong></p><p class="w-muted">' +
+      (m.hot
+        ? '持续/热型：不随某个订阅停止计时，需 take / unsubscribe 收口。'
+        : '冷型：无订阅者则不执行；每个订阅独立重放。') +
+      '</p>'
+    c.setStatus('当前源：' + m.label)
+    c.finish()
+  }
+  group(c.body, [
+    button(
+      '运行',
+      () => {
+        draw()
+        c.finish()
+      },
+      'primary',
+    ),
+    button('重置', () => {
+      cur = 0
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 2. 冷 / 热对比 ---------- */
+W.rxColdHot = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '冷源 vs 热源：晚到的订阅者看到什么',
+    '先推热 Subject 的 next，再让 C「晚到」订阅，看它是否错过早期值；冷源则两个订阅者各自独立。',
+    onDone,
+  )
+  let hot = []
+  const lanes = box(c.body, 'w-lanes')
+  const log = box(c.body, 'w-log')
+  function draw() {
+    const w = 620
+    let content = '<text x="8" y="14" font-size="11" fill="currentColor">热 Subject（独立计时）</text>'
+    hot.forEach((v, i) => {
+      const x = 40 + i * 64
+      content += '<circle cx="' + x + '" cy="44" r="10" fill="#5b8def"/>'
+      content += '<text x="' + x + '" y="48" font-size="10" text-anchor="middle" fill="#fff">' + v + '</text>'
+    })
+    content += '<line x1="40" y1="84" x2="600" y2="84" stroke="currentColor" opacity="0.3"/>'
+    content +=
+      '<text x="40" y="104" font-size="10" fill="currentColor">冷 interval：A、B 各自独立从 0 起（互不共享时间线）</text>'
+    lanes.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' 120" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+  }
+  group(c.body, [
+    button('Subject.next()', () => {
+      hot.push(hot.length)
+      log.innerHTML +=
+        '<div class="w-line">next(' + (hot.length - 1) + ')：早到的 A 看到它；晚到的 C 尚未订阅、错过</div>'
+      draw()
+      c.setStatus('热流独立计时，推了几次就发了几次')
+    }),
+    button('C 晚到订阅', () => {
+      const last = hot.length ? hot[hot.length - 1] : null
+      log.innerHTML +=
+        '<div class="w-line ok">C 现在订阅：只看到 ' +
+        (last === null ? '之后的值（目前还没有）' : '值 ' + last + ' 之后的内容') +
+        '；不重放历史</div>'
+      c.setStatus('C 错过了 ' + hot.length + ' 个早期值（普通 Subject 不重放）')
+      c.finish()
+    }),
+    button('重置', () => {
+      hot = []
+      log.innerHTML = ''
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 3. 订阅回收 ---------- */
+W.rxTeardown = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '订阅回收：取消父订阅，级联回收子资源',
+    '往订阅里 add 几个子资源，再取消父订阅，看它们是否按 LIFO 全部回收。',
+    onDone,
+  )
+  let items = []
+  const pool = ['setInterval 定时器', 'addEventListener', 'WebSocket 连接', '子订阅 sub2']
+  const stackBox = box(c.body, 'w-stack')
+  const log = box(c.body, 'w-log')
+  function draw() {
+    stackBox.innerHTML =
+      '<div class="w-box-title">父订阅持有的子资源（' +
+      items.length +
+      '）</div>' +
+      (items.length
+        ? items
+            .slice()
+            .reverse()
+            .map((x) => '<div class="w-frame">' + esc(x) + '</div>')
+            .join('')
+        : '<div class="w-empty">（空，点「添加子资源」）</div>')
+  }
+  const acquire = () => {
+    items.push(pool[items.length % pool.length])
+    draw()
+    c.setStatus('Subscription.add：子资源挂到父订阅，取消时会级联回收')
+  }
+  const cancel = () => {
+    if (!items.length) return
+    log.innerHTML = '<div class="w-line">父订阅 unsubscribe() → 级联回收（LIFO）：</div>'
+    const seq = items.slice().reverse()
+    let i = 0
+    const step = () => {
+      if (i >= seq.length) {
+        log.innerHTML += '<div class="w-line ok">全部子资源已回收，零泄漏</div>'
+        c.setStatus('✅ 取消父订阅后所有子资源都释放')
+        c.finish()
+        return
+      }
+      log.innerHTML += '<div class="w-line">→ 回收 ' + esc(seq[i]) + '</div>'
+      i += 1
+      c.later(step, 280)
+    }
+    c.later(step, 160)
+  }
+  group(c.body, [button('添加子资源', acquire), button('取消父订阅', cancel, 'primary')])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 4. 观察者协议 ---------- */
+W.rxObserver = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '观察者协议：手写 new Observable 的发射序列',
+    '依次 next / error / complete，观察序列；终结后再点其它按钮，看它被忽略。',
+    onDone,
+  )
+  let seq = []
+  let terminated = false
+  const mark = { v: '·', error: '✕', complete: '✓' }
+  const fill = { v: '#5b8def', error: '#e46a70', complete: '#3fb984' }
+  const chart = box(c.body, 'w-lanes')
+  function draw() {
+    let content = '<line x1="8" y1="40" x2="600" y2="40" stroke="currentColor" opacity="0.3"/>'
+    seq.forEach((s, i) => {
+      const x = 48 + i * 56
+      content += '<circle cx="' + x + '" cy="40" r="12" fill="' + fill[s] + '"/>'
+      content +=
+        '<text x="' + x + '" y="44" font-size="11" text-anchor="middle" fill="#fff">' + mark[s] + '</text>'
+    })
+    chart.innerHTML = '<svg viewBox="0 0 620 80" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+  }
+  const emit = (s) => {
+    if (terminated) {
+      c.setStatus('⚠️ 已终结：' + s + ' 被忽略（终结不可逆）')
+      return
+    }
+    seq.push(s)
+    if (s === 'error' || s === 'complete') terminated = true
+    draw()
+    c.setStatus(terminated ? '✅ 流已终结，后续 next 不再生效' : '已发射 ' + seq.length + ' 个值')
+    c.finish()
+  }
+  group(c.body, [
+    button('next(值)', () => emit('v')),
+    button('error', () => emit('error')),
+    button('complete', () => emit('complete')),
+    button('重置', () => {
+      seq = []
+      terminated = false
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 5. map 流水线 ---------- */
+W.rxTransform = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    'map 流水线：只变换值，不改次数与时机',
+    '调变换系数 k，看每个阶段（原始 → ×k → +1）的值如何一对一变化。',
+    onDone,
+  )
+  let k = 2
+  const label = h('span', 'w-value', '×2')
+  const ctl = h('div', 'w-controls')
+  row(
+    ctl,
+    '变换系数 k',
+    slider(1, 5, 2, 1, (v) => {
+      k = v
+      label.textContent = '×' + v
+      draw()
+    }),
+  )
+  row(ctl, '', label)
+  c.body.appendChild(ctl)
+  const chart = box(c.body, 'w-lanes')
+  const src = [0, 1, 2, 3]
+  function draw() {
+    const w = 620,
+      cell = 100
+    const ys = [30, 60, 90]
+    const stages = ['原始', '×k (map)', '+1']
+    let content = ''
+    stages.forEach((name, si) => {
+      content += '<text x="8" y="' + (ys[si] + 4) + '" font-size="10" fill="currentColor">' + name + '</text>'
+      src.forEach((v, i) => {
+        const x = 120 + i * cell
+        let val = v
+        if (si === 1) val = v * k
+        if (si === 2) val = v * k + 1
+        content +=
+          '<circle cx="' +
+          x +
+          '" cy="' +
+          ys[si] +
+          '" r="12" fill="' +
+          (si === 0 ? '#8a94a6' : si === 1 ? '#5b8def' : '#3fb984') +
+          '"/>'
+        content +=
+          '<text x="' +
+          x +
+          '" y="' +
+          (ys[si] + 4) +
+          '" font-size="11" text-anchor="middle" fill="#fff">' +
+          val +
+          '</text>'
+      })
+    })
+    src.forEach((_, i) => {
+      const x = 120 + i * cell
+      content += '<line x1="' + x + '" y1="42" x2="' + x + '" y2="102" stroke="currentColor" opacity="0.2"/>'
+    })
+    chart.innerHTML =
+      '<svg viewBox="0 0 ' + w + ' 120" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    c.setStatus('每列上下严格对齐：map 不改次数与时机，只变换每个值的形态')
+    c.finish()
+  }
+  group(c.body, [button('应用变换', draw, 'primary')])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 6. 过滤与取舍 ---------- */
+W.rxFilter = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '过滤与取舍：哪些值被丢、哪些被留',
+    '勾选谓词，看原始流 1..8 里哪些元素被保留（绿）、被丢（红×）。',
+    onDone,
+  )
+  const src = [1, 2, 2, 3, 4, 5, 5, 6]
+  let even = true
+  let takeN = 0
+  let distinct = true
+  const chart = box(c.body, 'w-lanes')
+  function pass(v, idx) {
+    if (distinct && src.slice(0, idx).indexOf(v) >= 0) return false
+    if (even && v % 2 !== 0) return false
+    if (takeN > 0 && idx >= takeN) return false
+    return true
+  }
+  function draw() {
+    let kept = 0
+    let content = '<line x1="8" y1="40" x2="600" y2="40" stroke="currentColor" opacity="0.3"/>'
+    src.forEach((v, i) => {
+      const x = 56 + i * 68
+      const ok = pass(v, i)
+      if (ok) kept += 1
+      content += '<circle cx="' + x + '" cy="40" r="12" fill="' + (ok ? '#3fb984' : '#e46a70') + '"/>'
+      content +=
+        '<text x="' +
+        x +
+        '" y="44" font-size="11" text-anchor="middle" fill="#fff">' +
+        (ok ? v : '✕') +
+        '</text>'
+    })
+    chart.innerHTML = '<svg viewBox="0 0 620 80" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    c.setStatus('保留 ' + kept + '/' + src.length + ' 个；过滤改变「次数」但保持相对顺序')
+    c.finish()
+  }
+  const btnE = button(
+    'filter(偶数)',
+    () => {
+      even = !even
+      btnE.classList.toggle('primary', even)
+      draw()
+    },
+    'primary',
+  )
+  const btnN = button('take(3)', () => {
+    takeN = takeN === 0 ? 3 : 0
+    btnN.classList.toggle('primary', takeN > 0)
+    draw()
+  })
+  const btnD = button(
+    '去重相邻',
+    () => {
+      distinct = !distinct
+      btnD.classList.toggle('primary', distinct)
+      draw()
+    },
+    'primary',
+  )
+  group(c.body, [
+    btnE,
+    btnN,
+    btnD,
+    button('重置', () => {
+      even = true
+      takeN = 0
+      distinct = true
+      btnE.classList.add('primary')
+      btnN.classList.remove('primary')
+      btnD.classList.add('primary')
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 7. 嵌套流展开 ---------- */
+W.rxFlatten = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '嵌套流：外层发射「内层流」，如何摊回',
+    '选 concatMap / mergeMap，看外层 a、b 的内层值按什么顺序摊回。',
+    onDone,
+  )
+  let mode = 'concat'
+  const chart = box(c.body, 'w-lanes')
+  const explain = box(c.body, 'w-explain')
+  const outer = [
+    { id: 'a', vals: ['a1', 'a2'] },
+    { id: 'b', vals: ['b1', 'b2'] },
+  ]
+  function draw() {
+    let content = '<text x="8" y="14" font-size="11" fill="currentColor">外层 a / b（各 2 个内层值）</text>'
+    outer.forEach((o, oi) => {
+      const y = 28 + oi * 26
+      content +=
+        '<rect x="60" y="' +
+        y +
+        '" width="180" height="18" rx="4" fill="' +
+        (oi === 0 ? '#5b8def' : '#3fb984') +
+        '" opacity="0.55"/>'
+      o.vals.forEach((v, vi) => {
+        content +=
+          '<circle cx="' +
+          (80 + vi * 90) +
+          '" cy="' +
+          (y + 9) +
+          '" r="8" fill="' +
+          (oi === 0 ? '#5b8def' : '#3fb984') +
+          '"/>'
+        content +=
+          '<text x="' +
+          (80 + vi * 90) +
+          '" y="' +
+          (y + 12) +
+          '" font-size="9" text-anchor="middle" fill="#fff">' +
+          v +
+          '</text>'
+      })
+      content += '<text x="66" y="' + (y + 14) + '" font-size="10" fill="#fff">' + o.id + '</text>'
+    })
+    let seq = mode === 'concat' ? ['a1', 'a2', 'b1', 'b2'] : ['a1', 'b1', 'a2', 'b2']
+    content += '<line x1="8" y1="86" x2="600" y2="86" stroke="currentColor" opacity="0.3"/>'
+    content +=
+      '<text x="8" y="106" font-size="10" fill="currentColor">摊回（' +
+      (mode === 'concat' ? 'concatMap' : 'mergeMap') +
+      '）</text>'
+    seq.forEach((v, i) => {
+      const x = 60 + i * 70
+      content += '<circle cx="' + x + '" cy="86" r="12" fill="#e8a33d"/>'
+      content += '<text x="' + x + '" y="90" font-size="11" text-anchor="middle" fill="#fff">' + v + '</text>'
+    })
+    chart.innerHTML = '<svg viewBox="0 0 620 120" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    explain.innerHTML =
+      mode === 'concat'
+        ? '<p><strong>concatMap</strong>：a 的两个内层值发完才轮到 b —— 保序、串行限流。</p>'
+        : '<p><strong>mergeMap</strong>：a、b 内层并发，相同 tick 的 a1/b1 先发、a2/b2 后发 —— 乱序、并发。</p>'
+    c.finish()
+  }
+  const b1 = button(
+    'concatMap',
+    () => {
+      mode = 'concat'
+      b1.classList.add('primary')
+      b2.classList.remove('primary')
+      draw()
+    },
+    'primary',
+  )
+  const b2 = button('mergeMap', () => {
+    mode = 'merge'
+    b2.classList.add('primary')
+    b1.classList.remove('primary')
+    draw()
+  })
+  group(c.body, [b1, b2])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 8. 四扁平化操作符时序对比（核心） ---------- */
+W.rxCross = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '四扁平化操作符时序对比（核心）',
+    '同样输入 A@0 / B@2 / C@4（每内层持续 3 单位），看 concatMap / mergeMap / switchMap / exhaustMap 各自何时取消、何时忽略。',
+    onDone,
+  )
+  const W0 = 620,
+    unit = 20,
+    x0 = 40,
+    yTop = 14,
+    laneH = 30
+  const defs = [
+    {
+      name: 'concatMap',
+      segs: [
+        { s: 0, e: 3, v: 'A', ok: true },
+        { s: 3, e: 6, v: 'B', ok: true },
+        { s: 6, e: 9, v: 'C', ok: true },
+      ],
+      note: 'A 发完才 B，B 发完才 C：严格保序、串行限流。',
+    },
+    {
+      name: 'mergeMap',
+      segs: [
+        { s: 0, e: 3, v: 'A', ok: true },
+        { s: 2, e: 5, v: 'B', ok: true },
+        { s: 4, e: 7, v: 'C', ok: true },
+      ],
+      note: 'A、B、C 并发，同 tick 内层交错：最快，但可能乱序、过载。',
+    },
+    {
+      name: 'switchMap',
+      segs: [
+        { s: 0, e: 2, v: 'A', ok: false, label: '取消' },
+        { s: 2, e: 4, v: 'B', ok: false, label: '取消' },
+        { s: 4, e: 7, v: 'C', ok: true },
+      ],
+      note: 'B 到→取消 A；C 到→取消 B；只有最新 C 存活：取最新。',
+    },
+    {
+      name: 'exhaustMap',
+      segs: [
+        { s: 0, e: 3, v: 'A', ok: true },
+        { s: 2, e: 5, v: 'B', ok: false, label: '忽略' },
+        { s: 4, e: 7, v: 'C', ok: true },
+      ],
+      note: 'A 进行中时 B 被忽略；A 完成后才接受 C：排空、防重复提交。',
+    },
+  ]
+  const chart = box(c.body, 'w-lanes')
+  const explain = box(c.body, 'w-explain')
+  function draw() {
+    let content = ''
+    content +=
+      '<line x1="' +
+      x0 +
+      '" y1="' +
+      (yTop + defs.length * laneH + 6) +
+      '" x2="' +
+      (W0 - 8) +
+      '" y2="' +
+      (yTop + defs.length * laneH + 6) +
+      '" stroke="currentColor" opacity="0.3"/>'
+    content +=
+      '<text x="' +
+      x0 +
+      '" y="' +
+      (yTop + defs.length * laneH + 24) +
+      '" font-size="10" fill="currentColor">0 ─── 时间 ───► 9（每内层 3 单位；外值 A@0 B@2 C@4）</text>'
+    defs.forEach((d, di) => {
+      const y = yTop + di * laneH
+      content += '<text x="8" y="' + (y + 16) + '" font-size="10" fill="currentColor">' + d.name + '</text>'
+      d.segs.forEach((sg) => {
+        const x1 = x0 + sg.s * unit
+        const w = (sg.e - sg.s) * unit
+        const fill = sg.ok ? '#5b8def' : '#e46a70'
+        content +=
+          '<rect x="' +
+          x1 +
+          '" y="' +
+          y +
+          '" width="' +
+          w +
+          '" height="20" rx="4" fill="' +
+          fill +
+          '" opacity="' +
+          (sg.ok ? 0.9 : 0.45) +
+          '"/>'
+        content +=
+          '<text x="' +
+          (x1 + w / 2) +
+          '" y="' +
+          (y + 14) +
+          '" font-size="10" text-anchor="middle" fill="#fff">' +
+          sg.v +
+          (sg.ok ? '' : '✕') +
+          '</text>'
+      })
+    })
+    chart.innerHTML =
+      '<svg viewBox="0 0 ' +
+      W0 +
+      ' ' +
+      (yTop + defs.length * laneH + 32) +
+      '" preserveAspectRatio="xMinYMin meet">' +
+      content +
+      '</svg>'
+    explain.innerHTML = defs.map((d) => '<p><strong>' + d.name + '</strong>：' + d.note + '</p>').join('')
+    c.setStatus('对比四条泳道：红色 = 被取消 / 被忽略的内层')
+    c.finish()
+  }
+  group(c.body, [
+    button(
+      '高亮差异',
+      () => {
+        c.setStatus('switch 取消旧的；exhaust 忽略新的——差别就在这')
+        c.finish()
+      },
+      'primary',
+    ),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 9. 重试与指数退避 ---------- */
+W.rxRetry = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '重试与指数退避：retry(n) / retryWhen',
+    '调 maxRetry 与退避因子，看重试时刻如何拉开；切换「固定/指数」观察退避如何防风暴。',
+    onDone,
+  )
+  let base = 1
+  let factor = 2
+  let count = 3
+  let backoff = true
+  const vals = {}
+  const ctl = h('div', 'w-controls')
+  const mk = (label, min, max, val, key, fmt) => {
+    const lab = h('span', 'w-value', fmt(val))
+    vals[key] = lab
+    row(
+      ctl,
+      label,
+      slider(min, max, val, 1, (v) => {
+        if (key === 'base') base = v
+        else if (key === 'factor') factor = v
+        else if (key === 'count') count = v
+        lab.textContent = fmt(v)
+        draw()
+      }),
+    )
+    row(ctl, '', lab)
+  }
+  mk('首次退避', 1, 4, 1, 'base', (v) => v + ' 单位')
+  mk('退避因子', 1, 4, 2, 'factor', (v) => '×' + v)
+  mk('最多重试', 1, 5, 3, 'count', (v) => v + ' 次')
+  c.body.appendChild(ctl)
+  const chart = box(c.body, 'w-lanes')
+  const stats = box(c.body, 'w-explain')
+  function draw() {
+    const d = []
+    for (let i = 0; i < count; i++) d.push(backoff ? base * Math.pow(factor, i) : base)
+    const total = d.reduce((a, b) => a + b, 0)
+    let acc = 0
+    let content = '<line x1="10" y1="80" x2="600" y2="80" stroke="currentColor" opacity="0.35"/>'
+    content +=
+      '<circle cx="40" cy="80" r="8" fill="#5b8def"/><text x="40" y="64" text-anchor="middle" font-size="10" fill="currentColor">首次</text>'
+    d.forEach((x, i) => {
+      acc += x
+      const px = 40 + (acc / (total || 1)) * 540
+      content += '<circle cx="' + px + '" cy="80" r="8" fill="' + (backoff ? '#3fb984' : '#e46a70') + '"/>'
+      content +=
+        '<text x="' +
+        px +
+        '" y="24" text-anchor="middle" font-size="10" fill="currentColor">retry #' +
+        (i + 1) +
+        '</text>'
+      content +=
+        '<text x="' +
+        px +
+        '" y="106" text-anchor="middle" font-size="10" fill="currentColor">' +
+        x +
+        ' 单位</text>'
+    })
+    chart.innerHTML = '<svg viewBox="0 0 620 120" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    stats.innerHTML =
+      '<p>延迟序列 <code>' +
+      d.join(' / ') +
+      '</code>，累计 ' +
+      total +
+      ' 单位。</p><p>' +
+      (backoff
+        ? '指数退避：后一次比前一次更久，降低对下游的冲击，避免重试风暴。'
+        : '固定间隔：每次都一样，故障未恢复时所有客户端同步重试，易打垮恢复中的服务。') +
+      '</p>'
+    c.setStatus('retry(' + count + ') 在 ' + (count + 1) + ' 次尝试内成功即停，否则向上抛 error')
+    c.finish()
+  }
+  group(c.body, [
+    button(
+      '切换 固定/指数 退避',
+      () => {
+        backoff = !backoff
+        draw()
+        c.setStatus(backoff ? '指数退避：间隔递增' : '固定间隔：间隔不变')
+      },
+      'primary',
+    ),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 10. Subject 多播 ---------- */
+W.rxSubject = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    'Subject 多播：一条时间线，多个订阅者',
+    '推 next，看早到订阅者 A 与晚到订阅者 B 各看到什么；切换 BehaviorSubject 看「补最近值」。',
+    onDone,
+  )
+  let mode = 'subject'
+  let ticks = []
+  const lanes = box(c.body, 'w-lanes')
+  const log = box(c.body, 'w-log')
+  function draw() {
+    let content =
+      '<text x="8" y="14" font-size="11" fill="currentColor">发射时间线（' +
+      (mode === 'subject' ? 'Subject' : 'BehaviorSubject') +
+      '）</text>'
+    ticks.forEach((v, i) => {
+      const x = 40 + i * 56
+      content += '<circle cx="' + x + '" cy="44" r="10" fill="#5b8def"/>'
+      content += '<text x="' + x + '" y="48" font-size="10" text-anchor="middle" fill="#fff">' + v + '</text>'
+    })
+    lanes.innerHTML = '<svg viewBox="0 0 620 90" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+  }
+  group(c.body, [
+    button(
+      'next(v)',
+      () => {
+        ticks.push(ticks.length)
+        log.innerHTML +=
+          '<div class="w-line">next(' +
+          (ticks.length - 1) +
+          ')：A 看到它；' +
+          (mode === 'subject' ? 'B 尚未订阅→错过' : 'B 若订阅会先补最近值再跟随') +
+          '</div>'
+        draw()
+        c.setStatus('已推 ' + ticks.length + ' 个值')
+        c.finish()
+      },
+      'primary',
+    ),
+    button('B 订阅', () => {
+      const last = ticks.length ? ticks[ticks.length - 1] : null
+      log.innerHTML +=
+        '<div class="w-line ok">' +
+        (mode === 'subject'
+          ? 'B 现在订阅：只看到之后的值（已错过 ' + ticks.length + ' 个，不重放）'
+          : 'B 现在订阅：立刻补最近值 ' + (last === null ? '∅' : last) + '，再跟随后续') +
+        '</div>'
+      c.setStatus(mode === 'subject' ? '普通 Subject 不重放历史' : 'BehaviorSubject 新订阅者立刻拿到当前值')
+      c.finish()
+    }),
+    button('切到 BehaviorSubject', () => {
+      mode = 'behavior'
+      ticks = []
+      log.innerHTML = ''
+      draw()
+    }),
+    button('重置', () => {
+      ticks = []
+      log.innerHTML = ''
+      mode = 'subject'
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 11. share 引用计数 ---------- */
+W.rxShare = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    'share 引用计数：第一个连接、最后一个断开',
+    '让订阅者 A / B 先后订阅与取消，看 refCount 与「昂贵源是否连接中」的变化。',
+    onDone,
+  )
+  let refs = 0
+  const metric = box(c.body, 'w-metric')
+  const bar = box(c.body, 'w-lanes')
+  const log = box(c.body, 'w-log')
+  function draw() {
+    const connected = refs > 0
+    metric.innerHTML =
+      'refCount = <strong>' +
+      refs +
+      '</strong>　·　昂贵源 ' +
+      (connected ? '已连接（执行中）' : '未连接') +
+      '　·　规则：第一个订阅者连接，最后一个取消时断开'
+    bar.innerHTML =
+      '<svg viewBox="0 0 620 60" preserveAspectRatio="xMinYMin meet">' +
+      '<rect x="20" y="20" width="120" height="24" rx="4" fill="#38a9c4"/><text x="80" y="37" text-anchor="middle" font-size="11" fill="#fff">昂贵源</text>' +
+      '<line x1="140" y1="32" x2="360" y2="32" stroke="' +
+      (connected ? '#3fb984' : '#8a94a6') +
+      '" stroke-width="3"/>' +
+      '<rect x="360" y="20" width="120" height="24" rx="4" fill="' +
+      (connected ? '#3fb984' : '#8a94a6') +
+      '"/><text x="420" y="37" text-anchor="middle" font-size="11" fill="#fff">' +
+      (connected ? 'share 中' : 'idle') +
+      '</text>' +
+      '</svg>'
+  }
+  const sub = (name) => {
+    refs += 1
+    log.innerHTML +=
+      '<div class="w-line">' +
+      name +
+      ' 订阅 → refCount ' +
+      refs +
+      (refs === 1 ? '（连接昂贵源）' : '') +
+      '</div>'
+    draw()
+    c.finish()
+  }
+  const un = (name) => {
+    refs = Math.max(0, refs - 1)
+    log.innerHTML +=
+      '<div class="w-line">' +
+      name +
+      ' 取消 → refCount ' +
+      refs +
+      (refs === 0 ? '（无人订阅，断开昂贵源）' : '') +
+      '</div>'
+    draw()
+    c.finish()
+  }
+  group(c.body, [
+    button('A 订阅', () => sub('A')),
+    button('A 取消', () => un('A')),
+    button('B 订阅', () => sub('B')),
+    button('B 取消', () => un('B')),
+  ])
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 12. 调度器时间注入 ---------- */
+W.rxScheduler = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '调度器：把「时间」变成可替换的依赖',
+    '切换调度器，观察同一套时间逻辑在宏任务 / 微任务 / 动画帧 / 虚拟时间下的执行顺序。',
+    onDone,
+  )
+  let mode = 'async'
+  const lanes = box(c.body, 'w-lanes')
+  const stats = box(c.body, 'w-explain')
+  const modes = {
+    async: {
+      label: 'asyncScheduler（宏任务）',
+      order: ['订阅', 'emit1', 'emit2', 'complete'],
+      note: 'setTimeout 队列，让出主线程；适合默认异步。',
+    },
+    queue: {
+      label: 'queueScheduler（微任务）',
+      order: ['订阅', 'emit1', 'emit2', 'complete'],
+      note: 'Promise.resolve 微任务，最接近同步；批处理友好。',
+    },
+    raf: {
+      label: 'animationFrameScheduler',
+      order: ['订阅', '帧1', '帧2', 'complete'],
+      note: '对齐 requestAnimationFrame，做动画不掉帧。',
+    },
+    virtual: {
+      label: 'TestScheduler（虚拟时间）',
+      order: ['0s', '300ms', '700ms', '1000ms'],
+      note: '不真实等待，用虚拟时钟推进，专测时间类操作符。',
+    },
+  }
+  function draw() {
+    const m = modes[mode]
+    let content = '<line x1="8" y1="40" x2="600" y2="40" stroke="currentColor" opacity="0.3"/>'
+    m.order.forEach((o, i) => {
+      const x = 60 + i * 130
+      content +=
+        '<circle cx="' + x + '" cy="40" r="14" fill="' + (mode === 'virtual' ? '#e8a33d' : '#5b8def') + '"/>'
+      content += '<text x="' + x + '" y="44" font-size="9" text-anchor="middle" fill="#fff">' + o + '</text>'
+    })
+    lanes.innerHTML = '<svg viewBox="0 0 620 80" preserveAspectRatio="xMinYMin meet">' + content + '</svg>'
+    stats.innerHTML =
+      '<p><strong>' +
+      m.label +
+      '</strong>：' +
+      m.note +
+      '</p><p class="w-muted">subscribeOn 决定「何时订阅/首发射」；observeOn 决定「每个值在哪个任务上被消费」。</p>'
+    c.setStatus('当前：' + m.label)
+    c.finish()
+  }
+  const g = h('div', 'w-btnrow')
+  Object.keys(modes).forEach((k, i) =>
+    g.appendChild(
+      button(
+        modes[k].label,
+        () => {
+          mode = k
+          Array.from(g.children).forEach((b, bi) => b.classList.toggle('primary', bi === i))
+          draw()
+        },
+        i === 0 ? 'primary' : '',
+      ),
+    ),
+  )
+  c.body.appendChild(g)
+  draw()
+  return c.cleanup
+}
+
+/* ---------- RxJS 13. 组合多源 ---------- */
+W.rxCombine = function (root, onDone) {
+  const c = makeCtx(
+    root,
+    '组合多源：merge / zip / combineLatest / withLatestFrom',
+    '给源 A 或 B 推值，看四个组合算子各自何时、发什么。',
+    onDone,
+  )
+  let a = 0
+  let b = 0
+  const chart = box(c.body, 'w-lanes')
+  const log = box(c.body, 'w-log')
+  const rows = ['merge', 'zip', 'combineLatest', 'withLatestFrom']
+  function draw() {
+    let content =
+      '<text x="8" y="16" font-size="11" fill="currentColor">当前：A=' +
+      (a || '∅') +
+      '  B=' +
+      (b || '∅') +
+      '</text>'
+    rows.forEach((r, i) => {
+      const y = 40 + i * 24
+      content += '<text x="8" y="' + (y + 4) + '" font-size="10" fill="currentColor">' + r + '</text>'
+    })
+    chart.innerHTML =
+      '<svg viewBox="0 0 620 ' +
+      (40 + rows.length * 24 + 10) +
+      '" preserveAspectRatio="xMinYMin meet">' +
+      content +
+      '</svg>'
+  }
+  group(c.body, [
+    button(
+      'A.next',
+      () => {
+        a += 1
+        log.innerHTML +=
+          '<div class="w-line">A.next(' +
+          a +
+          ') → merge 转发 A' +
+          a +
+          '；combineLatest ' +
+          (b ? '发 [A' + a + ', B' + b + ']' : '（B 还没值，暂不发）') +
+          '</div>'
+        draw()
+        c.finish()
+      },
+      'primary',
+    ),
+    button(
+      'B.next',
+      () => {
+        b += 1
+        log.innerHTML +=
+          '<div class="w-line">B.next(' +
+          b +
+          ') → merge 转发 B' +
+          b +
+          '；withLatestFrom 此刻 A 触发会带 B' +
+          b +
+          '</div>'
+        draw()
+        c.finish()
+      },
+      'primary',
+    ),
+    button('重置', () => {
+      a = 0
+      b = 0
+      log.innerHTML = ''
+      draw()
+    }),
+  ])
+  draw()
+  return c.cleanup
+}
+
 export const Widgets = {
   render(name, root, onDone) {
     if (!name || !W[name]) return function () {}

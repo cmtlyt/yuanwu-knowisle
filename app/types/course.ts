@@ -85,7 +85,8 @@ export interface CourseDesign {
   sections: DesignSection[]
 }
 
-export interface EffectCourseData {
+/** 通用课程体形状：STAGES / CONCEPTS / LESSONS / META + 可选 DESIGN 说明书。任意课程共用。 */
+export interface CourseData {
   STAGES: Stage[]
   CONCEPTS: Concept[]
   LESSONS: Lesson[]
@@ -93,11 +94,16 @@ export interface EffectCourseData {
   DESIGN?: CourseDesign
 }
 
+/** Effect 深度课的数据类型。等价于通用 CourseData（保留名以兼容既有引用）。 */
+export type EffectCourseData = CourseData
+
 /** 知识岛中的一门课。新增课程只需往 COURSES 追加一项并提供 data。 */
 export interface CourseEntry {
   slug: string
   title: string
   subtitle: string
+  /** 课程主标语，供地图页 hero 渲染（可选；缺省回退到 subtitle）。 */
+  tagline?: string
   description: string
   icon: string
   color: string

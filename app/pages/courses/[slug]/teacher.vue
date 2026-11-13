@@ -45,8 +45,8 @@ const meta = computed(() => data.value!.META)
         <li v-for="(n, i) in meta.notes" :key="i">{{ n }}</li>
       </ul>
       <div class="btn-row" style="margin-top: 10px">
-        <a class="btn sm" :href="meta.docs" target="_blank" rel="noopener">官方文档 v4</a>
-        <a class="btn sm" :href="meta.release" target="_blank" rel="noopener">4.0 发布公告</a>
+        <a class="btn sm" :href="meta.docs" target="_blank" rel="noopener">官方文档</a>
+        <a class="btn sm" :href="meta.release" target="_blank" rel="noopener">发布公告</a>
         <a class="btn sm" :href="meta.playground" target="_blank" rel="noopener">在线 Playground</a>
         <a class="btn sm" :href="meta.source" target="_blank" rel="noopener">源码仓库</a>
       </div>
@@ -60,15 +60,15 @@ const meta = computed(() => data.value!.META)
           key；新增课程追加一项即可。
         </li>
         <li>
-          <b>内容层独立</b>：全部课时、知识点、测验集中在
-          <code>app/data/effect-course.ts</code>，新增课时只需追加一项并登记概念。
+          <b>内容层独立</b>：全部课时、知识点、测验集中在该课的内容数据文件
+          （<code>app/data/&lt;topic&gt;-course.ts</code>），新增课时只需追加一项并登记概念。
         </li>
         <li>
           <b>自动联动</b>：地图、侧栏、雷达、复习队列、薄弱点归因全部按数据生成，新课时自动接入学情模型。
         </li>
         <li>
-          <b>版本标注</b>：升级 Effect 版本时只需更新
-          <code>META</code> 并复核受影响的课时代码；教学准备页会标出核实日期与 LTS 承诺。
+          <b>版本标注</b>：升级课程所基于的版本时只需更新
+          <code>META</code> 并复核受影响的课时代码；本页会标出核实日期与 LTS 承诺。
         </li>
         <li><b>数据可迁移</b>：学情档案按 v1 schema 存于 localStorage，可导出 JSON 备份、跨设备导入。</li>
         <li>

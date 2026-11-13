@@ -45,7 +45,13 @@ const tabs = computed<Tab[]>(() =>
       ]
     : [
         { label: '知识岛', short: '首页', icon: '🏝', to: '/' },
-        { label: 'Effect 深度课', short: '课程', icon: '🌀', to: courseBase('effect-ts') },
+        // 由注册表驱动：新增可用课程自动出现在首页导航（不硬编码 effect-ts）
+        ...availableCourses().map((c) => ({
+          label: c.title,
+          short: c.title.replace(/ 深度课$/, ''),
+          icon: c.icon,
+          to: courseBase(c.slug),
+        })),
       ],
 )
 

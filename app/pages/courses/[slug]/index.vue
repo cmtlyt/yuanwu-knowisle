@@ -32,7 +32,7 @@ function goLesson(id: string) {
     <div class="crumb"><NuxtLink to="/">知识岛</NuxtLink><span>/</span><span>{{ course!.title }}</span></div>
 
     <div class="hero">
-      <h2>从「程序即值」到「运行时指令解释」</h2>
+      <h2>{{ course!.tagline || course!.subtitle }}</h2>
       <p>
         {{ stages.length }} 个阶段 · {{ lessons.length }} 课时 ·
         {{ data!.CONCEPTS.length }} 个知识点，每课都配原理演练与即时反馈。

@@ -141,6 +141,7 @@ const CONCEPTS: Concept[] = [
   { id: 'runloop', name: '指令解释与 runLoop', stage: 4, weight: 4, prereqs: ['laziness', 'fiber'] },
   { id: 'scheduler', name: '调度与协作让出', stage: 4, weight: 4, prereqs: ['runloop'] },
   { id: 'concurrency', name: '结构化并发与中断', stage: 4, weight: 4, prereqs: ['fiber', 'scope'] },
+  { id: 'channel', name: 'Channel 通信原语', stage: 4, weight: 3, prereqs: ['concurrency'] },
   { id: 'stream', name: 'Stream 与背压', stage: 5, weight: 3, prereqs: ['concurrency'] },
   { id: 'schedule', name: 'Schedule 与重试', stage: 5, weight: 2, prereqs: ['recovery'] },
   { id: 'stm', name: '并发原语与 STM', stage: 5, weight: 2, prereqs: ['concurrency'] },
@@ -153,14 +154,16 @@ const LESSONS: Lesson[] = [
   L(
     'L01',
     0,
-    '为什么需要 Effect：TypeScript 的四个缺口',
-    20,
+    '动机与起步：TypeScript 的缺口与第一次运行',
+    35,
     1,
     [],
-    ['program-value'],
+    ['program-value', 'runners'],
     [
       '说清 Promise / try-catch 在生产代码里的结构性缺陷',
       '理解 Effect 要解决的是「程序」的类型化，而不是数据',
+      '搭好可运行的最小工程，把第一个 Effect 跑起来',
+      '分清 runSync / runPromise / runFork / run*With',
     ],
     [
       prose(
@@ -182,6 +185,22 @@ const LESSONS: Lesson[] = [
         'deep',
         '它不是代数效应语言',
         'Effect 没有用户可自定义的 perform / handler，也没有语言级可恢复续体。它只有一个固定的解释器：fiber runtime，解释一组固定的内部指令。这是「工业级 effect 框架」，灵感来自 ZIO / Cats Effect，而不是 Koka / OCaml 5 那类 algebraic effects。',
+      ),
+      code(
+        '最小工程与第一次运行（effect 4.1.4，单包零运行时依赖）',
+        'npm install effect@4.1.4\n\n// tsconfig.json 关键项：{ "strict": true, "module": "NodeNext", "target": "ES2022" }\n\nimport { Effect } from "effect"\n\nconst program = Effect.gen(function* () {\n  const name = yield* Effect.succeed("world")\n  yield* Effect.log("Hello, " + name + "!")\n})\n\nawait Effect.runPromise(program)',
+        'v4 的 effect 是单包：HTTP、Schema、RPC、SQL 等都从 effect/* 子路径导入。惰性蓝图只有交给 run* 才被 runtime 解释执行。',
+      ),
+      list('运行边界怎么选', [
+        'runSync：纯同步程序；遇到异步边界会抛错，适合脚本与测试。',
+        'runPromise / runPromiseExit：常规入口，后者把结果包成 Exit 而不抛。',
+        'runFork：立即返回 Fiber handle，用于需要中断或手动 join 的场景。',
+        'run*With(context)：手里已有 Context<R> 时直接带上下文运行，跳过 Effect.provide。',
+      ]),
+      call(
+        'warn',
+        '让执行只发生一次',
+        '把所有 Effect 组合都留在库代码里，只在应用入口（main / 请求处理器）调用一次 run*。到处 run 会丢掉结构化并发、资源作用域与追踪上下文。',
       ),
     ],
     'blueprint',
@@ -205,14 +224,36 @@ const LESSONS: Lesson[] = [
         '前三项分别对应 E 通道、R 通道、Scope 与结构化中断；样式作用域与 effect system 无关。',
         'program-value',
       ),
+      q(
+        '一段含 Effect.promise 的程序用 runSync 执行会怎样？',
+        ['正常返回 Promise', '遇到异步边界时抛错 / 无法同步完成', '自动降级为 runPromise', '返回 Exit'],
+        1,
+        'runSync 只适用于纯同步蓝图；异步边界必须交给 runPromise / runFork。',
+        'runners',
+      ),
+      q(
+        '已经手动构造了 Context<R>，最直接的运行方式是？',
+        [
+          'Effect.provide 后 runPromise',
+          'Effect.runPromiseWith(context)',
+          'Effect.forkChild',
+          'Effect.scoped',
+        ],
+        1,
+        'v4 提供 run*With 系列，直接带 Context 运行，无需先包一层 provide。',
+        'runners',
+      ),
     ],
     [
       ['副作用 (effect)', '与外部世界交互的行为，被建模成值而不是立即执行'],
       ['programs as values', '把程序本身当作可传递、可组合、可检查的不可变数据'],
+      ['运行边界', '把惰性蓝图交给 runtime 解释执行的唯一位置'],
+      ['default services', '不开任何配置就存在的日志／调度／追踪等默认服务'],
     ],
     [
       '把 Effect.succeed(x) 当成 Promise.resolve(x)：前者只是描述，后者已开始执行。',
       '以为引入 Effect 要重写整个项目——实际可以从最复杂的一小块开始渐进替换。',
+      '在工具函数内部随手 runPromise，导致上层无法重试或统一超时。',
     ],
   ),
 
@@ -278,66 +319,10 @@ const LESSONS: Lesson[] = [
   L(
     'L03',
     0,
-    '安装、配置与第一次运行',
-    20,
-    1,
-    ['L02'],
-    ['runners'],
-    ['搭好可运行的最小工程', '分清 runSync / runPromise / runFork / run*With'],
-    [
-      code(
-        '最小工程（effect 4.1.4，单依赖零运行时依赖）',
-        'npm install effect@4.1.4\n\n// tsconfig.json 关键项\n// { "strict": true, "module": "NodeNext", "target": "ES2022" }\n\nimport { Effect } from "effect"\n\nconst program = Effect.gen(function* () {\n  const name = yield* Effect.succeed("world")\n  yield* Effect.log("Hello, " + name + "!")\n})\n\nawait Effect.runPromise(program)',
-        'v4 的 effect 是单包：HTTP、Schema、RPC、SQL 等都从 effect/* 子路径导入，不再需要额外的平台核心包。',
-      ),
-      list('运行边界怎么选', [
-        'runSync：纯同步程序；遇到异步边界会抛错，适合脚本与测试。',
-        'runPromise / runPromiseExit：常规入口，后者把结果包成 Exit 而不抛。',
-        'runFork：立即返回 Fiber handle，用于需要中断或手动 join 的场景。',
-        'run*With(context)：手里已有 Context<R> 时直接带上下文运行，跳过 Effect.provide。',
-      ]),
-      call(
-        'warn',
-        '让执行只发生一次',
-        '把所有 Effect 组合都留在库代码里，只在应用入口（main / 请求处理器）调用一次 run*。到处 run 会丢掉结构化并发、资源作用域与追踪上下文。',
-      ),
-    ],
-    'blueprint',
-    [
-      q(
-        '一段含 Effect.promise 的程序用 runSync 执行会怎样？',
-        ['正常返回 Promise', '遇到异步边界时抛错 / 无法同步完成', '自动降级为 runPromise', '返回 Exit'],
-        1,
-        'runSync 只适用于纯同步蓝图；异步边界必须交给 runPromise / runFork。',
-        'runners',
-      ),
-      q(
-        '已经手动构造了 Context<R>，最直接的运行方式是？',
-        [
-          'Effect.provide 后 runPromise',
-          'Effect.runPromiseWith(context)',
-          'Effect.forkChild',
-          'Effect.scoped',
-        ],
-        1,
-        'v4 提供 run*With 系列，直接带 Context 运行，无需先包一层 provide。',
-        'runners',
-      ),
-    ],
-    [
-      ['运行边界', '把惰性蓝图交给 runtime 解释执行的唯一位置'],
-      ['default services', '不开任何配置就存在的日志／调度／追踪等默认服务'],
-    ],
-    ['在工具函数内部随手 runPromise，导致上层无法重试或统一超时。'],
-  ),
-
-  L(
-    'L04',
-    0,
     'pipe、Effect.gen 与组合的本质',
     30,
     2,
-    ['L03'],
+    ['L01'],
     ['composition', 'gen'],
     ['熟练写出 pipe 链和 gen 两种风格', '理解 yield* 为什么能自动解包 Success'],
     [
@@ -385,12 +370,12 @@ const LESSONS: Lesson[] = [
 
   /* ========== Stage 1 ========== */
   L(
-    'L05',
+    'L04',
     1,
     '构造子全景：把现实世界装进 Effect',
     25,
     2,
-    ['L04'],
+    ['L03'],
     ['constructors', 'typed-error'],
     ['按场景选对构造子', '区分可恢复错误与缺陷的构造方式'],
     [
@@ -434,12 +419,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L06',
+    'L05',
     1,
     '组合与变换：map / flatMap / all / zip',
     30,
     2,
-    ['L05'],
+    ['L04'],
     ['composition'],
     ['掌握常用算子的语义差异', '知道 Effect.all 默认顺序执行'],
     [
@@ -492,12 +477,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L07',
+    'L06',
     1,
     '类型是怎么长出来的：E 与 R 的累积',
     30,
     3,
-    ['L06'],
+    ['L05'],
     ['type-accumulation', 'gen'],
     ['能手工推导一段 gen 程序的最终类型', '理解为什么「编译通过即依赖齐全」'],
     [
@@ -532,6 +517,18 @@ const LESSONS: Lesson[] = [
         'R=never 表示 Context 为空，是 run* 可执行的前提之一。',
         'type-accumulation',
       ),
+      q(
+        'Effect.gen 里 yield* 多个 Effect 时，类型会怎样？',
+        [
+          'gen 会自动补全缺失的 R',
+          'yield* 每个 Effect 时，其 E/R 并入外层，未被 provide/catch 消解的会留在最终类型里',
+          'gen 只能处理 E，不处理 R',
+          'gen 会忽略依赖直接运行',
+        ],
+        1,
+        'gen 的类型累积是结构性的：编译通过即代表 E 全部可恢复、R 全部已满足，这正是「架构编码进类型」的来源。',
+        'gen',
+      ),
     ],
     [
       ['联合类型累积', '多个 yield* 的 E 汇成 union，R 汇成服务集合'],
@@ -541,12 +538,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L08',
+    'L07',
     1,
     '运行边界与 Exit：把结果变成值',
     25,
     2,
-    ['L07'],
+    ['L06'],
     ['exit', 'runners'],
     ['区分抛异常与返回 Exit', '知道何时用 runPromiseExit / Effect.exit'],
     [
@@ -586,6 +583,18 @@ const LESSONS: Lesson[] = [
         'exit 把失败吸收为 Success 通道的 Exit 值，错误不再向外传播。',
         'exit',
       ),
+      q(
+        '为保留结构化并发、资源 Scope 与追踪上下文，run* 应当放在哪里？',
+        [
+          '每个工具函数内部都 runPromise',
+          '应用根部 / 请求处理器这一处',
+          '每次调用 Effect.all 的地方',
+          '服务构造函数里',
+        ],
+        1,
+        '运行边界只在应用入口出现一次；到处 run 会丢掉结构化并发、Scope 与追踪上下文。',
+        'runners',
+      ),
     ],
     [
       ['Exit<A,E>', 'Success(A) | Failure(Cause<E>) 的运行终态'],
@@ -596,12 +605,12 @@ const LESSONS: Lesson[] = [
 
   /* ========== Stage 2 ========== */
   L(
-    'L09',
+    'L08',
     2,
     '两类错误：failure 与 defect',
     25,
     2,
-    ['L08'],
+    ['L07'],
     ['typed-error', 'defect'],
     ['能判断一个失败该建模成哪种', '知道各自的处理入口'],
     [
@@ -645,12 +654,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L10',
+    'L09',
     2,
     'Cause 的底层结构：扁平 reasons 数组',
     35,
     4,
-    ['L09'],
+    ['L08'],
     ['cause'],
     ['读懂 Cause<E> 的数据结构', '会用 guards 与 Cause.combine 分析复合失败'],
     [
@@ -709,12 +718,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L11',
+    'L10',
     2,
     '恢复策略与重试边界',
     30,
     3,
-    ['L10'],
+    ['L09'],
     ['recovery', 'schedule'],
     ['按场景选择恢复算子', '理解 retry 与 Schedule 是策略描述'],
     [
@@ -764,12 +773,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L12',
+    'L11',
     2,
     '可观测性：日志、追踪与失败报告',
     25,
     2,
-    ['L11'],
+    ['L10'],
     ['observability'],
     ['知道上下文如何在 fiber 内传播', '能配置局部 logger 并格式化 Cause'],
     [
@@ -812,6 +821,74 @@ const LESSONS: Lesson[] = [
     ['在并发任务里用模块级变量记录请求 ID，导致日志串线。'],
   ),
 
+  L(
+    'L12',
+    2,
+    'Cause 诊断实战：从 reasons 到恢复决策',
+    35,
+    4,
+    ['L09', 'L10'],
+    ['cause', 'recovery'],
+    [
+      '读真实失败程序的 Cause.reasons 并分类',
+      '按原因类型选对恢复算子',
+      '把缺陷与中断留在边界，不污染领域分支',
+    ],
+    [
+      prose(
+        '诊断三步法',
+        '拿到一个 Exit.fail 后不要急着重试。先 Cause.squash / 遍历 cause.reasons，把每条 reason 归到 Fail / Die / Interrupt 三类；再对每一类决定「能否恢复、用什么恢复」；最后让缺陷与中断只在应用边界被记录或转成 5xx，领域内的预期错误才用 catchTag 恢复。',
+      ),
+      code(
+        '把三类原因分层处置',
+        'import { Cause, Effect, Exit } from "effect"\n\n// 一段会并发失败 + 缺陷 + 中断的复合程序\nconst flaky = Effect.all(\n  [\n    Effect.fail("db down"),          // Fail（可重试）\n    Effect.die("bad index"),         // Die（缺陷，不该重试）\n    Effect.fail("timeout"),          // Fail（可重试）\n  ],\n  { concurrency: 2 }\n).pipe(\n  Effect.exit,                       // 吸收成值，不因一个失败中断整体\n  Effect.map((e) => {\n    if (Exit.isSuccess(e)) return "ok"\n    const reasons = e.cause.reasons\n    const retryable = reasons.filter(Cause.isFailReason).length\n    const hasDefect = Cause.hasDies(e.cause)\n    return { retryable, hasDefect } // 诊断结论\n  })\n)',
+        '用 Cause.isFailReason / hasDies 把「可重试的失败」与「不可恢复的缺陷」区分开，恢复策略才不会被 bug 放大成重试风暴。',
+      ),
+      call(
+        'warn',
+        '恢复算子与原因类型要匹配',
+        'retry / recover 只该用于 Fail（可重试的预期错误）；对 Die（缺陷）做 retry 只会放大 bug 与流量；对 Interrupt（中断）做 retry 会被再次中断。看到 cause.reasons 里混着 Die，先修缺陷而不是加重试。',
+      ),
+    ],
+    'cause',
+    [
+      q(
+        '一条 cause.reasons 里同时有 Fail 和 Die，正确处置是？',
+        [
+          '整条 retry 直到成功',
+          '只对 Fail 恢复，Die 留在边界记录/上报',
+          '直接吞掉 Die 当作成功',
+          '抛出第一个 reason',
+        ],
+        1,
+        '缺陷（Die）不参与类型化恢复，应在边界处 catchDefect 记录并转成 5xx；只有可重试的 Fail 才进 retry。',
+        'cause',
+      ),
+      q(
+        '「数据库连接超时」这类可重试失败，最合适的恢复算子是？',
+        ['Effect.die', 'Effect.retry（配 Schedule）', 'Effect.catchCause 后返回默认值', 'Effect.interrupt'],
+        1,
+        '可重试的预期错误用 retry + Schedule（退避/抖动/次数上限）；catchCause 返回默认值会掩盖真实故障。',
+        'recovery',
+      ),
+      q(
+        '为什么「对中断（Interrupt）做 retry」通常没有意义？',
+        ['Interrupt 会再次被同一取消信号中断', 'retry 会吞掉所有错误', '中断不能被捕获', 'retry 不支持中断'],
+        0,
+        '中断是「用户/系统要求停止」，重试一个被要求停止的任务只会立刻再次被中断；正确做法是响应取消而非重试。',
+        'recovery',
+      ),
+    ],
+    [
+      ['诊断三步法', 'squash → 分类 reasons → 按类型选恢复'],
+      ['Fail / Die / Interrupt', 'Cause 中三类 reason 及其恢复边界'],
+    ],
+    [
+      '不看 reasons 一律 retry，把缺陷也反复重试，放大流量与故障。',
+      '用 catchCause 把缺陷吞成「成功返回默认值」，掩盖了真实的 bug。',
+    ],
+  ),
+
   /* ========== Stage 3 ========== */
   L(
     'L13',
@@ -819,7 +896,7 @@ const LESSONS: Lesson[] = [
     'Context.Service：类型化的服务键',
     25,
     2,
-    ['L07'],
+    ['L06'],
     ['context'],
     ['会定义并消费一个服务', '理解 R 通道与 Context 的关系'],
     [
@@ -1012,14 +1089,88 @@ const LESSONS: Lesson[] = [
     ['在 try/finally 里手写清理，遇到异步中断就失效。', '把资源存成模块级变量，脱离 Scope 生命周期。'],
   ),
 
-  /* ========== Stage 4 ========== */
   L(
     'L17',
+    3,
+    '多 Layer 组合与资源竞争实战',
+    35,
+    4,
+    ['L15', 'L16'],
+    ['layer', 'layer-graph', 'scope'],
+    ['用 provideMerge 组装多服务依赖图', '识别并避免资源竞争与连接泄漏', '理解记忆化对单例资源的意义'],
+    [
+      prose(
+        '把一个应用拆成三层配方',
+        '真实应用几乎都有 Config（配置）→ Logger（日志）→ Db（数据库）这样一串依赖。每个服务各自是一份 Layer，Layer 之间的依赖用 RIn 表达，用 provide / provideMerge 把整张图装配成一个「需求归零」的根 Layer，应用入口只运行这一个根。',
+      ),
+      code(
+        '三个服务 + 资源竞争',
+        'import { Context, Effect, Layer } from "effect"\n\nclass Config extends Context.Service<Config, { dsn: string; poolSize: number }>()("Config") {}\nclass Logger extends Context.Service<Logger, { log: (m: string) => Effect.Effect<void> }, Config>()("Logger") {}\nclass Db extends Context.Service<Db, { query: (s: string) => Effect.Effect<string> }, Logger>()("Db") {}\n\n// 生产：每个服务一个 Layer；Db 是有状态的，用 scoped + acquireRelease\nconst ConfigLive = Layer.succeed(Config, { dsn: "postgres://...", poolSize: 5 })\nconst LoggerLive = Layer.effect(Logger, (cfg: Config) =>\n  Effect.succeed({ log: (m) => Effect.log(m) }))\nconst DbLive = Layer.scoped(Db, Effect.acquireRelease(\n  Effect.promise(() => openPool(5)),            // 开连接池\n  (pool) => Effect.promise(() => pool.close())   // 关时释放\n))\n\n// 组装：Db 依赖 Logger，Logger 依赖 Config；provideMerge 一路消解\nconst MainLive = Layer.merge(LoggerLive, DbLive).pipe(Layer.provideMerge(ConfigLive))\n// 根 Layer 的 RIn 归零，可 ManagedRuntime.make(MainLive)',
+        'DbLive 是 scoped 的：它在根 runtime 的生命周期里只构建一次（记忆化），关闭 runtime 时才真正 close 连接池。若在多个入口各构建一次，就会开多套连接池造成竞争。',
+      ),
+      call(
+        'deep',
+        '资源竞争的三个来源',
+        '① 多个 scoped Layer 各自开连接池 → 用同一份 Db 配方被记忆化，避免重复开池；② 嵌套 Scope 的关闭顺序 → 子 scope 先关、父 scope 后关（LIFO），finalizer 顺序天然正确；③ 跨请求共享单例 → 单例必须放在根 Layer，不要放在每个请求新建的 Scope 里。',
+      ),
+    ],
+    'layer',
+    [
+      q(
+        'Logger 依赖 Config、Db 依赖 Logger，要产出「只有 Db」且需求归零的根配方，应？',
+        [
+          'Layer.merge(LoggerLive, DbLive)',
+          'DbLive.pipe(Layer.provideMerge(LoggerLive), Layer.provide(LoggerLive.pipe(Layer.provide(ConfigLive))))',
+          '把三个服务都写进同一个 Layer.succeed',
+          '用 Effect.provide 代替 Layer.provide',
+        ],
+        1,
+        'provide 是纵向消解：内层配方的 RIn 被外层 ROut 满足，一路 provide 下去 Db 的 RIn 归零，最终只暴露 Db。',
+        'layer',
+      ),
+      q(
+        '两个入口各自 ManagedRuntime.make 一份带连接池的 Db 配方，最可能出什么？',
+        [
+          '类型报错',
+          '开了两套连接池（资源竞争 / 连接数翻倍），应把 Db 配方放在唯一根 Layer 并被记忆化',
+          '没有区别',
+          '连接池自动去重',
+        ],
+        1,
+        'Layer 结果按配方记忆化；同一份根 Layer 被多消费者引用才共享单例，各开各的就各开各的连接池。',
+        'layer-graph',
+      ),
+      q(
+        '嵌套 Scope 关闭时，finalizer 的执行顺序是？',
+        [
+          '父先关再关子',
+          '子 scope 先关、父 scope 后关（LIFO），后加的资源先释放',
+          '随机顺序',
+          '只有子 scope 关',
+        ],
+        1,
+        '与栈展开一致：先释放后加的资源（如查询结果集），再释放先加的资源（如连接池）。',
+        'scope',
+      ),
+    ],
+    [
+      ['根 Layer', 'RIn 归零、可交给 ManagedRuntime 装配的服务依赖图'],
+      ['资源竞争', '多个入口/Scope 各自构建有状态 Layer 导致连接池等多套'],
+    ],
+    [
+      '在多个应用入口各 make 一次根 Layer，以为连接池会自动共享。',
+      '把带状态的单例 Layer 放进每请求新建的 Scope，导致反复开/关连接。',
+    ],
+  ),
+
+  /* ========== Stage 4 ========== */
+  L(
+    'L18',
     4,
     'Fiber：虚拟线程与运行中的 Effect',
     35,
     3,
-    ['L08'],
+    ['L07'],
     ['fiber'],
     ['区分 Effect 与 Fiber', '掌握 join / await / interrupt 的语义差别'],
     [
@@ -1063,12 +1214,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L18',
+    'L19',
     4,
     '★ 指令解释器：Effect 蓝图与 runLoop',
     45,
     5,
-    ['L17'],
+    ['L18'],
     ['runloop', 'laziness'],
     ['能复述一个 Effect 从构造到 Exit 的执行链', '理解 continuation 栈与 trampoline 的作用'],
     [
@@ -1124,12 +1275,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L19',
+    'L20',
     4,
     '★ Scheduler：协作让出与公平性',
     40,
     5,
-    ['L18'],
+    ['L19'],
     ['scheduler'],
     ['解释 shouldYield 的触发条件', '知道如何调节操作预算与执行模式'],
     [
@@ -1182,12 +1333,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L20',
+    'L21',
     4,
     '★ 结构化并发与异步中断',
     45,
     5,
-    ['L16', 'L17'],
+    ['L16', 'L18'],
     ['concurrency'],
     ['区分四种 fork 的生命周期绑定', '解释中断如何跨异步边界传播且保证清理'],
     [
@@ -1233,14 +1384,73 @@ const LESSONS: Lesson[] = [
     ],
   ),
 
+  L(
+    'L22',
+    4,
+    '中断语义与 Channel',
+    40,
+    5,
+    ['L21'],
+    ['concurrency', 'channel'],
+    ['讲清结构化中断的 Interrupt 传播', '用 Channel 做有界多路通信', '区分 Channel 与 Stream 的分工'],
+    [
+      prose(
+        '中断是会传染的信号',
+        'Effect 的中断不是「轮询一个标志位」，而是运行时在安全的指令边界注入的异步信号。结构化并发下，中断沿 fiber 树向下传播：父 fiber 被中断时，未 detach 的子 fiber 会被一并中断，各层 Scope 的 finalizer 保证资源收尾。因此「取消」是安全的——不会留下半开资源。',
+      ),
+      code(
+        'Channel：双向通信原语',
+        'import { Channel, Effect, Console } from "effect"\n\n// 有界缓冲 2 的管道：读 / 写 / 结束 三态\nconst pipe = Channel.make(2)\n\nconst consumer = Effect.gen(function* () {\n  // 循环读，读不到值时按当前读策略挂起或结束\n  const value = yield* pipe.read()\n  yield* Console.log("got " + value)\n})\n\n// 关闭 Channel 会结束所有未完成的 read / write，收尾由 Scope 保证',
+        'Channel 底层就是 Stream 的通信原语：它描述「读 / 写 / 结束」的状态机，因此中断传播、背压与资源语义都复用 Effect 那套。',
+      ),
+      call(
+        'deep',
+        'Channel 与 Stream 的分工',
+        'Stream 是单向、只读、可被多方消费的时间序列；Channel 是双向、可交互的通信原语（可写可读、可有界缓冲），能建模父子进程、RPC 请求—响应这类需要「来回」的场景。两者底层共用同一套 Channel 描述，所以背压与中断行为一致。',
+      ),
+    ],
+    'concurrency',
+    [
+      q(
+        '父 fiber 被中断时，用 Effect.forkChild 派生的子 fiber 会？',
+        ['继续跑到自然完成', '被一并中断，且其 Scope finalizer 仍会执行', '抛出未捕获异常', '自动重启'],
+        1,
+        '结构化中断向下传播；forkDetach 的 daemon 才不受父中断影响。finalizer 保证资源收尾。',
+        'concurrency',
+      ),
+      q(
+        '需要「请求—响应」式来回通信（可写可读、有界缓冲）时，比 Stream 更合适的是？',
+        ['Effect.all', 'Channel（双向、可交互）', 'Ref', 'Effect.map'],
+        1,
+        'Stream 单向只读；Channel 是双向通信原语，底层与 Stream 共用同一套读/写/结束状态机。',
+        'channel',
+      ),
+      q(
+        '关闭一个 Channel 时，仍阻塞在 read 上的 fiber 会？',
+        ['永远卡住', '被正常结束并触发收尾，不泄漏', '抛 JS 异常', '自动重开'],
+        1,
+        'Channel 的「结束」是显式事件：读端在关闭时会收到结束而非永久阻塞，资源随 Scope 回收。',
+        'channel',
+      ),
+    ],
+    [
+      ['Interrupt 传播', '中断沿 fiber 树向下，未 detach 的子任务被一并取消'],
+      ['Channel', '双向可交互通信原语，与 Stream 共用读/写/结束状态机'],
+    ],
+    [
+      '把 Channel 的有界缓冲当无界用，写满后阻塞生产者造成隐性背压。',
+      '用 forkDetach 起后台任务却忘记在退出前显式关闭，daemon 泄漏。',
+    ],
+  ),
+
   /* ========== Stage 5 ========== */
   L(
-    'L21',
+    'L23',
     5,
     'Stream：零到多个值与背压',
     35,
     3,
-    ['L20'],
+    ['L21'],
     ['stream'],
     ['区分 Effect 与 Stream', '理解 pull-based 背压为什么天然成立'],
     [
@@ -1284,12 +1494,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L22',
+    'L24',
     5,
     'Schedule：把重试策略变成值',
     30,
     3,
-    ['L11'],
+    ['L10'],
     ['schedule'],
     ['能组合出指数退避 + 抖动 + 次数上限', '知道 timeout 与重试的边界'],
     [
@@ -1333,12 +1543,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L23',
+    'L25',
     5,
     '并发原语与 STM',
     30,
     3,
-    ['L20'],
+    ['L21'],
     ['stm'],
     ['知道常见并发原语的用途', '理解事务内存解决什么问题'],
     [
@@ -1385,12 +1595,12 @@ const LESSONS: Lesson[] = [
   ),
 
   L(
-    'L24',
+    'L26',
     5,
     '生态、稳定性与渐进落地',
     30,
     2,
-    ['L15', 'L21'],
+    ['L15', 'L23'],
     ['ecosystem'],
     ['知道 v4 的包结构与稳定性标记', '能给出一条渐进引入路线'],
     [
@@ -1466,7 +1676,7 @@ const META: CourseMeta = {
 const DESIGN: CourseDesign = {
   title: 'Effect 4.1.4 深度课 · 教学设计说明书',
   summary:
-    '面向「想真正理解 Effect 为什么这样设计」的学习者，而不是只想查 API 的人。6 阶段 24 课的学习路径、知识点依赖图、学情模型公式与长期扩展机制。版本基线核实日期：2026-11-13。',
+    '面向「想真正理解 Effect 为什么这样设计」的学习者，而不是只想查 API 的人。6 阶段 26 课、27 概念、59 题、11 个交互演练的学习路径、知识点依赖图、学情模型公式与长期扩展机制。版本基线核实日期：2026-11-13。',
   sections: [
     {
       id: 'baseline',
@@ -1540,7 +1750,7 @@ const DESIGN: CourseDesign = {
             [
               'L3 底层逻辑',
               '指令树长什么样？runLoop 如何解释？调度器何时让出？中断如何注入？',
-              'L18 / L19 / L20（课程核心，标 ★）',
+              'L19 / L20 / L21（课程核心，标 ★）',
             ],
           ],
         },
@@ -1548,7 +1758,7 @@ const DESIGN: CourseDesign = {
     },
     {
       id: 'path',
-      title: '2. 平缓学习路径（6 阶段 × 4 课 = 24 课）',
+      title: '2. 平缓学习路径（6 阶段 26 课，密度随复杂度动态调整）',
       intro: '下表由课程数据动态生成，新增课时会自动出现。',
       blocks: [
         {
@@ -1717,7 +1927,7 @@ exposure  = min(1, total / 4)                        // 样本不足不轻易判
         },
         {
           type: 'prose',
-          text: '移动端适配（≤780px）：顶栏精简为「菜单 / logo / 版本 / 主题」，6 个主视图改固定底部标签栏（图标 + 短标签，触控高度 ≥48px，含「教学设计」）；24 课目录改左侧抽屉（遮罩、Esc、点击空白、切页自动关闭）；卡片单列或两列，KPI 两列；代码块、原理图示、课时数据表、14 天时间轴保留独立横向滚动并给出滑动提示；输入框 16px 防 iOS 自动缩放；适配 viewport-fit=cover 与刘海屏 env(safe-area-inset-*)；横屏矮视口与 prefers-reduced-motion 另有规则。',
+          text: '移动端适配（≤780px）：顶栏精简为「菜单 / logo / 版本 / 主题」，6 个主视图改固定底部标签栏（图标 + 短标签，触控高度 ≥48px，含「教学设计」）；26 课目录改左侧抽屉（遮罩、Esc、点击空白、切页自动关闭）；卡片单列或两列，KPI 两列；代码块、原理图示、课时数据表、14 天时间轴保留独立横向滚动并给出滑动提示；输入框 16px 防 iOS 自动缩放；适配 viewport-fit=cover 与刘海屏 env(safe-area-inset-*)；横屏矮视口与 prefers-reduced-motion 另有规则。',
         },
         {
           type: 'prose',
