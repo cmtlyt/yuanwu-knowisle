@@ -140,6 +140,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 ## 11. 任务记录组织
 
 - 历史与变更记录统一放在 `docs/NNNNN-<task-name>/`，**一次任务一个目录**，编号 5 位递增；入口与索引是 `docs/README.md`。
+- **先建 overview 再实施（强制）**：动手改代码 / 数据 / 配置之前，必须先新建 `docs/NNNNN-<task-name>/overview.md`，写清「目标 + 变更计划 + 验证方案」；**改动较大时先把计划给用户审核，通过后再正式实施**。实施完成再补全「变更 / 验证 / 注意事项」。纯只读探查或单行改动可豁免，但一旦涉及多文件或影响行为就不得跳过。
 - 每完成一次用户任务，新建下一个编号目录，写 `overview.md`（目标 / 变更 / 验证 / 注意事项）；涉及迁入或映射时另写 `migration.md`。**不要把新任务内容追加到已有目录或旧文件**。
 - 目录名用编号开头 + kebab-case 任务名（如 `00001-init`）；只在 `docs/README.md` 索引里登记，不改历史目录中的结论；已失效的历史结论在原目录内标注「以 NNNNN 为准」。
 - 拆分前的累积文件（根目录 `overview.md`、`docs/migration.md`）已废弃，内容按任务迁入上述目录；引用改用 `docs/README.md` 或具体任务目录。

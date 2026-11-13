@@ -24,6 +24,7 @@
 
 - `RXJS_COURSE`：6 阶段（0 心智模型 / 1 可观察与发射 / 2 扁平化核心 / 3 错误与生命周期 / 4 多播与热流 / 5 调度时间落地）× 24 课 × 26 概念 × 48 题 × 13 个演练标识 + 9 节 DESIGN。
 - `META.version = 'rxjs@7.8.2'`、`verifiedAt` 锁定；正文只用 7.8 API，不混用 9.x beta。
+- ⚠️ 本节数字（24 课 / 26 概念 / 48 题）为首次交付状态；后续按「动态课时密度 + 面向完整性驱动题目数」原则重构为 **26 课 / 28 概念 / 69 题**，以 [00026](../00026-course-restructure-dynamic-quantity/overview.md) 为准。
 
 ### 课程注册（app/data/courses.ts）
 
@@ -63,4 +64,4 @@
 - 新增第三门课：只需 `app/data/<slug>-course.ts` + `courses.ts` 注册 + `widgets.ts` 演练，**引擎/composable/大部分视图零改动**；verify 自动纳入。
 - 共享视图层任何课程专属文案都必须数据驱动（`tagline` / `availableCourses()` / `META` / `DESIGN`）；smoke 应断言「该课专属文案只出现在自己的页」防串场。
 - 校验脚本不 import `courses.ts`（其内部省略扩展名相对导入在 Node 运行时解析不到），直接按 `.ts` 扩展名扫描数据层文件。
-- 本次改动**未提交**（沿用「改动先在工作区、按任务拆分提交」约定）。
+- 本次改动已随 `fd70ffa` 提交（多课程架构首批 8 文件）；后续重构见 [00026](../00026-course-restructure-dynamic-quantity/overview.md)。

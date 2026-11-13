@@ -2,6 +2,8 @@
 
 历史与变更记录按「**一次任务一个目录**」组织，编号 5 位递增。本文件是唯一入口；新任务请新建目录，**不要往已有目录或旧文件里追加**。
 
+**先建 overview 再实施**：动手改代码 / 数据 / 配置前，先新建 `NNNNN-<task-name>/overview.md` 写清「目标 + 变更计划 + 验证方案」；改动较大时先给用户审核，通过后再实施。规则详见 `AGENTS.md` 第 11 节。
+
 ## 约定
 
 - 目录名 `NNNNN-<task-name>`：编号 5 位 + kebab-case 任务名，例如 `00001-init`。
@@ -39,3 +41,4 @@
 | `00023-github-actions-secrets-if` | 修复 CI/CD「job 级 if 引用 secrets」导致 workflow 解析失败、0 job | 2026-11-13 | [总览](00023-github-actions-secrets-if/overview.md) |
 | `00024-rxjs-course-multicourse` | 新增 RxJS 7.8.2 深度课，落地多课程架构（类型契约 / 校验脚本 / 共享视图层去硬编码） | 2026-11-13 | [总览](00024-rxjs-course-multicourse/overview.md) |
 | `00025-required-course-type-narrowing` | `useRequiredCourse` 类型收窄（composable 层类型守卫，修复多课程页面 `CourseEntry \| undefined` 报错） | 2026-11-13 | [总览](00025-required-course-type-narrowing/overview.md) |
+| `00026-course-restructure-dynamic-quantity` | 动态课时密度 + 面向完整性驱动题目数（Effect 24→26 / RxJS 24→26 重构、3 道同面向题改写、skill 同步、verify 正确率自洽化、pitfall-resolver 回写） | 2026-11-13 | [总览](00026-course-restructure-dynamic-quantity/overview.md) |

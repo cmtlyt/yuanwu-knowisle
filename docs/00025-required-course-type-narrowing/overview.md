@@ -45,4 +45,4 @@
 
 - 修复落在 composable 层，7 个消费页面自动受益；后续可逐步去掉各页面 template 里 `course!.title` 等冗余非空断言。
 - 同类「已拦截但类型未收窄」的 composable 复用此模式：显式返回类型 + 类型守卫，避免 `as` 断言引入 `no-unsafe-type-assertion`。
-- 本次改动**未提交**。
+- 本次改动已随 `05160b3` 提交。
