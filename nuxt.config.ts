@@ -1,9 +1,16 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   modules: ['@nuxt/a11y', '@nuxt/hints', '@nuxt/ui', '@formkit/auto-animate', '@nuxtjs/device'],
-  compatibilityDate: '2025-07-15',
+  compatibilityDate: '2026-11-13',
   devtools: { enabled: true },
   css: ['~/assets/css/main.css'],
+  nitro: {
+    preset: 'cloudflare_module',
+    cloudflare: {
+      deployConfig: true,
+      nodeCompat: true,
+    },
+  },
   app: {
     head: {
       title: '源悟的知识岛 · 交互式课程',

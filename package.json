@@ -12,7 +12,10 @@
     "lint:fix": "oxlint --fix",
     "typecheck": "oxlint --type-aware --type-check",
     "fmt": "oxfmt --write",
-    "fmt:check": "oxfmt --check"
+    "fmt:check": "oxfmt --check",
+    "preview": "nuxt build && wrangler dev",
+    "deploy": "nuxt build && wrangler deploy",
+    "cf-typegen": "wrangler types"
   },
   "dependencies": {
     "@nuxt/a11y": "1.0.0-alpha.1",
@@ -35,7 +38,6 @@
     "@tiptap/starter-kit": "^3.33.1",
     "@tiptap/suggestion": "^3.33.1",
     "@tiptap/vue-3": "^3.33.1",
-    "better-sqlite3": "^13.1.1",
     "nuxt": "^4.6.4",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2",
@@ -52,6 +54,7 @@
     "lint-staged": "^17.6.0",
     "oxfmt": "0.78.0",
     "oxlint": "1.93.0",
-    "oxlint-tsgolint": "7.0.2007"
+    "oxlint-tsgolint": "7.0.2007",
+    "wrangler": "^4.160.1"
   }
 }

@@ -1,6 +1,7 @@
 allowBuilds:
   esbuild: true
   vue-demi: true
+  workerd: true
 minimumReleaseAgeExclude:
   - '@oxlint-tsgolint/darwin-arm64@7.0.2007'
   - '@oxlint-tsgolint/darwin-x64@7.0.2007'
