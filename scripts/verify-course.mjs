@@ -73,13 +73,30 @@ ok(
 )
 ok(C.META.version === 'effect@4.1.4', '版本基线锁定')
 
+console.log('\n=== 教学设计（DESIGN）===')
+const design = C.DESIGN
+ok(!!design, 'DESIGN 已绑定到课程')
+if (design) {
+  ok(!!design.title && !!design.summary, 'DESIGN 标题与摘要完整')
+  const secIds = new Set(design.sections.map((s) => s.id))
+  ok(secIds.size === design.sections.length, `章节 id 唯一（${design.sections.length} 节）`)
+  const known = new Set(['prose', 'list', 'callout', 'kv', 'table', 'code', 'lessons'])
+  let blockOk = true
+  for (const s of design.sections) {
+    if (!s.id || !s.title || !Array.isArray(s.blocks)) blockOk = false
+    for (const b of s.blocks) {
+      if (!known.has(b.type)) blockOk = false
+      if (b.type === 'kv' && !Array.isArray(b.rows)) blockOk = false
+      if (b.type === 'table' && (!Array.isArray(b.columns) || !Array.isArray(b.rows))) blockOk = false
+      if (b.type === 'callout' && (!b.tone || !b.title || !b.text)) blockOk = false
+      if (b.type === 'list' && !Array.isArray(b.items)) blockOk = false
+    }
+  }
+  ok(blockOk, 'DESIGN 区块结构有效')
+}
+
 console.log('\n=== 静态资源 ===')
-;[
-  'app/assets/css/main.css',
-  'app/lib/widgets.ts',
-  'app/lib/analytics.ts',
-  'content/docs/effect-course-design.md',
-].forEach((f) => {
+;['app/assets/css/main.css', 'app/lib/widgets.ts', 'app/lib/analytics.ts'].forEach((f) => {
   ok(fs.existsSync(path.join(ROOT, f)), f)
 })
 

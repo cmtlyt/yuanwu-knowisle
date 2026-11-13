@@ -42,3 +42,9 @@
 - 调试 commitlint 用 stdin：`printf 'feat: 示例' | pnpm exec commitlint --quiet`。
 - 校验忽略规则用 `git check-ignore -v <path>`；判断「可追踪」而非「被忽略」时用 `if git check-ignore -q <path>; then ... fi`。
 - 影子运行工具而不改项目：`npx --yes oxlint@latest app`（探测输出指向系统临时目录，不写仓库）。
+
+## 手工编辑后的格式差异
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| `pnpm fmt:check` 只列出一个文件（如 `nuxt.config.ts (0ms)`）后报 `Format issues found in above 1 files`，退出 1 | 手工增删数组 / 对象成员后，oxfmt 按 `printWidth: 110` 重新判断换行：元素变少时原本多行的数组应压成单行，反之展开 | 不要手猜格式，直接 `pnpm fmt`（`oxfmt --write`）写回，再按门禁顺序重跑**全部**回归；`lint-staged` 会在提交时对暂存的 TS/Vue/JSON 自动 oxfmt，但本地门禁应先自行归零。实测 2026-11-13：删 Nuxt modules 数组两项、删 verify 静态资源数组一项，两次都触发，一次改动可能不止一个文件，改完统一 `pnpm fmt` 一次即可 |

@@ -179,5 +179,18 @@ if (!widgetsArg) {
   ok(widgetIds.every(has), '演练组件映射有效', widgetIds.join(', ') || '无 widget')
 }
 
+console.log('\n=== 教学设计（DESIGN，可选）===')
+if (C.DESIGN) {
+  const secIds = new Set(C.DESIGN.sections.map((s) => s.id))
+  ok(secIds.size === C.DESIGN.sections.length, 'DESIGN 章节 id 唯一')
+  const known = new Set(['prose', 'list', 'callout', 'kv', 'table', 'code', 'lessons'])
+  const blockOk = C.DESIGN.sections.every(
+    (s) => s.id && s.title && Array.isArray(s.blocks) && s.blocks.every((b) => known.has(b.type)),
+  )
+  ok(blockOk, 'DESIGN 区块结构有效')
+} else {
+  warn('未提供 DESIGN，跳过教学设计校验（如需渲染说明书请补充）')
+}
+
 console.log('\n' + (failed === 0 ? '✅ 全部校验通过' : `❌ 校验失败 ${failed} 项`))
 process.exit(failed === 0 ? 0 : 1)

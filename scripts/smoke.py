@@ -21,12 +21,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ROUTES = [
     ("/", 200, ["源悟的知识岛", "Effect 深度课", "更多课程在路上"]),
-    ("/docs/effect-course-design", 200, ["教学设计说明书", "知识点"]),
     ("/courses/effect-ts", 200, ["从「程序即值」到「运行时指令解释」", "六个阶段", "L01"]),
     ("/courses/effect-ts/dashboard", 200, ["学情仪表盘", "能力雷达", "薄弱点归因"]),
     ("/courses/effect-ts/review", 200, ["复习中心", "最近错题"]),
     ("/courses/effect-ts/teacher", 200, ["长期教学准备", "版本基线", "课时数据"]),
     ("/courses/effect-ts/settings", 200, ["设置与数据", "导出 JSON 备份"]),
+    ("/courses/effect-ts/design", 200, ["教学设计说明书", "版本基线", "平缓学习路径", "知识点依赖图"]),
     ("/courses/effect-ts/lessons/L18", 200, ["指令解释器", "关键术语", "随堂测验"]),
     ("/courses/effect-ts/lessons/L02", 200, ["三通道", "关键术语", "随堂测验"]),
     ("/courses/effect-ts/lessons/L10", 200, ["Cause", "关键术语", "随堂测验"]),
@@ -37,14 +37,16 @@ CLIENT_ROUTES = [
     ("/courses/effect-ts/lessons/L18", "runLoop：指令解释"),
     ("/courses/effect-ts/lessons/L02", "三通道类型拼装台"),
     ("/courses/effect-ts/dashboard", "能力雷达"),
+    ("/courses/effect-ts/design", "版本基线"),
 ]
 
 VIEWPORTS = [
     (320, 700, True, "极窄手机", ["/", "/courses/effect-ts", "/courses/effect-ts/lessons/L18", "/courses/effect-ts/dashboard"]),
     (390, 844, True, "主流手机", ["/", "/courses/effect-ts", "/courses/effect-ts/lessons/L18",
-                                "/courses/effect-ts/dashboard", "/courses/effect-ts/teacher"]),
+                                "/courses/effect-ts/dashboard", "/courses/effect-ts/teacher",
+                                "/courses/effect-ts/design"]),
     (768, 1024, True, "平板", ["/courses/effect-ts", "/courses/effect-ts/lessons/L18"]),
-    (1440, 900, False, "桌面", ["/", "/courses/effect-ts"]),
+    (1440, 900, False, "桌面", ["/", "/courses/effect-ts", "/courses/effect-ts/design"]),
 ]
 
 

@@ -27,7 +27,7 @@
 
 | 症状 | 根因 | 处理 |
 |---|---|---|
-| Nuxt Content 文档不出现在路由 | 缺 frontmatter 或集合配置不匹配 | 迁移长篇说明书时补 frontmatter；确认 `content.config.ts` 的集合定义与路径 |
+| Nuxt Content 文档不出现在路由 | 缺 frontmatter 或集合配置不匹配 | 迁移长篇说明书时补 frontmatter；确认 `content.config.ts` 的集合定义与路径（本项目自 00017 起已移除 Nuxt Content，此条仅适用于仍使用它的项目） |
 | 文档里的代码示例高亮后插入 HTML 触发 XSS 风险 | `v-html` 内容未受控 | 高亮只处理受信任的静态数据；用户输入展示统一 `esc()` 转义 |
 
 ## 冒烟回归顺序

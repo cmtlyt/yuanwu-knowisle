@@ -43,8 +43,28 @@ interface Lesson {
 }
 interface CourseData {
   STAGES: Stage[]; CONCEPTS: Concept[]; LESSONS: Lesson[]; META: CourseMeta
+  DESIGN?: CourseDesign
 }
 ```
+
+### 课程设计说明书（绑定课程的数据，非独立文件）
+
+```ts
+type DesignBlock =
+  | { type: 'prose';   title?: string; text: string }
+  | { type: 'list';    title?: string; items: string[] }
+  | { type: 'callout'; tone: 'tip' | 'warn' | 'deep'; title: string; text: string }
+  | { type: 'kv';      title?: string; rows: Array<{ k: string; v: string }> }
+  | { type: 'table';   title?: string; columns: string[]; rows: string[][] }
+  | { type: 'code';    title?: string; code: string; note?: string }
+  | { type: 'lessons' }                               // 从 LESSONS 动态生成学习路径总表
+interface DesignSection { id: string; title: string; intro?: string; blocks: DesignBlock[] }
+interface CourseDesign  { title: string; summary: string; sections: DesignSection[] }
+```
+
+- 说明书是 `CourseData.DESIGN`，随内容层一起维护；由「教学设计」视图渲染，**不要写成独立的 Markdown / Nuxt Content 文件**（否则删除内容模块后说明书会悬空）。
+- `type: 'lessons'` 区块不写死行：视图按 `LESSONS` + 概念名渲染学习路径总表，新增课时自动出现。
+- 其他区块都是纯静态结构（`prose` / `list` / `callout` / `kv` / `table` / `code`），视图按 `type` 分发渲染。
 
 **约束**
 

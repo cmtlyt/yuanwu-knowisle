@@ -50,3 +50,15 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 
 - 写清命令、退出码与关键数字（如 `lint 0 errors / 19 warnings`、`11 条 SSR 路由 + 13 组视口`），不要只写「通过」。
 - 已知限制与预期警告单独列出（如无初始提交跳过 stash、Nuxt 自身 Nitro 警告、既有 unmet peer），避免下次被当成新故障反复排查。
+
+## 管道吞掉退出码（假阳性回归）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| `pnpm verify 2>&1 \| tail -6 && echo ALL GREEN` 明明打印 `❌ 校验失败 1 项`，后续命令仍执行并输出「全绿」 | Bash 管道默认退出码取**最后一个命令**（`tail` 恒为 0），`&&` 因此继续，失败被吞掉 | 回归脚本开头一律 `set -o pipefail`；或先把输出重定向到临时文件再单独取 `$?`。不要用 `\| tail` 拼接 `&&` 判断成功，逐条核对退出码 |
+
+## 删除模块 / 资源后的清单残留
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| 移除 Nuxt Content 与 `content/` 后，`pnpm verify` 在「静态资源」段报 `✗ content/docs/effect-course-design.md`、`校验失败 1 项`，退出 1；`smoke.py` 的 ROUTES 还期望该路径返回 200 | `scripts/verify-course.mjs` 的静态资源数组、`scripts/smoke.py` 的 ROUTES 都硬编码了被删资源 | 删除资源时同步清理**全部**存在性断言与引用（verify 静态资源清单、smoke ROUTES、skill 文档、README 路由表、页面链接），改完重跑 `verify` / `smoke` / `build`；这是「删文件」类任务的固定收尾项 |
