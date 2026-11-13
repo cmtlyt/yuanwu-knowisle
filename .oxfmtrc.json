@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 110,
+  "tabWidth": 2,
+  "trailingComma": "all",
+  "arrowParens": "always",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    ".nuxt/**",
+    ".output/**",
+    ".data/**",
+    "dist/**",
+    "node_modules/**",
+    "pnpm-lock.yaml",
+    "**/*.md",
+    "**/*.css",
+    "**/*.yaml",
+    "**/*.yml"
+  ]
+}
