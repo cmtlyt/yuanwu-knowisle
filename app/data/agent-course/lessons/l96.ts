@@ -1,0 +1,74 @@
+import { L, prose, code, call, list, q } from '../../course-builders.ts'
+
+/* ========== Stage 17 ========== */
+
+export const L96 = L(
+  'L96',
+  17,
+  'LangGraph 核心概念：图 / 状态 / reducer / checkpoint',
+  14,
+  3,
+  ['L93', 'L31'],
+  ['langgraph-core'],
+  [
+    '掌握 LangGraph 四大核心概念：图 / 状态 / reducer / checkpoint',
+    '理解「把循环显式化成图」的思想',
+    '认识 State 累加器与 checkpoint 的价值',
+  ],
+  [
+    prose(
+      '把循环画成图',
+      'LangGraph 的核心思想：把 Agent 的循环显式化成一张**图**——节点（node，做什么）+ 边（edge，往哪走）+ 状态（State，记什么）。循环不再是 `while`，而是图上的「环」。',
+    ),
+    code(
+      'LangGraph 四概念',
+      'import { StateGraph } from "@langchain/langgraph"\n\n// ① 状态 State：跨节点共享，定义 reducer（如何合并）\nconst State = { messages: { reducer: (a, b) => a.concat(b) } }  // 追加\n\n// ② 图：节点 + 边\nconst graph = new StateGraph(State)\n  .addNode("model", modelNode)       // 节点：调模型\n  .addNode("tool", toolNode)         // 节点：调工具\n  .addEdge("__start__", "model")     // 边：起点 → model\n  .addConditionalEdges("model", route)  // 条件边：有工具→tool，否则→end\n  .addEdge("tool", "model")          // 边：tool → 回到 model（环！）\n\n// ③ 编译 + checkpoint\nconst app = graph.compile({ checkpointer: new MemorySaver() })  // ④ checkpoint',
+      '关键：`addEdge("tool", "model")` 就是「循环」——图上的环替代了 while。',
+    ),
+    call(
+      'deep',
+      'reducer 与 checkpoint 解决什么',
+      'reducer 定义「状态如何合并」（如 messages 追加、字段覆盖），解决并发节点写同一状态的问题。checkpoint 持久化每个节点的状态快照，支持**断点续跑**与**时间旅行调试**（回到任意节点）。',
+    ),
+    list('图 vs 手写循环', [
+      '手写循环：`while` + 状态变量，灵活但流程不直观。',
+      '图：节点+边显式化流程，可读、可断点、可恢复。',
+      '代价：概念多（State/reducer/checkpoint），学习曲线陡。',
+    ]),
+    call(
+      'warn',
+      '别把简单循环也画成图',
+      'LangGraph 适合「流程复杂、需要断点/恢复/可视化」的场景。一个 5 行的 ReAct 循环，用图是过度设计。',
+    ),
+  ],
+  null,
+  [
+    q(
+      'LangGraph 的四大核心概念是？',
+      ['类、对象、方法、属性', '图、状态、reducer、checkpoint', '快、慢、中、大', '增、删、改、查'],
+      1,
+      '图、状态、reducer、checkpoint。',
+      'langgraph-core',
+    ),
+    q(
+      'LangGraph 里「循环」如何表达？',
+      ['while 循环', '图上的环（如 addEdge("tool", "model")）', '递归', 'for 循环'],
+      1,
+      '图上的环替代 while。',
+      'langgraph-core',
+    ),
+    q(
+      'reducer 解决什么问题？',
+      ['美化代码', '定义状态如何合并，解决并发节点写同一状态', '加快', '省内存'],
+      1,
+      'reducer 定义状态合并方式。',
+      'langgraph-core',
+    ),
+  ],
+  [
+    ['StateGraph', 'LangGraph 的图构建器'],
+    ['reducer', '定义状态合并方式的函数'],
+    ['checkpoint', '节点状态快照，支持断点续跑'],
+  ],
+  ['把简单循环也画成图，过度设计。', '忽略 reducer，并发节点写状态冲突。'],
+)

@@ -1,5 +1,6 @@
 import { EFFECT_COURSE } from './effect-course'
 import { RXJS_COURSE } from './rxjs-course'
+import { AGENT_COURSE } from './agent-course'
 import type { CourseEntry } from '~/types/course'
 
 /**
@@ -34,6 +35,20 @@ export const COURSES: CourseEntry[] = [
     status: 'available',
     storageKey: 'knowisle:rxjs:v1',
     data: RXJS_COURSE,
+  },
+  {
+    slug: 'agent',
+    title: 'AI Agent 工程课',
+    subtitle: 'typescript@7.0.2 · node@24 LTS',
+    tagline: '从「范式」到「生产」的完整工程化知识体系',
+    description:
+      '11 模块、28 阶段、142 课、142 概念：理论 + 无框架手写实战（TypeScript 7 / Node 24）+ 框架对照 + 两个从零 Capstone。从「模型如何决定下一步」讲到运行时、工具/MCP、记忆 RAG、推理规划、多 Agent、可观测/评测/安全/成本、六大框架选型与生产部署。',
+    icon: '🤖',
+    color: '#5b8def',
+    tags: ['TypeScript', 'AI Agent', 'MCP', '多智能体', '工程化'],
+    status: 'available',
+    storageKey: 'knowisle:agent:v1',
+    data: AGENT_COURSE,
   },
   {
     slug: 'more',

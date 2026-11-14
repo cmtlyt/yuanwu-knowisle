@@ -66,3 +66,5 @@
 | `00048-design-table-hover-spacing` | 教学设计页表格按竖表/横表精确 hover + 块间距（类须加在 `<table>` 上） | 2026-11-15 | [总览](00048-design-table-hover-spacing/overview.md) |
 | `00049-remove-agent-test-course` | 删除 00041 的临时测试课程数据（保留 complex 渲染层），verify 回落 2 门课 | 2026-11-15 | [总览](00049-remove-agent-test-course/overview.md) |
 | `00050-complex-course-skill-conventions` | 将 complex（4 层）课程数据规范写入 course-builder skill（data-model.md 复杂模式小节 + 接口对齐 + 骨架 types.ts + SKILL.md 资源描述），不动产品代码 | 2026-11-15 | [总览](00050-complex-course-skill-conventions/overview.md) |
+| `00051-agent-course-implementation` | 按 `00051-agent-course-implementation/agent-course-outline.md` 落地「AI Agent 工程」系统课数据（`app/data/agent-course/` complex 4 层：11 模块 / 28 阶段 / 142 课 / 142 概念 / 426 题）+ `courses.ts` 注册 `agent` 课，通过全部校验与 build | 2026-11-15 | [总览](00051-agent-course-implementation/overview.md) |
+| `00052-agent-course-rebuild` | 课程质量评估 + 重构规划（基于 00051 落地课做量化诊断：142 课全 <100 行、同构 5 块 3 题；规划「理论+代码+经验」三元、按 4 课型分化、测验混合化，先试点再分批） | 2026-11-15 | [总览](00052-agent-course-rebuild/overview.md) |
