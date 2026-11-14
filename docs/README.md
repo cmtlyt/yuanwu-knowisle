@@ -57,5 +57,12 @@
 | `00039-multimode-course-rendering` | 多模式课程渲染重构：`renderMode` 分派 simple/complex 4 层渲染（模块手风琴 / 模块主轴雷达 / 子阶段三级头），组件按模式分组目录（`course/simple|complex/`），simple 课零行为变化 | 2026-11-15 | [总览](00039-multimode-course-rendering/overview.md) |
 | `00040-gitattributes-line-ending` | 用 `.gitattributes` + `git add --renormalize .` 消除 CRLF/LF 幽灵 diff（53 条 → 0） | 2026-11-15 | [总览](00040-gitattributes-line-ending/overview.md) |
 | `00041-complex-render-test-course` | 创建 complex 渲染测试课程 `agent-test-course`（3 模块 / 3 阶段含子阶段 / 5 课 / 4 概念 / 15 题），端到端验证 4 层渲染 | 2026-11-15 | [总览](00041-complex-render-test-course/overview.md) |
+| `00042-complex-substage-spacing` | complex 地图子阶段网格补 margin-top（stage-card 与课时网格贴死） | 2026-11-15 | [总览](00042-complex-substage-spacing/overview.md) |
+| `00043-complex-module-chip-bg` | complex 地图模块导航条补模块色淡底背景（color-mix） | 2026-11-15 | [总览](00043-complex-module-chip-bg/overview.md) |
+| `00044-fix-complex-undefined-css-vars` | 修正 complex 组件误用未定义 CSS 变量（映射到 main.css 真实 token） | 2026-11-15 | [总览](00044-fix-complex-undefined-css-vars/overview.md) |
+| `00045-complex-module-header-reflow` | complex 模块块头部信息重排为两层（mod-head + mod-desc） | 2026-11-15 | [总览](00045-complex-module-header-reflow/overview.md) |
+| `00046-hide-scrollbars-no-jank` | 全局隐藏滚动条 + scrollbar-gutter 防布局抖动 | 2026-11-15 | [总览](00046-hide-scrollbars-no-jank/overview.md) |
+| `00047-fix-dashboard-ts7053` | 修 dashboard TS7053（conceptMap 的 `out` 标注 Record<string, any>） | 2026-11-15 | [总览](00047-fix-dashboard-ts7053/overview.md) |
+| `00048-design-table-hover-spacing` | 教学设计页表格按竖表/横表精确 hover + 块间距（类须加在 `<table>` 上） | 2026-11-15 | [总览](00048-design-table-hover-spacing/overview.md) |
 | `00049-remove-agent-test-course` | 删除 00041 的临时测试课程数据（保留 complex 渲染层），verify 回落 2 门课 | 2026-11-15 | [总览](00049-remove-agent-test-course/overview.md) |
 | `00050-complex-course-skill-conventions` | 将 complex（4 层）课程数据规范写入 course-builder skill（data-model.md 复杂模式小节 + 接口对齐 + 骨架 types.ts + SKILL.md 资源描述），不动产品代码 | 2026-11-15 | [总览](00050-complex-course-skill-conventions/overview.md) |
