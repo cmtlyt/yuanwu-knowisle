@@ -43,3 +43,7 @@
 | `00025-required-course-type-narrowing` | `useRequiredCourse` 类型收窄（composable 层类型守卫，修复多课程页面 `CourseEntry \| undefined` 报错） | 2026-11-13 | [总览](00025-required-course-type-narrowing/overview.md) |
 | `00026-course-restructure-dynamic-quantity` | 动态课时密度 + 面向完整性驱动题目数（Effect 24→26 / RxJS 24→26 重构、3 道同面向题改写、skill 同步、verify 正确率自洽化、pitfall-resolver 回写） | 2026-11-13 | [总览](00026-course-restructure-dynamic-quantity/overview.md) |
 | `00027-course-dir-layout` | 课程数据层目录化（巨型单文件 → 同名目录 + index.ts + 章节拆分；共享 course-builders.ts；目录内带 `.ts` 导入；verify/check 脚本改目录发现；course-builder skill 落地目录模板） | 2026-11-13 | [总览](00027-course-dir-layout/overview.md) |
+| `00028-tutor-agent` | 新增按需唤起的助学 Agent（加密 LLM 配置 + OPFS 会话 + 学情驱动的本地导航 + SSE 流式答疑，纯客户端可降级） | 2026-11-14 | [总览](00028-tutor-agent/overview.md) · [技术方案](00028-tutor-agent/tech-design.md) |
+| `00029-tutor-audit-fix` | 助学 Agent 审计缺陷修复（清除漏删 / OPFS 降级链 / 学情注入范围 / 意图误判 / 契约校正 / 可复现动态回归资产） | 2026-11-14 | [总览](00029-tutor-audit-fix/overview.md) · [修复清单](00029-tutor-audit-fix/fix-plan.md) · [契约校正](00029-tutor-audit-fix/corrections.md) |
+| `00030-real-llm-e2e` | 真实 LLM 端点端到端验证（CORS 预检 405 实证、补 CORS 后真实模型三姿态全通、输出质量新发现、修复方向） | 2026-11-14 | [总览](00030-real-llm-e2e/overview.md) · [验证结果](00030-real-llm-e2e/results.md) |
+| `00031-tutor-routing-and-grounding` | 助学 Agent 意图路由误判修复（强信号白名单 + 「改用 AI 回答」兜底）与 system prompt 课程语境消歧，含真实端点 6 题抽检 | 2026-11-14 | [总览](00031-tutor-routing-and-grounding/overview.md) · [修复清单](00031-tutor-routing-and-grounding/fix-plan.md) · [抽检记录](00031-tutor-routing-and-grounding/sampling.md) |

@@ -36,6 +36,8 @@ ROUTES = [
     ("/courses/rxjs/design", 200, ["教学设计说明书", "版本基线", "知识点依赖图"]),
     ("/courses/rxjs/lessons/L09", 200, ["嵌套流的心智模型", "关键术语", "随堂测验"]),
     ("/courses/rxjs/lessons/L11", 200, ["switchMap", "关键术语", "随堂测验"]),
+    # 助学 agent 设置页（独立于课程的全站共享配置，00028 新增）
+    ("/settings/llm", 200, ["助手设置", "LLM 端点", "隐私与存储", "Base URL"]),
     ("/courses/nope", 404, []),
 ]
 

@@ -2,6 +2,8 @@
 import { courseBase, availableCourses, COURSES } from '~/data/courses'
 import { useCourse } from '~/composables/use-course'
 import { useLearning } from '~/composables/use-learning'
+import TutorFab from '~/components/tutor/tutor-fab.vue'
+import TutorDrawer from '~/components/tutor/tutor-drawer.vue'
 
 interface Tab {
   label: string
@@ -52,6 +54,8 @@ const tabs = computed<Tab[]>(() =>
           icon: c.icon,
           to: courseBase(c.slug),
         })),
+        // 设置入口独立于课程：全站共享一套 LLM 配置
+        { label: '助手设置', short: '助手', icon: '✦', to: '/settings/llm' },
       ],
 )
 
@@ -218,6 +222,12 @@ const sidebarCourses = COURSES.filter((c) => c.status === 'available')
             <div class="sub">所有学习进度保存在本机浏览器，可在课程设置页导出 JSON 备份。</div>
           </div>
         </template>
+
+        <!-- 助学助手设置：独立于课程，全站可见 -->
+        <div class="side-title" style="margin-top: 18px">助学助手</div>
+        <NuxtLink to="/settings/llm" class="lesson-item">
+          <span class="mark">✦</span><span>助手设置（LLM 端点）</span>
+        </NuxtLink>
       </aside>
 
       <main id="main" class="main">
@@ -226,4 +236,9 @@ const sidebarCourses = COURSES.filter((c) => c.status === 'available')
     </div>
   </div>
   <div class="drawer-backdrop" @click="closeDrawer" />
+
+  <!-- 助学 agent：FAB + 抽屉挂根部末尾，全站点可见（含 teacher/design/settings）。
+       z-index 阶梯：backdrop(56/64) < tutor-fab(62) < tutor-drawer(66)，抽屉盖住 FAB。 -->
+  <TutorFab />
+  <TutorDrawer />
 </template>

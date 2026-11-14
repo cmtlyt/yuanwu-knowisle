@@ -22,11 +22,25 @@ pnpm fmt                     # oxfmt 写回
 pnpm lint                    # oxlint 快速规则
 pnpm lint:fix                # 自动修复
 pnpm typecheck               # oxlint --type-aware --type-check
-pnpm verify                  # 内容一致性 + 学情引擎全轨迹
+pnpm verify                  # 课程内容/学情全轨迹 + 助学 Agent 纯计算自检（两段串行）
 pnpm build                   # 先构建产出 .output
 pnpm exec wrangler --cwd .output dev --port 3199 &   # 本地 Worker 预览（.output 已由 build 产出）
 python scripts/smoke.py --base http://127.0.0.1:3199
 ```
+
+助学 Agent **动态回归**（人工按需，不进 CI：依赖本机 Chrome + wrangler + 两个独立端口）：
+
+```bash
+pnpm build
+pnpm exec wrangler --cwd .output dev --port 3199     # 终端 1：Workers 预览
+python scripts/tutor-mock.py --port 3210              # 终端 2：OpenAI 兼容 mock（/v1/chat/completions + /__log + /__reset）
+python scripts/tutor-probe.py --site http://127.0.0.1:3199 --mock http://127.0.0.1:3210
+```
+
+`scripts/tutor-probe.py` 用真实 Chrome CDP 覆盖配置加密 / 指纹漂移 / SSE / Markdown XSS /
+错误码降级 / 意图路由 / 学情注入范围 / 清除全部对话 / OPFS 异常降级 / 滚动锁；
+`pnpm verify` 只包含无需浏览器的 `scripts/verify-tutor.mjs`（意图用例表 + 导出边界 + 组键绑定）。
+跑完按第 10 节立即关闭 3199 / 3210 两个临时服务。
 
 质量门禁与部署已迁移到 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地仍可用上述同名 script 复现，无需每次手敲。
 
