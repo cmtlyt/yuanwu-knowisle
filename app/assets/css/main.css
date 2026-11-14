@@ -38,6 +38,17 @@ html[data-theme="dark"] {
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* 全局隐藏滚动条（保留滚动行为）：视觉上不占宽度，从根上消除「滚动条出现/消失」带来的布局抖动。
+ * 用 scrollbar-gutter: stable 让根元素恒定预留滚动条槽位，避免隐藏后宽度跳变。 */
+* {
+  scrollbar-width: none; /* Firefox */
+}
+*::-webkit-scrollbar {
+  display: none; /* WebKit / Chrome */
+}
+html {
+  scrollbar-gutter: stable;
+}
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: var(--sans); font-size: 14px; line-height: 1.65;
@@ -310,7 +321,16 @@ html[data-theme="dark"] .w-box.code-out { background: #0c111b; }
 table.tbl { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.tbl th, table.tbl td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 table.tbl th { color: var(--muted); font-weight: 650; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-table.tbl tr:hover td { background: var(--surface-2); }
+/* 行 hover：
+ *   竖表 .kv-table（两列键值，首列为 th）——整行 hover，含首列 th 也补背景；
+ *   横表 .data-table（多列数据表）——仅 tbody 数据行 hover，thead 表头行不 hover。 */
+table.tbl.kv-table tr:hover td,
+table.tbl.kv-table tr:hover th {
+  background: var(--surface-2);
+}
+table.tbl.data-table tbody tr:hover td {
+  background: var(--surface-2);
+}
 .setting-row { display: flex; align-items: center; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .setting-row label { min-width: 170px; font-weight: 600; }
 .setting-row input[type="text"], .setting-row input[type="number"] { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 7px 10px; }
@@ -320,6 +340,8 @@ table.tbl tr:hover td { background: var(--surface-2); }
 /* ---------- 移动端专属元素的桌面默认值（须在媒体查询之前） ---------- */
 .drawer-backdrop, .drawer-head { display: none; }
 .tbl-wrap, .tl-scroll { overflow-x: auto; min-width: 0; max-width: 100%; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
+/* 教学设计里 .card.tbl-wrap 作为 kv/表/课时总表块，需要与相邻块（如下方 callout）留出间距 */
+.card.tbl-wrap { margin-bottom: 16px; }
 
 /* ---------- 响应式 ---------- */
 @media (max-width: 1000px) {

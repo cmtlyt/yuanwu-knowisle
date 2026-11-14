@@ -258,7 +258,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
   }
 
   function conceptMap(state, now) {
-    const out = {}
+    const out: Record<string, any> = {}
     COURSE.CONCEPTS.forEach((c) => {
       out[c.id] = conceptStats(state, c.id, now)
     })
@@ -274,6 +274,44 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     const sum = cs.reduce((acc, c) => acc + map[c.id].mastery * c.weight, 0)
     const wsum = cs.reduce((acc, c) => acc + c.weight, 0)
     return { overall: Math.round(sum / wsum), learned: learned.length, total: covered }
+  }
+
+  /** 模块级聚合（复杂模式专属）。simple 课无 MODULES 时返回空数组。 */
+  function moduleRows(state, cmap) {
+    const map = cmap || conceptMap(state)
+    const stageModule = new Map(COURSE.STAGES.map((s) => [s.id, s.module]))
+    const acc = new Map()
+    COURSE.STAGES.forEach((s) => {
+      const mid = s.module
+      if (mid == null) return
+      const sm = stageMastery(state, s.id, map)
+      if (!acc.has(mid))
+        acc.set(mid, { masterySum: 0, count: 0, lessonCount: 0, done: 0, learned: 0, total: 0 })
+      const a = acc.get(mid)
+      a.masterySum += sm.overall
+      a.count += 1
+      a.learned += sm.learned
+      a.total += sm.total
+    })
+    COURSE.LESSONS.forEach((l) => {
+      const mid = stageModule.get(l.stage)
+      if (mid == null || !acc.has(mid)) return
+      const a = acc.get(mid)
+      a.lessonCount += 1
+      if (state.lessons[l.id] && state.lessons[l.id].completedAt) a.done += 1
+    })
+    return (COURSE.MODULES || []).map((m) => {
+      const a = acc.get(m.id)
+      return {
+        id: m.id,
+        name: m.name,
+        mastery: a ? Math.round(a.masterySum / (a.count || 1)) : 0,
+        done: a ? a.done : 0,
+        lessonCount: a ? a.lessonCount : 0,
+        learned: a ? a.learned : 0,
+        total: a ? a.total : 0,
+      }
+    })
   }
 
   function overall(state) {
@@ -302,6 +340,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
       streak: streak(state),
       mastery: Math.round(weighted / wsum),
       stageRows,
+      moduleRows: moduleRows(state, cmap),
       cmap,
     }
   }

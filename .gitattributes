@@ -1,0 +1,47 @@
+# Normalize line endings to LF in the repository.
+# On Windows (core.autocrlf=true) this checks out as CRLF but always
+# stores LF, eliminating "phantom" line-ending-only diffs and the
+# "LF will be replaced by CRLF" warnings.
+* text=auto
+
+# Explicit LF for source / text that must never gain CRLF even in
+# working copy (shell scripts, hooks).
+*.sh text eol=lf
+*.bash text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.vue text eol=lf
+
+# Windows batch scripts stay CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Images / fonts / other binary assets must not be treated as text.
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.avif binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.wasm binary
+
+# Lockfile is text (kept LF), not binary.
+pnpm-lock.yaml text
+package-lock.json text
+yarn.lock text

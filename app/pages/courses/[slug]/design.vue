@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
 
-const { course, data, base, stages, lessons, conceptName } = useRequiredCourse()
+const { course, data, base, stages, lessons, conceptName, renderMode, moduleName, subStageName, stageById } =
+  useRequiredCourse()
 
 const design = computed(() => data.value?.DESIGN ?? null)
 const stageName = (id: number) => stages.value.find((s) => s.id === id)?.name ?? `S${id}`
@@ -43,7 +44,7 @@ const calloutIcon = (tone: string) => (tone === 'warn' ? '⚠️' : tone === 'de
 
         <div v-else-if="b.type === 'kv'" class="card tbl-wrap">
           <div v-if="b.title" class="section-title" style="margin-top: 0">{{ b.title }}</div>
-          <table class="tbl">
+          <table class="tbl kv-table">
             <tbody>
               <tr v-for="(r, ri) in b.rows" :key="ri">
                 <th>{{ r.k }}</th>
@@ -55,7 +56,7 @@ const calloutIcon = (tone: string) => (tone === 'warn' ? '⚠️' : tone === 'de
 
         <div v-else-if="b.type === 'table'" class="card tbl-wrap">
           <div v-if="b.title" class="section-title" style="margin-top: 0">{{ b.title }}</div>
-          <table class="tbl">
+          <table class="tbl data-table">
             <thead>
               <tr>
                 <th v-for="(c, ci) in b.columns" :key="ci">{{ c }}</th>
@@ -77,26 +78,30 @@ const calloutIcon = (tone: string) => (tone === 'warn' ? '⚠️' : tone === 'de
         </div>
 
         <div v-else-if="b.type === 'lessons'" class="card tbl-wrap">
-          <table class="tbl">
+          <table class="tbl data-table">
             <thead>
               <tr>
+                <th v-if="renderMode === 'complex'">模块</th>
                 <th>阶段</th>
                 <th>课时</th>
                 <th>标题</th>
                 <th>分钟</th>
                 <th>难度</th>
                 <th>核心概念</th>
+                <th v-if="renderMode === 'complex'">子阶段</th>
                 <th>演练</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="l in lessons" :key="l.id">
+                <td v-if="renderMode === 'complex'">{{ moduleName(stageById(l.stage)?.module) }}</td>
                 <td>{{ stageName(l.stage) }}</td>
                 <td>{{ l.id }}</td>
                 <td>{{ l.title }}</td>
                 <td>{{ l.minutes }}</td>
                 <td>{{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</td>
                 <td>{{ l.concepts.map(conceptName).join(' / ') }}</td>
+                <td v-if="renderMode === 'complex'">{{ subStageName(l.stage, l.subStage) }}</td>
                 <td>{{ l.widget ?? '—' }}</td>
               </tr>
             </tbody>

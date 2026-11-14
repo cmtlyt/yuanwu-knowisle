@@ -139,6 +139,28 @@ for (const { label, C } of discovered) {
   const uncovered = [...conceptIds].filter((c) => !covered.has(c))
   if (uncovered.length) console.log('  ! 未被题目覆盖的概念：' + uncovered.join(', '))
 
+  /* ---------- 复杂模式专属校验（renderMode === 'complex'）---------- */
+  console.log('--- 渲染模式与结构 ---')
+  ok(
+    C.renderMode === 'simple' || C.renderMode === 'complex' || C.renderMode === undefined,
+    'renderMode 取值合法',
+  )
+  if (C.renderMode === 'complex') {
+    ok(Array.isArray(C.MODULES) && C.MODULES.length > 0, 'complex 课程提供 MODULES')
+    const moduleIds = new Set((C.MODULES || []).map((m) => m.id))
+    ok(
+      C.STAGES.every((s) => typeof s.module === 'number' && moduleIds.has(s.module)),
+      '每个阶段归属有效模块（Stage.module ∈ MODULES）',
+    )
+    const subMap = new Map(C.STAGES.map((s) => [s.id, new Set((s.subStages || []).map((x) => x.id))]))
+    ok(
+      C.LESSONS.every((l) => !l.subStage || (subMap.get(l.stage) && subMap.get(l.stage).has(l.subStage))),
+      '课时子阶段归属有效阶段（Lesson.subStage ∈ Stage.subStages）',
+    )
+  } else {
+    ok(true, 'simple 模式：跳过模块/子阶段校验（缺省 simple）')
+  }
+
   console.log('--- 教学设计（DESIGN） ---')
   if (C.DESIGN) {
     ok(!!C.DESIGN.title && !!C.DESIGN.summary, 'DESIGN 标题与摘要完整')

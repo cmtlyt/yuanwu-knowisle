@@ -9,12 +9,22 @@ definePageMeta({ key: (route) => route.fullPath })
 
 const router = useRouter()
 const route = useRoute()
-const { course, base, lessons, stageById, conceptName, lessonPath } = useRequiredCourse()
+const { course, base, lessons, stageById, conceptName, lessonPath, renderMode, moduleName, subStageName } =
+  useRequiredCourse()
 const learning = useLearning()
 
 const lessonId = computed(() => String(route.params.id || ''))
 const lesson = computed(() => lessons.value.find((l) => l.id === lessonId.value))
 if (!lesson.value) throw createError({ statusCode: 404, statusMessage: '课时不存在' })
+
+const stage = computed(() => (lesson.value ? stageById(lesson.value.stage) : undefined))
+const isComplex = computed(() => renderMode.value === 'complex')
+const moduleCrumb = computed(() =>
+  isComplex.value && stage.value?.module != null ? moduleName(stage.value.module) : '',
+)
+const subCrumb = computed(() =>
+  isComplex.value && lesson.value?.subStage ? subStageName(lesson.value.stage, lesson.value.subStage) : '',
+)
 
 const state = computed(() => learning.stateOf(course.value))
 const engine = computed(() => learning.engineOf(course.value))
@@ -56,7 +66,11 @@ function go(id: string) {
   <div>
     <div class="crumb">
       <NuxtLink to="/">知识岛</NuxtLink><span>/</span>
-      <NuxtLink :to="base">{{ course!.title }}</NuxtLink><span>/</span><span>{{ lesson!.id }}</span>
+      <NuxtLink :to="base">{{ course!.title }}</NuxtLink><span>/</span>
+      <template v-if="isComplex && moduleCrumb"><span>{{ moduleCrumb }}</span><span>/</span></template>
+      <template v-if="stage"><span>{{ stage.name }}</span><span>/</span></template>
+      <template v-if="isComplex && subCrumb"><span>{{ subCrumb }}</span><span>/</span></template>
+      <span>{{ lesson!.id }}</span>
     </div>
 
     <div class="lesson-top">
