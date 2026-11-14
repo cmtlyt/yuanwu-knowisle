@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 8 ========== */
 
-export const L55 = L(
-  'L55',
-  8,
-  '实战：工程化实现 ToT 搜索树（节点评估 + 回溯 + 剪枝）',
-  20,
-  4,
-  ['L19', 'L54'],
-  ['tot-engine'],
-  [
-    '用 TS 实现可运行的 ToT 搜索树',
-    '实现节点评估、回溯、剪枝三个核心机制',
-    '对照 LangGraph 树搜索 / 自研节点图',
-  ],
-  `
+export const L55 = withKind(
+  L(
+    'L55',
+    8,
+    '实战：工程化实现 ToT 搜索树（节点评估 + 回溯 + 剪枝）',
+    4,
+    ['L19', 'L54'],
+    ['tot-engine'],
+    [
+      '用 TS 实现可运行的 ToT 搜索树',
+      '实现节点评估、回溯、剪枝三个核心机制',
+      '对照 LangGraph 树搜索 / 自研节点图',
+    ],
+    `
 ### 把 L19 的 ToT 概念写成代码
 
 ToT 的难点在「树的遍历 + 评估 + 剪枝」的控制。本课用一个最小但完整的实现把它落地。
@@ -67,39 +67,41 @@ LangGraph 用自定义节点图实现 ToT：\\\`expand\\\` 节点生成候选、
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'ToT 的四个核心机制是？',
-      options: [
-        '读、写、执行、删除',
-        '展开、评估、剪枝、beam 保留',
-        '加密、解密、签名、哈希',
-        '训练、推理、部署、运维',
-      ],
-      answer: 1,
-      explain: '展开、评估、剪枝、beam。',
-      concept: 'tot-engine',
-    },
-    {
-      text: 'beam 参数的作用是？',
-      options: ['控制颜色', '每层只保留 topK 个分支，权衡广度与成本', '控制温度', '控制模型大小'],
-      answer: 1,
-      explain: 'beam 平衡搜索广度与成本。',
-      concept: 'tot-engine',
-    },
-    {
-      text: 'beam 越小，搜索越接近？',
-      options: ['穷举', '贪婪（更快但可能漏解）', '随机', 'BFS'],
-      answer: 1,
-      explain: 'beam 小接近贪婪，快但可能漏解。',
-      concept: 'tot-engine',
-    },
-  ],
-  [
-    ['beam search', '每层只保留 topK 分支的搜索策略'],
-    ['剪枝阈值', '低于该分数即淘汰分支'],
-    ['回溯', '沿最高分路径回溯取最终答案'],
-  ],
-  ['不设 beam，纯穷举导致指数爆炸。', '评估器不准仍依赖剪枝，把好分支剪掉。'],
+    null,
+    [
+      {
+        text: 'ToT 的四个核心机制是？',
+        options: [
+          '读、写、执行、删除',
+          '展开、评估、剪枝、beam 保留',
+          '加密、解密、签名、哈希',
+          '训练、推理、部署、运维',
+        ],
+        answer: 1,
+        explain: '展开、评估、剪枝、beam。',
+        concept: 'tot-engine',
+      },
+      {
+        text: 'beam 参数的作用是？',
+        options: ['控制颜色', '每层只保留 topK 个分支，权衡广度与成本', '控制温度', '控制模型大小'],
+        answer: 1,
+        explain: 'beam 平衡搜索广度与成本。',
+        concept: 'tot-engine',
+      },
+      {
+        text: 'beam 越小，搜索越接近？',
+        options: ['穷举', '贪婪（更快但可能漏解）', '随机', 'BFS'],
+        answer: 1,
+        explain: 'beam 小接近贪婪，快但可能漏解。',
+        concept: 'tot-engine',
+      },
+    ],
+    [
+      ['beam search', '每层只保留 topK 分支的搜索策略'],
+      ['剪枝阈值', '低于该分数即淘汰分支'],
+      ['回溯', '沿最高分路径回溯取最终答案'],
+    ],
+    ['不设 beam，纯穷举导致指数爆炸。', '评估器不准仍依赖剪枝，把好分支剪掉。'],
+  ),
+  'theory',
 )

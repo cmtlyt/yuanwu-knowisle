@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L15 = L(
-  'L15',
-  2,
-  '实战：对比实现 Plan-and-Execute（与 ReAct 跑同一任务）',
-  18,
-  3,
-  ['L14', 'L13'],
-  ['plan-execute-impl'],
-  [
-    '用 TS 实现 P&E 循环，并与 ReAct 跑同一任务对比',
-    '观察两种范式在「调用次数」与「可读性」上的差异',
-    '对照 LangGraph 的 plan / execute 模板',
-  ],
-  `
+export const L15 = withKind(
+  L(
+    'L15',
+    2,
+    '实战：对比实现 Plan-and-Execute（与 ReAct 跑同一任务）',
+    3,
+    ['L14', 'L13'],
+    ['plan-execute-impl'],
+    [
+      '用 TS 实现 P&E 循环，并与 ReAct 跑同一任务对比',
+      '观察两种范式在「调用次数」与「可读性」上的差异',
+      '对照 LangGraph 的 plan / execute 模板',
+    ],
+    `
 ### 同一任务，两种范式
 
 我们用同一个「调研任务」分别跑 ReAct 和 P&E，对比它们的调用次数、上下文结构与可控性。
@@ -70,37 +70,39 @@ LangGraph 社区模板把 P&E 画成「planner 节点 → 循环执行器节点 
 - 失败时的表现：计划错误时 P&E 如何暴露问题（引出 L61 重规划）。
 
 `,
-  null,
-  [
-    {
-      text: 'P&E 省 token 的根本原因是？',
-      options: ['它不调用模型', '省掉执行阶段反复的「思考」', '它不用工具', '它只跑一步'],
-      answer: 1,
-      explain: '一次规划省掉执行阶段反复的边想边做。',
-      concept: 'plan-execute-impl',
-    },
-    {
-      text: 'P&E 与 ReAct 的关系是？',
-      options: ['互斥，只能二选一', '可组合：执行阶段可复用 ReAct 循环', '完全等价', 'P&E 是 ReAct 的子集'],
-      answer: 1,
-      explain: '执行阶段可复用 ReAct，两者可组合（如 L28 混合范式）。',
-      concept: 'plan-execute-impl',
-    },
-    {
-      text: 'P&E 计划的价值还体现在？',
-      options: ['计划是显式可审阅的中间产物', '计划能直接当最终答案', '计划不需要工具', '计划保证不失败'],
-      answer: 0,
-      explain: '显式计划可人工审阅、可控放行，这是 P&E 在可控流程上的优势。',
-      concept: 'plan-execute-impl',
-    },
-  ],
-  [
-    ['synthesize', '把多步结果汇总成最终答案的收尾步骤'],
-    ['可审阅计划', '作为中间产物、可人工检查的步骤列表'],
-    ['plan/execute 模板', 'LangGraph 中 P&E 的图化实现'],
-  ],
-  [
-    '把 P&E 和 ReAct 当互斥选择，错过「执行阶段复用 ReAct」的组合收益。',
-    '计划生成后不做格式校验就 JSON.parse，格式抖动直接崩。',
-  ],
+    null,
+    [
+      {
+        text: 'P&E 省 token 的根本原因是？',
+        options: ['它不调用模型', '省掉执行阶段反复的「思考」', '它不用工具', '它只跑一步'],
+        answer: 1,
+        explain: '一次规划省掉执行阶段反复的边想边做。',
+        concept: 'plan-execute-impl',
+      },
+      {
+        text: 'P&E 与 ReAct 的关系是？',
+        options: ['互斥，只能二选一', '可组合：执行阶段可复用 ReAct 循环', '完全等价', 'P&E 是 ReAct 的子集'],
+        answer: 1,
+        explain: '执行阶段可复用 ReAct，两者可组合（如 L28 混合范式）。',
+        concept: 'plan-execute-impl',
+      },
+      {
+        text: 'P&E 计划的价值还体现在？',
+        options: ['计划是显式可审阅的中间产物', '计划能直接当最终答案', '计划不需要工具', '计划保证不失败'],
+        answer: 0,
+        explain: '显式计划可人工审阅、可控放行，这是 P&E 在可控流程上的优势。',
+        concept: 'plan-execute-impl',
+      },
+    ],
+    [
+      ['synthesize', '把多步结果汇总成最终答案的收尾步骤'],
+      ['可审阅计划', '作为中间产物、可人工检查的步骤列表'],
+      ['plan/execute 模板', 'LangGraph 中 P&E 的图化实现'],
+    ],
+    [
+      '把 P&E 和 ReAct 当互斥选择，错过「执行阶段复用 ReAct」的组合收益。',
+      '计划生成后不做格式校验就 JSON.parse，格式抖动直接崩。',
+    ],
+  ),
+  'theory',
 )

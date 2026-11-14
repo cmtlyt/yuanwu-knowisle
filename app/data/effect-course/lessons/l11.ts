@@ -4,7 +4,6 @@ export const L11 = L(
   'L11',
   2,
   '可观测性：日志、追踪与失败报告',
-  25,
   2,
   ['L10'],
   ['observability'],

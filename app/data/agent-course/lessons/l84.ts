@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 14 ========== */
 
-export const L84 = L(
-  'L84',
-  14,
-  '实战：提示注入攻防演练（构造注入并构建防御）',
-  20,
-  4,
-  ['L83'],
-  ['injection-defense'],
-  [
-    '亲手构造几种提示注入，理解攻击手法',
-    '实现内容隔离、工具白名单、输出校验三层防御',
-    '对照 @openai/guardrails / LlamaGuard 等价防护',
-  ],
-  `
+export const L84 = withKind(
+  L(
+    'L84',
+    14,
+    '实战：提示注入攻防演练（构造注入并构建防御）',
+    4,
+    ['L83'],
+    ['injection-defense'],
+    [
+      '亲手构造几种提示注入，理解攻击手法',
+      '实现内容隔离、工具白名单、输出校验三层防御',
+      '对照 @openai/guardrails / LlamaGuard 等价防护',
+    ],
+    `
 ### 先当攻击者，再当防御者
 
 理解注入的最好方式是自己构造几种，看它怎么生效，再针对性地建防御。
@@ -63,34 +63,36 @@ function guardOutput(output: string): boolean {
 :::
 
 `,
-  null,
-  [
-    {
-      text: '三层防御是？',
-      options: ['加密、签名、哈希', '内容隔离、工具白名单、输出校验', '快、稳、省', '增、删、改'],
-      answer: 1,
-      explain: '隔离防读、白名单防做、校验防泄。',
-      concept: 'injection-defense',
-    },
-    {
-      text: '工具白名单的作用是？',
-      options: ['美化日志', '拦截注入诱导的危险工具调用', '加快速度', '省 token'],
-      answer: 1,
-      explain: '白名单拦截越权工具调用。',
-      concept: 'injection-defense',
-    },
-    {
-      text: '对「防御」的正确认知是？',
-      options: ['100% 防注入', '纵深防御、概率性、可测，目标是提高攻击成本', '单层就够', '不用测'],
-      answer: 1,
-      explain: '纵深、概率、可测。',
-      concept: 'injection-defense',
-    },
-  ],
-  [
-    ['内容隔离', '把外部内容与指令分离并标注不可信'],
-    ['工具白名单', '只允许调用预先批准的工据'],
-    ['输出校验', '检测泄露与越权迹象'],
-  ],
-  ['以为标注「不可信」就免疫，忽视白名单与输出校验。', '单层防御被绕过就放弃，不叠加纵深防御。'],
+    null,
+    [
+      {
+        text: '三层防御是？',
+        options: ['加密、签名、哈希', '内容隔离、工具白名单、输出校验', '快、稳、省', '增、删、改'],
+        answer: 1,
+        explain: '隔离防读、白名单防做、校验防泄。',
+        concept: 'injection-defense',
+      },
+      {
+        text: '工具白名单的作用是？',
+        options: ['美化日志', '拦截注入诱导的危险工具调用', '加快速度', '省 token'],
+        answer: 1,
+        explain: '白名单拦截越权工具调用。',
+        concept: 'injection-defense',
+      },
+      {
+        text: '对「防御」的正确认知是？',
+        options: ['100% 防注入', '纵深防御、概率性、可测，目标是提高攻击成本', '单层就够', '不用测'],
+        answer: 1,
+        explain: '纵深、概率、可测。',
+        concept: 'injection-defense',
+      },
+    ],
+    [
+      ['内容隔离', '把外部内容与指令分离并标注不可信'],
+      ['工具白名单', '只允许调用预先批准的工据'],
+      ['输出校验', '检测泄露与越权迹象'],
+    ],
+    ['以为标注「不可信」就免疫，忽视白名单与输出校验。', '单层防御被绕过就放弃，不叠加纵深防御。'],
+  ),
+  'practice',
 )

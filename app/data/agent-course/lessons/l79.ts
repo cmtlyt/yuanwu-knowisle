@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 13 ========== */
 
-export const L79 = L(
-  'L79',
-  13,
-  '主流基准导览：AgentBench / WebArena / GAIA（该信哪一个）',
-  12,
-  2,
-  ['L77'],
-  ['benchmarks'],
-  [
-    '了解 AgentBench / WebArena / GAIA 三大主流基准',
-    '理解每个基准测什么、有什么局限',
-    '建立「按需选基准、不迷信单一分数」的认知',
-  ],
-  `
+export const L79 = withKind(
+  L(
+    'L79',
+    13,
+    '主流基准导览：AgentBench / WebArena / GAIA（该信哪一个）',
+    2,
+    ['L77'],
+    ['benchmarks'],
+    [
+      '了解 AgentBench / WebArena / GAIA 三大主流基准',
+      '理解每个基准测什么、有什么局限',
+      '建立「按需选基准、不迷信单一分数」的认知',
+    ],
+    `
 ### 基准是尺子，但不是同一把尺子
 
 三个主流基准测的东西完全不同：AgentBench 测多步工具调用、WebArena 测网页操作、GAIA 测真实世界任务。单一分数无法代表「Agent 能力」，要看「测了什么」。
@@ -49,34 +49,37 @@ export const L79 = L(
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'AgentBench 主要测什么？',
-      options: ['网页操作', '多步工具调用与决策', '真实世界综合任务', '代码生成'],
-      answer: 1,
-      explain: 'AgentBench 测多步工具调用。',
-      concept: 'benchmarks',
-    },
-    {
-      text: '「该信哪一个基准」的正确答案是？',
-      options: ['只信 GAIA', '都不全信、按需取，最终以你自己的回归基线为准', '只看最高分', '不用基准'],
-      answer: 1,
-      explain: '按需选基准，最终信自己的基线。',
-      concept: 'benchmarks',
-    },
-    {
-      text: '基准的三个常见问题不包括？',
-      options: ['数据泄漏', '与任务分布不符', '刷榜过拟合', '太便宜'],
-      answer: 3,
-      explain: '泄漏、分布不符、刷榜是问题，价格不是。',
-      concept: 'benchmarks',
-    },
-  ],
-  [
-    ['AgentBench', '多步工具调用与决策基准'],
-    ['WebArena', '真实网页环境任务基准'],
-    ['GAIA', '真实世界综合任务基准'],
-  ],
-  ['迷信单一基准分数，忽视「测了什么能力」与「数据泄漏」。', '把基准高分等同于生产表现。'],
+    null,
+    [
+      {
+        text: 'AgentBench 主要测什么？',
+        options: ['网页操作', '多步工具调用与决策', '真实世界综合任务', '代码生成'],
+        answer: 1,
+        explain: 'AgentBench 测多步工具调用。',
+        concept: 'benchmarks',
+      },
+      {
+        text: '「该信哪一个基准」的正确答案是？',
+        options: ['只信 GAIA', '都不全信、按需取，最终以你自己的回归基线为准', '只看最高分', '不用基准'],
+        answer: 1,
+        explain: '按需选基准，最终信自己的基线。',
+        concept: 'benchmarks',
+      },
+      {
+        text: '基准的三个常见问题不包括？',
+        options: ['数据泄漏', '与任务分布不符', '刷榜过拟合', '太便宜'],
+        answer: 3,
+        explain: '泄漏、分布不符、刷榜是问题，价格不是。',
+        concept: 'benchmarks',
+      },
+    ],
+    [
+      ['AgentBench', '多步工具调用与决策基准'],
+      ['WebArena', '真实网页环境任务基准'],
+      ['GAIA', '真实世界综合任务基准'],
+    ],
+    ['迷信单一基准分数，忽视「测了什么能力」与「数据泄漏」。', '把基准高分等同于生产表现。'],
+  ),
+  'overview',
+  '基准导览：横向介绍各基准该不该信，不实现 harness',
 )

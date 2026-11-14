@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
-export const L68 = L(
-  'L68',
-  11,
-  '实战：亲手用 TS 实现一个多 Agent 系统（消息总线 + 角色 + supervisor）',
-  22,
-  4,
-  ['L67', 'L36'],
-  ['multi-agent-impl'],
-  [
-    '用 TS 实现消息总线 + 角色定义 + supervisor 编排的多 Agent 系统',
-    '理解 supervisor 如何分配任务、收集结果',
-    '对照 OpenAI Agents SDK 的 handoff / AutoGen 的角色编排',
-  ],
-  `
+export const L68 = withKind(
+  L(
+    'L68',
+    11,
+    '实战：亲手用 TS 实现一个多 Agent 系统（消息总线 + 角色 + supervisor）',
+    4,
+    ['L67', 'L36'],
+    ['multi-agent-impl'],
+    [
+      '用 TS 实现消息总线 + 角色定义 + supervisor 编排的多 Agent 系统',
+      '理解 supervisor 如何分配任务、收集结果',
+      '对照 OpenAI Agents SDK 的 handoff / AutoGen 的角色编排',
+    ],
+    `
 ### 从零搭一个最小多 Agent
 
 多 Agent 系统的三块：**角色**（每个 Agent 的职责 + prompt）、**消息总线**（通信）、**supervisor**（编排者，分配任务、汇总结果）。
@@ -70,34 +70,36 @@ writer 拿到的研究结果要标明「这是 researcher 的产出」，否则�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '多 Agent 系统的三块是？',
-      options: ['模型、工具、记忆', '角色、消息总线、supervisor', '前端、后端、数据库', '读、写、执行'],
-      answer: 1,
-      explain: '角色、总线、supervisor。',
-      concept: 'multi-agent-impl',
-    },
-    {
-      text: 'supervisor 的作用是？',
-      options: ['写 prompt', '显式编排谁先谁后、结果如何传递', '存数据', '调模型'],
-      answer: 1,
-      explain: '编排流程、传递结果。',
-      concept: 'multi-agent-impl',
-    },
-    {
-      text: 'supervisor 编排模式更接近？',
-      options: ['OpenAI handoff（链式交接）', 'AutoGen 的集中调度', 'LangGraph 图', 'React'],
-      answer: 1,
-      explain: '集中调度更接近 AutoGen supervisor。',
-      concept: 'multi-agent-impl',
-    },
-  ],
-  [
-    ['角色 Agent', '有独立 systemPrompt 与上下文的执行单元'],
-    ['消息总线', '记录并分发 Agent 消息的组件'],
-    ['supervisor', '显式编排多 Agent 流程的调度者'],
-  ],
-  ['让 Agent 自由聊天而非 supervisor 显式编排，流程失控。', '结果不标来源，下游合成无法溯源。'],
+    null,
+    [
+      {
+        text: '多 Agent 系统的三块是？',
+        options: ['模型、工具、记忆', '角色、消息总线、supervisor', '前端、后端、数据库', '读、写、执行'],
+        answer: 1,
+        explain: '角色、总线、supervisor。',
+        concept: 'multi-agent-impl',
+      },
+      {
+        text: 'supervisor 的作用是？',
+        options: ['写 prompt', '显式编排谁先谁后、结果如何传递', '存数据', '调模型'],
+        answer: 1,
+        explain: '编排流程、传递结果。',
+        concept: 'multi-agent-impl',
+      },
+      {
+        text: 'supervisor 编排模式更接近？',
+        options: ['OpenAI handoff（链式交接）', 'AutoGen 的集中调度', 'LangGraph 图', 'React'],
+        answer: 1,
+        explain: '集中调度更接近 AutoGen supervisor。',
+        concept: 'multi-agent-impl',
+      },
+    ],
+    [
+      ['角色 Agent', '有独立 systemPrompt 与上下文的执行单元'],
+      ['消息总线', '记录并分发 Agent 消息的组件'],
+      ['supervisor', '显式编排多 Agent 流程的调度者'],
+    ],
+    ['让 Agent 自由聊天而非 supervisor 显式编排，流程失控。', '结果不标来源，下游合成无法溯源。'],
+  ),
+  'practice',
 )

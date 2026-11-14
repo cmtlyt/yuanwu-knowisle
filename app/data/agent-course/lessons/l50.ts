@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 7 ========== */
 
-export const L50 = L(
-  'L50',
-  7,
-  'Graph RAG：让检索支持多跳推理',
-  12,
-  3,
-  ['L49'],
-  ['graph-rag'],
-  [
-    '理解向量 RAG 的局限与 Graph RAG 的补位',
-    '掌握「实体 + 关系」图谱的构建与多跳检索',
-    '认识 Graph RAG 适合多跳、跨文档推理的场景',
-  ],
-  `
+export const L50 = withKind(
+  L(
+    'L50',
+    7,
+    'Graph RAG：让检索支持多跳推理',
+    3,
+    ['L49'],
+    ['graph-rag'],
+    [
+      '理解向量 RAG 的局限与 Graph RAG 的补位',
+      '掌握「实体 + 关系」图谱的构建与多跳检索',
+      '认识 Graph RAG 适合多跳、跨文档推理的场景',
+    ],
+    `
 ### 向量找相似，图找关联
 
 向量 RAG 只能找「语义相似」的片段，回答不了「A 和 B 什么关系」这类**多跳推理**问题（需要跨多个文档关联）。Graph RAG 把知识建模成「实体 + 关系」的图谱，支持沿关系多跳检索。
@@ -60,37 +60,39 @@ const answer = await client.chat([
 :::
 
 `,
-  null,
-  [
-    {
-      text: '向量 RAG 的局限是？',
-      options: ['不能存文本', '只能找语义相似片段，无法多跳关系推理', '太慢', '不能重排'],
-      answer: 1,
-      explain: '向量找相似，回答不了多跳关联。',
-      concept: 'graph-rag',
-    },
-    {
-      text: 'Graph RAG 把知识建模成什么？',
-      options: ['向量', '实体 + 关系的图谱', '树', '数组'],
-      answer: 1,
-      explain: '实体为节点、关系为边。',
-      concept: 'graph-rag',
-    },
-    {
-      text: 'Graph RAG 检索的是？',
-      options: ['相似文本', '沿关系展开的子图', '随机片段', '全部文档'],
-      answer: 1,
-      explain: '检索沿关系展开的子图。',
-      concept: 'graph-rag',
-    },
-  ],
-  [
-    ['多跳推理', '需要跨多个关联节点才能回答的推理'],
-    ['知识图谱', '实体为节点、关系为边的知识表示'],
-    ['子图检索', '沿关系路径展开、限定跳数的检索'],
-  ],
-  [
-    '对「查相似内容」也上 Graph RAG，付出高构建成本却无收益。',
-    '把 Graph RAG 与向量 RAG 对立，错过两者结合（粗检+关系推理）的收益。',
-  ],
+    null,
+    [
+      {
+        text: '向量 RAG 的局限是？',
+        options: ['不能存文本', '只能找语义相似片段，无法多跳关系推理', '太慢', '不能重排'],
+        answer: 1,
+        explain: '向量找相似，回答不了多跳关联。',
+        concept: 'graph-rag',
+      },
+      {
+        text: 'Graph RAG 把知识建模成什么？',
+        options: ['向量', '实体 + 关系的图谱', '树', '数组'],
+        answer: 1,
+        explain: '实体为节点、关系为边。',
+        concept: 'graph-rag',
+      },
+      {
+        text: 'Graph RAG 检索的是？',
+        options: ['相似文本', '沿关系展开的子图', '随机片段', '全部文档'],
+        answer: 1,
+        explain: '检索沿关系展开的子图。',
+        concept: 'graph-rag',
+      },
+    ],
+    [
+      ['多跳推理', '需要跨多个关联节点才能回答的推理'],
+      ['知识图谱', '实体为节点、关系为边的知识表示'],
+      ['子图检索', '沿关系路径展开、限定跳数的检索'],
+    ],
+    [
+      '对「查相似内容」也上 Graph RAG，付出高构建成本却无收益。',
+      '把 Graph RAG 与向量 RAG 对立，错过两者结合（粗检+关系推理）的收益。',
+    ],
+  ),
+  'practice',
 )

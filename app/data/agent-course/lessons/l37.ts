@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 4 ========== */
 
-export const L37 = L(
-  'L37',
-  4,
-  '实战：给运行时加上流式输出（SSE / async iterator）',
-  20,
-  4,
-  ['L36'],
-  ['streaming'],
-  [
-    '理解「边生成边消费」对流式输出的意义',
-    '用 async iterator 实现 token 级流式读取',
-    '对照 Vercel AI SDK 的 streamText / toDataStream',
-  ],
-  `
+export const L37 = withKind(
+  L(
+    'L37',
+    4,
+    '实战：给运行时加上流式输出（SSE / async iterator）',
+    4,
+    ['L36'],
+    ['streaming'],
+    [
+      '理解「边生成边消费」对流式输出的意义',
+      '用 async iterator 实现 token 级流式读取',
+      '对照 Vercel AI SDK 的 streamText / toDataStream',
+    ],
+    `
 ### 为什么要流式
 
 一次完整回答可能要几秒甚至几十秒。如果不流式，用户只能盯着空白等全部生成完；流式则让 token **边生成边显示**，体验大幅提升。底层是 SSE（Server-Sent Events）或 HTTP 流。
@@ -72,34 +72,41 @@ AI SDK 的 \\\`streamText()\\\` 返回一个流，\\\`toDataStream()\\\` 把它�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '流式输出底层通常基于什么？',
-      options: ['WebSocket 唯一', 'SSE（Server-Sent Events）或 HTTP 流', '轮询', 'UDP'],
-      answer: 1,
-      explain: 'SSE 或 HTTP 流。',
-      concept: 'streaming',
-    },
-    {
-      text: '流式下「观测回填」的正确做法是？',
-      options: ['拿到半个 token 就执行', '边流式显示边缓冲，缓冲完整 Action 再执行', '等全部结束', '不执行'],
-      answer: 1,
-      explain: '缓冲到完整 Action 再解析执行。',
-      concept: 'streaming',
-    },
-    {
-      text: 'Vercel AI SDK 的 streamText / toDataStream 与你手写的对应关系是？',
-      options: ['完全无关', '把逐块读 + 解析 SSE + yield 封装成 API', '是另一套协议', '只用于 Python'],
-      answer: 1,
-      explain: '封装了同样的流式机制。',
-      concept: 'streaming',
-    },
-  ],
-  [
-    ['SSE', 'Server-Sent Events，服务端单向推送事件的协议'],
-    ['async iterator', '`for await...of` 可逐个消费的异步可迭代对象'],
-    ['缓冲解析', '流式累积直到完整结构再解析'],
-  ],
-  ['拿到半个 Action 就去执行，工具名不完整导致失败。', '断流不处理，用户卡在「生成中」无提示。'],
+    null,
+    [
+      {
+        text: '流式输出底层通常基于什么？',
+        options: ['WebSocket 唯一', 'SSE（Server-Sent Events）或 HTTP 流', '轮询', 'UDP'],
+        answer: 1,
+        explain: 'SSE 或 HTTP 流。',
+        concept: 'streaming',
+      },
+      {
+        text: '流式下「观测回填」的正确做法是？',
+        options: [
+          '拿到半个 token 就执行',
+          '边流式显示边缓冲，缓冲完整 Action 再执行',
+          '等全部结束',
+          '不执行',
+        ],
+        answer: 1,
+        explain: '缓冲到完整 Action 再解析执行。',
+        concept: 'streaming',
+      },
+      {
+        text: 'Vercel AI SDK 的 streamText / toDataStream 与你手写的对应关系是？',
+        options: ['完全无关', '把逐块读 + 解析 SSE + yield 封装成 API', '是另一套协议', '只用于 Python'],
+        answer: 1,
+        explain: '封装了同样的流式机制。',
+        concept: 'streaming',
+      },
+    ],
+    [
+      ['SSE', 'Server-Sent Events，服务端单向推送事件的协议'],
+      ['async iterator', '`for await...of` 可逐个消费的异步可迭代对象'],
+      ['缓冲解析', '流式累积直到完整结构再解析'],
+    ],
+    ['拿到半个 Action 就去执行，工具名不完整导致失败。', '断流不处理，用户卡在「生成中」无提示。'],
+  ),
+  'practice',
 )

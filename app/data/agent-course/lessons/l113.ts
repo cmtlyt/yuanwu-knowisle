@@ -1,17 +1,17 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 22 ========== */
 
-export const L113 = L(
-  'L113',
-  22,
-  '从框架回退到手写：何时放弃框架',
-  14,
-  2,
-  ['L112'],
-  ['framework-fallback'],
-  ['识别「框架在拖后腿」的信号', '掌握从框架回退到手写的迁移策略', '理解「薄封装可留、重抽象可弃」的边界'],
-  `
+export const L113 = withKind(
+  L(
+    'L113',
+    22,
+    '从框架回退到手写：何时放弃框架',
+    2,
+    ['L112'],
+    ['framework-fallback'],
+    ['识别「框架在拖后腿」的信号', '掌握从框架回退到手写的迁移策略', '理解「薄封装可留、重抽象可弃」的边界'],
+    `
 ### 框架不是越重越好
 
 框架的价值是替你省代码，代价是你让渡可控性。当框架为了「覆盖所有情况」引入了太多抽象，而你的需求只用到其中 10% 时，它就从「助力」变成了「负担」。这时应该主动回退到手写。
@@ -54,34 +54,36 @@ export const L113 = L(
 :::
 
 `,
-  null,
-  [
-    {
-      text: '以下哪个是「框架在拖后腿」的信号？',
-      options: ['代码变短了', '排 bug 时总是卡在框架内部', '文档齐全', '社区活跃'],
-      answer: 1,
-      explain: '抽象泄漏、被迫理解框架内部是回退信号。',
-      concept: 'framework-fallback',
-    },
-    {
-      text: '「薄封装可留、重抽象可弃」里，属于「薄封装」的是？',
-      options: ['agent graph + checkpoint', 'AI SDK 的 provider / tool', '内置 session', '内置部署平台'],
-      answer: 1,
-      explain: '无隐式状态、可单独替换的薄组件值得留。',
-      concept: 'framework-fallback',
-    },
-    {
-      text: '回退手写应采取的节奏是？',
-      options: ['一次性删光框架', '渐进：先跑通手写核心对比，再逐块收回', '永远不碰框架', '只回退 UI'],
-      answer: 1,
-      explain: '渐进迁移、逐块收回，别一把梭。',
-      concept: 'framework-fallback',
-    },
-  ],
-  [
-    ['抽象税', '框架强加的学习与绕约束成本'],
-    ['抽象泄漏', '被迫理解框架内部才能排 bug'],
-    ['薄封装', '无隐式状态、可单独替换的组件'],
-  ],
-  ['迷信「用框架 = 专业」，明明需求简单也硬套重框架。', '回退时一把梭删光框架，导致迁移失控。'],
+    null,
+    [
+      {
+        text: '以下哪个是「框架在拖后腿」的信号？',
+        options: ['代码变短了', '排 bug 时总是卡在框架内部', '文档齐全', '社区活跃'],
+        answer: 1,
+        explain: '抽象泄漏、被迫理解框架内部是回退信号。',
+        concept: 'framework-fallback',
+      },
+      {
+        text: '「薄封装可留、重抽象可弃」里，属于「薄封装」的是？',
+        options: ['agent graph + checkpoint', 'AI SDK 的 provider / tool', '内置 session', '内置部署平台'],
+        answer: 1,
+        explain: '无隐式状态、可单独替换的薄组件值得留。',
+        concept: 'framework-fallback',
+      },
+      {
+        text: '回退手写应采取的节奏是？',
+        options: ['一次性删光框架', '渐进：先跑通手写核心对比，再逐块收回', '永远不碰框架', '只回退 UI'],
+        answer: 1,
+        explain: '渐进迁移、逐块收回，别一把梭。',
+        concept: 'framework-fallback',
+      },
+    ],
+    [
+      ['抽象税', '框架强加的学习与绕约束成本'],
+      ['抽象泄漏', '被迫理解框架内部才能排 bug'],
+      ['薄封装', '无隐式状态、可单独替换的组件'],
+    ],
+    ['迷信「用框架 = 专业」，明明需求简单也硬套重框架。', '回退时一把梭删光框架，导致迁移失控。'],
+  ),
+  'framework',
 )

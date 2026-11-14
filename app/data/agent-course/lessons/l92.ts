@@ -1,17 +1,17 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 15 ========== */
 
-export const L92 = L(
-  'L92',
-  15,
-  '并发与批处理：吞吐优化',
-  12,
-  3,
-  ['L89'],
-  ['concurrency-batch'],
-  ['理解并发与批处理如何提升 Agent 吞吐', '掌握「有界并发」避免打爆上游', '认识批处理的收益与延迟代价'],
-  `
+export const L92 = withKind(
+  L(
+    'L92',
+    15,
+    '并发与批处理：吞吐优化',
+    3,
+    ['L89'],
+    ['concurrency-batch'],
+    ['理解并发与批处理如何提升 Agent 吞吐', '掌握「有界并发」避免打爆上游', '认识批处理的收益与延迟代价'],
+    `
 ### 能并行的并行，能批量的批量
 
 吞吐优化两条路：**并发**（多个独立请求同时跑）和**批处理**（把多个请求合成一批，减少往返开销）。两者都能显著提升单位时间的处理量。
@@ -59,34 +59,36 @@ const responses = await client.batch(batch)   // 一次发 20 个，而非 20 �
 :::
 
 `,
-  null,
-  [
-    {
-      text: '吞吐优化的两条路是？',
-      options: ['加密、解密', '并发（并行）与批处理（合批）', '读、写', '增、删'],
-      answer: 1,
-      explain: '并发 + 批处理。',
-      concept: 'concurrency-batch',
-    },
-    {
-      text: '并发要「有界」的原因是？',
-      options: ['代码更短', '无界并发会打爆上游、触发限流', '更快', '省内存'],
-      answer: 1,
-      explain: '有界避免打爆限流。',
-      concept: 'concurrency-batch',
-    },
-    {
-      text: '批处理的「凑批」代价是？',
-      options: ['更贵', '凑批延迟：要等凑够一批才发', '更快', '更省'],
-      answer: 1,
-      explain: '凑批有延迟。',
-      concept: 'concurrency-batch',
-    },
-  ],
-  [
-    ['有界并发', '限制同时请求数，避免打爆上游'],
-    ['批处理', '多个请求合成一批减少往返'],
-    ['限流 RPM/TPM', '上游每分钟请求/每分钟 token 限制'],
-  ],
-  ['无界并发，触发上游 429 限流反而更慢。', '并发写共享状态不加锁，数据竞争。'],
+    null,
+    [
+      {
+        text: '吞吐优化的两条路是？',
+        options: ['加密、解密', '并发（并行）与批处理（合批）', '读、写', '增、删'],
+        answer: 1,
+        explain: '并发 + 批处理。',
+        concept: 'concurrency-batch',
+      },
+      {
+        text: '并发要「有界」的原因是？',
+        options: ['代码更短', '无界并发会打爆上游、触发限流', '更快', '省内存'],
+        answer: 1,
+        explain: '有界避免打爆限流。',
+        concept: 'concurrency-batch',
+      },
+      {
+        text: '批处理的「凑批」代价是？',
+        options: ['更贵', '凑批延迟：要等凑够一批才发', '更快', '更省'],
+        answer: 1,
+        explain: '凑批有延迟。',
+        concept: 'concurrency-batch',
+      },
+    ],
+    [
+      ['有界并发', '限制同时请求数，避免打爆上游'],
+      ['批处理', '多个请求合成一批减少往返'],
+      ['限流 RPM/TPM', '上游每分钟请求/每分钟 token 限制'],
+    ],
+    ['无界并发，触发上游 429 限流反而更慢。', '并发写共享状态不加锁，数据竞争。'],
+  ),
+  'practice',
 )

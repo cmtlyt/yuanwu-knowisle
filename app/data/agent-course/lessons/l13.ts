@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L13 = L(
-  'L13',
-  2,
-  '实战：用 TS 实现 ReAct 循环（真代码）',
-  18,
-  3,
-  ['L12', 'L10'],
-  ['react-loop'],
-  [
-    '用 TS 写一个可运行的 ReAct 循环（解析 / 执行 / 回填）',
-    '理解「解析模型输出」与「执行工具」的边界',
-    '对照 LangGraph / OpenAI Agents SDK 的等价 ReAct',
-  ],
-  `
+export const L13 = withKind(
+  L(
+    'L13',
+    2,
+    '实战：用 TS 实现 ReAct 循环（真代码）',
+    3,
+    ['L12', 'L10'],
+    ['react-loop'],
+    [
+      '用 TS 写一个可运行的 ReAct 循环（解析 / 执行 / 回填）',
+      '理解「解析模型输出」与「执行工具」的边界',
+      '对照 LangGraph / OpenAI Agents SDK 的等价 ReAct',
+    ],
+    `
 ### 把 L12 的交替循环写成代码
 
 ReAct 的难点不在循环本身，而在「可靠地解析模型输出」和「把工具结果回填」。我们分三步实现。
@@ -80,42 +80,44 @@ LangGraph 里 ReAct 被建模成一张图：\\\`model 节点 → 条件边（有
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'ReAct 循环中「解析模型输出」最需要注意什么？',
-      options: ['速度', '模型输出格式不稳，必须容错并给出清晰错误', '内存', '鉴权'],
-      answer: 1,
-      explain: '解析是 ReAct 最脆弱环节，模型格式可能不规整，需容错。',
-      concept: 'react-loop',
-    },
-    {
-      text: '为什么必须有 `maxSteps` 上限？',
-      options: ['为了性能', '防止模型陷入反复调用同一工具的死循环', '为了省 token', '框架要求'],
-      answer: 1,
-      explain: '没有步数上限可能死循环；终止条件 = finish + 步数上限 + 超时。',
-      concept: 'react-loop',
-    },
-    {
-      text: 'LangGraph 把 ReAct 建模成什么？',
-      options: [
-        '一个 while 循环',
-        '一张图：model 节点 + 条件边 + tool 节点，状态由 State 累加',
-        '一棵树',
-        '一个数组',
-      ],
-      answer: 1,
-      explain: 'LangGraph 用图节点与边显式表达循环，状态由 State 累加器维护。',
-      concept: 'react-loop',
-    },
-  ],
-  [
-    ['解析器', '把模型自由文本转成结构化 {thought, action, args} 的函数'],
-    ['工具注册表', '工具名 → 可执行函数的映射'],
-    ['终止保险', 'finish + 步数上限 + 超时的三重终止机制'],
-  ],
-  [
-    '信任模型一定输出规整格式，不做容错，第一次格式抖动就抛异常。',
-    '忘了步数上限，模型反复调用同一工具把 token 烧光。',
-  ],
+    null,
+    [
+      {
+        text: 'ReAct 循环中「解析模型输出」最需要注意什么？',
+        options: ['速度', '模型输出格式不稳，必须容错并给出清晰错误', '内存', '鉴权'],
+        answer: 1,
+        explain: '解析是 ReAct 最脆弱环节，模型格式可能不规整，需容错。',
+        concept: 'react-loop',
+      },
+      {
+        text: '为什么必须有 `maxSteps` 上限？',
+        options: ['为了性能', '防止模型陷入反复调用同一工具的死循环', '为了省 token', '框架要求'],
+        answer: 1,
+        explain: '没有步数上限可能死循环；终止条件 = finish + 步数上限 + 超时。',
+        concept: 'react-loop',
+      },
+      {
+        text: 'LangGraph 把 ReAct 建模成什么？',
+        options: [
+          '一个 while 循环',
+          '一张图：model 节点 + 条件边 + tool 节点，状态由 State 累加',
+          '一棵树',
+          '一个数组',
+        ],
+        answer: 1,
+        explain: 'LangGraph 用图节点与边显式表达循环，状态由 State 累加器维护。',
+        concept: 'react-loop',
+      },
+    ],
+    [
+      ['解析器', '把模型自由文本转成结构化 {thought, action, args} 的函数'],
+      ['工具注册表', '工具名 → 可执行函数的映射'],
+      ['终止保险', 'finish + 步数上限 + 超时的三重终止机制'],
+    ],
+    [
+      '信任模型一定输出规整格式，不做容错，第一次格式抖动就抛异常。',
+      '忘了步数上限，模型反复调用同一工具把 token 烧光。',
+    ],
+  ),
+  'theory',
 )

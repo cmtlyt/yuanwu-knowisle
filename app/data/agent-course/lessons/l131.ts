@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 26 ========== */
 
-export const L131 = L(
-  'L131',
-  26,
-  '实战 Capstone A：从零接入链路追踪与回放',
-  20,
-  4,
-  ['L130'],
-  ['cap-a-trace'],
-  [
-    '从零实现一个 span 追踪中间件，覆盖多 Agent 编排',
-    '实现「失败现场回放」的调试能力',
-    '理解追踪在多 Agent 场景下的串联方式',
-  ],
-  `
+export const L131 = withKind(
+  L(
+    'L131',
+    26,
+    '实战 Capstone A：从零接入链路追踪与回放',
+    4,
+    ['L130'],
+    ['cap-a-trace'],
+    [
+      '从零实现一个 span 追踪中间件，覆盖多 Agent 编排',
+      '实现「失败现场回放」的调试能力',
+      '理解追踪在多 Agent 场景下的串联方式',
+    ],
+    `
 ### 追踪让「黑盒」变「可回放」
 
 Capstone A 的多 Agent 编排跑起来后，出问题时很难知道「哪个 Agent、哪一步、哪个工具」出了问题。本课从零实现 span 追踪中间件，并支持回放失败现场。不复用 L75/L76，思路一致。
@@ -65,34 +65,36 @@ span 记录了每步的输入输出，所以「回放」就是：沿 span 树重
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'span 追踪中间件记录的核心是？',
-      options: ['日志级别', 'span 树：id/parentId/input/output/耗时', '代码行数', 'token 数量'],
-      answer: 1,
-      explain: 'span 树是追踪的核心数据。',
-      concept: 'cap-a-trace',
-    },
-    {
-      text: '「回放失败现场」的实现基础是？',
-      options: ['录屏', 'span 记录了每步输入输出，可沿树重放', '断点调试', '日志 grep'],
-      answer: 1,
-      explain: '可复现的数据驱动回放。',
-      concept: 'cap-a-trace',
-    },
-    {
-      text: '多 Agent 场景下，追踪的父子关系是？',
-      options: ['每个 Agent 一个顶层 span，工具调用是其子 span', '全部平铺', '只有一个 span', '不记录'],
-      answer: 1,
-      explain: 'span 形成树。',
-      concept: 'cap-a-trace',
-    },
-  ],
-  [
-    ['span', '一次操作（Agent/工具/循环）的追踪记录'],
-    ['span 树', '父子关系组织的追踪记录'],
-    ['回放', '沿 span 树重放输入以复现失败'],
-  ],
-  ['只记日志不记结构化 span，出问题只能「猜」。', 'span 不记 input/output，导致无法回放。'],
+    null,
+    [
+      {
+        text: 'span 追踪中间件记录的核心是？',
+        options: ['日志级别', 'span 树：id/parentId/input/output/耗时', '代码行数', 'token 数量'],
+        answer: 1,
+        explain: 'span 树是追踪的核心数据。',
+        concept: 'cap-a-trace',
+      },
+      {
+        text: '「回放失败现场」的实现基础是？',
+        options: ['录屏', 'span 记录了每步输入输出，可沿树重放', '断点调试', '日志 grep'],
+        answer: 1,
+        explain: '可复现的数据驱动回放。',
+        concept: 'cap-a-trace',
+      },
+      {
+        text: '多 Agent 场景下，追踪的父子关系是？',
+        options: ['每个 Agent 一个顶层 span，工具调用是其子 span', '全部平铺', '只有一个 span', '不记录'],
+        answer: 1,
+        explain: 'span 形成树。',
+        concept: 'cap-a-trace',
+      },
+    ],
+    [
+      ['span', '一次操作（Agent/工具/循环）的追踪记录'],
+      ['span 树', '父子关系组织的追踪记录'],
+      ['回放', '沿 span 树重放输入以复现失败'],
+    ],
+    ['只记日志不记结构化 span，出问题只能「猜」。', 'span 不记 input/output，导致无法回放。'],
+  ),
+  'capstone',
 )

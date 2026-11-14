@@ -4,7 +4,6 @@ export const L18 = L(
   'L18',
   4,
   '状态型 Subject：Behavior / Replay / Async',
-  28,
   3,
   ['L17'],
   ['c-state-subj'],

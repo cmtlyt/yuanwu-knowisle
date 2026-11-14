@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L17 = L(
-  'L17',
-  2,
-  'Reflexion：让 Agent 从失败里学',
-  12,
-  2,
-  ['L12'],
-  ['reflexion'],
-  [
-    '理解 Reflexion 的「失败反思 → 改进重试」闭环',
-    '认识「语言化记忆」与「参数更新」的本质区别',
-    '知道 Reflexion 适合反复试错的复杂任务',
-  ],
-  `
+export const L17 = withKind(
+  L(
+    'L17',
+    2,
+    'Reflexion：让 Agent 从失败里学',
+    2,
+    ['L12'],
+    ['reflexion'],
+    [
+      '理解 Reflexion 的「失败反思 → 改进重试」闭环',
+      '认识「语言化记忆」与「参数更新」的本质区别',
+      '知道 Reflexion 适合反复试错的复杂任务',
+    ],
+    `
 ### 把失败经验写成文字，喂回给下一次
 
 普通 ReAct 失败了就失败了。Reflexion 在失败后多做一步：让模型**反思失败原因**，把反思写进记忆，再重试时把反思一并喂给模型。它靠「语言化记忆」改进，而不是更新模型参数。
@@ -60,42 +60,44 @@ await runReAct(task, { memory })
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Reflexion 靠什么改进 Agent 行为？',
-      options: [
-        '更新模型参数',
-        '把失败经验写成自然语言记忆，注入下一轮上下文',
-        '换更大的模型',
-        '增加工具数量',
-      ],
-      answer: 1,
-      explain: 'Reflexion 用语言化记忆改进行为，不更新参数。',
-      concept: 'reflexion',
-    },
-    {
-      text: 'Reflexion 的三段循环是？',
-      options: ['规划-执行-汇总', '尝试 → 评估 → 反思 → 存记忆 → 重试', '搜索-回溯-剪枝', '投票-汇总-输出'],
-      answer: 1,
-      explain: '尝试、评估、反思、存记忆、重试。',
-      concept: 'reflexion',
-    },
-    {
-      text: 'Reflexion 落地的前提条件是？',
-      options: ['有 GPU', '有评估信号能判断成败', '用 Python', '有多个 Agent'],
-      answer: 1,
-      explain: '无法自动判断成败就无从反思，评估信号是前提。',
-      concept: 'reflexion',
-    },
-  ],
-  [
-    ['reflection', '对「为什么失败」的语义化总结，作为记忆'],
-    ['评估信号', '判断结果成败的外部依据（测试/规则/LLM 裁判）'],
-    ['语言化记忆', '用自然语言保存经验、即时生效的改进方式'],
-  ],
-  [
-    '把反思写成「复述错误」而非「提炼原因」，重试时帮助有限。',
-    '没有评估信号就硬上 Reflexion，反思无处触发。',
-  ],
+    null,
+    [
+      {
+        text: 'Reflexion 靠什么改进 Agent 行为？',
+        options: [
+          '更新模型参数',
+          '把失败经验写成自然语言记忆，注入下一轮上下文',
+          '换更大的模型',
+          '增加工具数量',
+        ],
+        answer: 1,
+        explain: 'Reflexion 用语言化记忆改进行为，不更新参数。',
+        concept: 'reflexion',
+      },
+      {
+        text: 'Reflexion 的三段循环是？',
+        options: ['规划-执行-汇总', '尝试 → 评估 → 反思 → 存记忆 → 重试', '搜索-回溯-剪枝', '投票-汇总-输出'],
+        answer: 1,
+        explain: '尝试、评估、反思、存记忆、重试。',
+        concept: 'reflexion',
+      },
+      {
+        text: 'Reflexion 落地的前提条件是？',
+        options: ['有 GPU', '有评估信号能判断成败', '用 Python', '有多个 Agent'],
+        answer: 1,
+        explain: '无法自动判断成败就无从反思，评估信号是前提。',
+        concept: 'reflexion',
+      },
+    ],
+    [
+      ['reflection', '对「为什么失败」的语义化总结，作为记忆'],
+      ['评估信号', '判断结果成败的外部依据（测试/规则/LLM 裁判）'],
+      ['语言化记忆', '用自然语言保存经验、即时生效的改进方式'],
+    ],
+    [
+      '把反思写成「复述错误」而非「提炼原因」，重试时帮助有限。',
+      '没有评估信号就硬上 Reflexion，反思无处触发。',
+    ],
+  ),
+  'theory',
 )

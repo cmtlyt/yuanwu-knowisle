@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L11 = L(
-  'L11',
-  2,
-  '范式总览：为什么需要这么多「玩法」',
-  12,
-  1,
-  ['L08'],
-  ['paradigm-taxonomy'],
-  [
-    '理解「范式」是解决 Agent 循环「怎么转」的可复用套路',
-    '把握 12 种范式的分类脉络与一条主线',
-    '建立「按问题选范式」而非「崇拜某一种」的心智',
-  ],
-  `
+export const L11 = withKind(
+  L(
+    'L11',
+    2,
+    '范式总览：为什么需要这么多「玩法」',
+    1,
+    ['L08'],
+    ['paradigm-taxonomy'],
+    [
+      '理解「范式」是解决 Agent 循环「怎么转」的可复用套路',
+      '把握 12 种范式的分类脉络与一条主线',
+      '建立「按问题选范式」而非「崇拜某一种」的心智',
+    ],
+    `
 ### 范式 = 循环怎么转
 
 Agent 的循环骨架都一样（决定→执行→观测→回填），但「怎么决定、怎么规划、怎么从错误里学」有不同套路。这些套路就是范式（paradigm）。
@@ -51,37 +51,40 @@ ReAct 是基线、ToT 是搜索、Reflexion 是学习。剩下的大多是从这
 :::
 
 `,
-  null,
-  [
-    {
-      text: '「范式」本质上是？',
-      options: ['不同的模型', 'Agent 循环「怎么决定下一步」的可复用套路', '不同的编程语言', '不同的工具集'],
-      answer: 1,
-      explain: '范式是循环中「怎么决定」的套路：边想边做 / 先规划 / 搜索多路径等。',
-      concept: 'paradigm-taxonomy',
-    },
-    {
-      text: '几乎所有范式都在权衡什么？',
-      options: ['代码可读性与性能', '上下文成本与可靠性', '模型大小与速度', '工具数量与内存'],
-      answer: 1,
-      explain: '范式核心是 token（上下文成本）与可靠性的平衡。',
-      concept: 'paradigm-taxonomy',
-    },
-    {
-      text: '「ReAct 是基线、ToT 是搜索、Reflexion 是学习」——ReWOO 属于哪类？',
-      options: ['反思与搜索', '谱系与分解', '基线范式（批量规划省往返）', '学习类'],
-      answer: 2,
-      explain: 'ReWOO 与 ReAct、P&E 同属基线范式，通过批量规划省往返。',
-      concept: 'paradigm-taxonomy',
-    },
-  ],
-  [
-    ['范式', 'Agent 循环中「怎么决定下一步」的可复用套路'],
-    ['基线范式', 'ReAct / Plan-and-Execute / ReWOO 等基础套路'],
-    ['上下文成本', '一次推理消耗的 token 量'],
-  ],
-  [
-    '把某一种范式奉为银弹——真实系统常按任务混合多种范式。',
-    '只记名字不理解「成本 vs 可靠性」权衡，选型时无从下手。',
-  ],
+    null,
+    [
+      {
+        text: '「范式」本质上是？',
+        options: ['不同的模型', 'Agent 循环「怎么决定下一步」的可复用套路', '不同的编程语言', '不同的工具集'],
+        answer: 1,
+        explain: '范式是循环中「怎么决定」的套路：边想边做 / 先规划 / 搜索多路径等。',
+        concept: 'paradigm-taxonomy',
+      },
+      {
+        text: '几乎所有范式都在权衡什么？',
+        options: ['代码可读性与性能', '上下文成本与可靠性', '模型大小与速度', '工具数量与内存'],
+        answer: 1,
+        explain: '范式核心是 token（上下文成本）与可靠性的平衡。',
+        concept: 'paradigm-taxonomy',
+      },
+      {
+        text: '「ReAct 是基线、ToT 是搜索、Reflexion 是学习」——ReWOO 属于哪类？',
+        options: ['反思与搜索', '谱系与分解', '基线范式（批量规划省往返）', '学习类'],
+        answer: 2,
+        explain: 'ReWOO 与 ReAct、P&E 同属基线范式，通过批量规划省往返。',
+        concept: 'paradigm-taxonomy',
+      },
+    ],
+    [
+      ['范式', 'Agent 循环中「怎么决定下一步」的可复用套路'],
+      ['基线范式', 'ReAct / Plan-and-Execute / ReWOO 等基础套路'],
+      ['上下文成本', '一次推理消耗的 token 量'],
+    ],
+    [
+      '把某一种范式奉为银弹——真实系统常按任务混合多种范式。',
+      '只记名字不理解「成本 vs 可靠性」权衡，选型时无从下手。',
+    ],
+  ),
+  'overview',
+  '范式总览：模块二入口导览，具体范式在后续课展开',
 )

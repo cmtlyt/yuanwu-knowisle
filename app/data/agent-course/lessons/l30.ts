@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 3 ========== */
 
-export const L30 = L(
-  'L30',
-  3,
-  '实战：同一任务跑三种范式并对比（成本 / 质量度量）',
-  20,
-  3,
-  ['L28', 'L15', 'L13'],
-  ['paradigm-benchmark'],
-  [
-    '为同一任务分别实现并跑通 ReAct / P&E / ToT 三种范式',
-    '建立「成本 + 质量」双维度度量，客观对比',
-    '对照三种范式在 LangGraph 中的实现差异',
-  ],
-  `
+export const L30 = withKind(
+  L(
+    'L30',
+    3,
+    '实战：同一任务跑三种范式并对比（成本 / 质量度量）',
+    3,
+    ['L28', 'L15', 'L13'],
+    ['paradigm-benchmark'],
+    [
+      '为同一任务分别实现并跑通 ReAct / P&E / ToT 三种范式',
+      '建立「成本 + 质量」双维度度量，客观对比',
+      '对照三种范式在 LangGraph 中的实现差异',
+    ],
+    `
 ### 不靠感觉，靠度量
 
 「哪种范式更好」不是玄学，是可以量化的。本课用同一任务跑三种范式，记录调用次数、token、耗时、正确率，得出客观对比。
@@ -61,39 +61,41 @@ LangGraph 里 ReAct 是「model→tool→model」的小图；P&E 是「planner�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '三种范式公平对比的前提是？',
-      options: ['都用同一模型', '共享同一 evaluator 判断正确性', '都不调工具', '代码行数相同'],
-      answer: 1,
-      explain: '同一把尺子判断对错，对比才公平。',
-      concept: 'paradigm-benchmark',
-    },
-    {
-      text: '对比的四个关键指标是？',
-      options: [
-        '代码行数、注释数、变量数、函数数',
-        'llmCalls / tokens / latency / correct',
-        '模型名、温度、top-p、seed',
-        '工具数、内存、CPU、磁盘',
-      ],
-      answer: 1,
-      explain: '调用次数、token、耗时、正确性。',
-      concept: 'paradigm-benchmark',
-    },
-    {
-      text: 'LangGraph 中三种范式的实现差异体现在？',
-      options: ['变量命名', '图的拓扑（节点与边的结构）', '配色', '日志格式'],
-      answer: 1,
-      explain: '三种范式的差异就是图的拓扑差异。',
-      concept: 'paradigm-benchmark',
-    },
-  ],
-  [
-    ['benchmark', '在同一任务、同一评估尺子下对比多范式的过程'],
-    ['evaluator', '判断结果正确性的统一函数'],
-    ['指标采集', '记录调用次数 / token / 耗时 / 正确性'],
-  ],
-  ['用不同 evaluator 对比三范式，结果不可比。', '只看「哪个对」不看「花了多少」，忽视了成本维度。'],
+    null,
+    [
+      {
+        text: '三种范式公平对比的前提是？',
+        options: ['都用同一模型', '共享同一 evaluator 判断正确性', '都不调工具', '代码行数相同'],
+        answer: 1,
+        explain: '同一把尺子判断对错，对比才公平。',
+        concept: 'paradigm-benchmark',
+      },
+      {
+        text: '对比的四个关键指标是？',
+        options: [
+          '代码行数、注释数、变量数、函数数',
+          'llmCalls / tokens / latency / correct',
+          '模型名、温度、top-p、seed',
+          '工具数、内存、CPU、磁盘',
+        ],
+        answer: 1,
+        explain: '调用次数、token、耗时、正确性。',
+        concept: 'paradigm-benchmark',
+      },
+      {
+        text: 'LangGraph 中三种范式的实现差异体现在？',
+        options: ['变量命名', '图的拓扑（节点与边的结构）', '配色', '日志格式'],
+        answer: 1,
+        explain: '三种范式的差异就是图的拓扑差异。',
+        concept: 'paradigm-benchmark',
+      },
+    ],
+    [
+      ['benchmark', '在同一任务、同一评估尺子下对比多范式的过程'],
+      ['evaluator', '判断结果正确性的统一函数'],
+      ['指标采集', '记录调用次数 / token / 耗时 / 正确性'],
+    ],
+    ['用不同 evaluator 对比三范式，结果不可比。', '只看「哪个对」不看「花了多少」，忽视了成本维度。'],
+  ),
+  'theory',
 )

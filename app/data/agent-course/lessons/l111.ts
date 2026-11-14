@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 21 ========== */
 
-export const L111 = L(
-  'L111',
-  21,
-  '对照：用 LangChain JS 重写 Function Calling + 检索链（对比 L42 / L49）',
-  18,
-  3,
-  ['L110', 'L42', 'L49'],
-  ['langchain-rewrite'],
-  [
-    '用 LangChain 重写 Function Calling 与检索链，对比 L42 / L49 手写版',
-    '理解 tool + chain 如何替代手写运行时与 RAG 管线',
-    '度量代码量与可控性的差异',
-  ],
-  `
+export const L111 = withKind(
+  L(
+    'L111',
+    21,
+    '对照：用 LangChain JS 重写 Function Calling + 检索链（对比 L42 / L49）',
+    3,
+    ['L110', 'L42', 'L49'],
+    ['langchain-rewrite'],
+    [
+      '用 LangChain 重写 Function Calling 与检索链，对比 L42 / L49 手写版',
+      '理解 tool + chain 如何替代手写运行时与 RAG 管线',
+      '度量代码量与可控性的差异',
+    ],
+    `
 ### FC 与检索的 LangChain 版
 
 L42 手写的 FC 运行时、L49 手写的 RAG 管线，用 LangChain 重写。
@@ -58,34 +58,39 @@ LangChain 的抽象（chain/retriever/prompt/outputParser）层次多、概念�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'L42 手写的 tool schema 生成，在 LangChain 里是？',
-      options: ['手写', 'bindTools（绑定工具）', 'chain', 'retriever'],
-      answer: 1,
-      explain: 'bindTools。',
-      concept: 'langchain-rewrite',
-    },
-    {
-      text: 'L49 手写的检索，在 LangChain 里是？',
-      options: ['chain', 'retriever（检索器）', 'bindTools', 'prompt'],
-      answer: 1,
-      explain: 'retriever。',
-      concept: 'langchain-rewrite',
-    },
-    {
-      text: 'LangChain 的组件化优势是？',
-      options: ['概念少', '可单独用某个组件（如只用 retriever）', '更快', '无抽象'],
-      answer: 1,
-      explain: '组件化可拆开用。',
-      concept: 'langchain-rewrite',
-    },
-  ],
-  [
-    ['bindTools', '把工具绑定到模型'],
-    ['retriever', '检索器抽象'],
-    ['chain', 'LCEL 组合的链'],
-  ],
-  ['简单场景也全量用 LangChain，学习曲线陡、得不偿失。', '把 LangChain 当「银弹」，忽视它抽象层次多的成本。'],
+    null,
+    [
+      {
+        text: 'L42 手写的 tool schema 生成，在 LangChain 里是？',
+        options: ['手写', 'bindTools（绑定工具）', 'chain', 'retriever'],
+        answer: 1,
+        explain: 'bindTools。',
+        concept: 'langchain-rewrite',
+      },
+      {
+        text: 'L49 手写的检索，在 LangChain 里是？',
+        options: ['chain', 'retriever（检索器）', 'bindTools', 'prompt'],
+        answer: 1,
+        explain: 'retriever。',
+        concept: 'langchain-rewrite',
+      },
+      {
+        text: 'LangChain 的组件化优势是？',
+        options: ['概念少', '可单独用某个组件（如只用 retriever）', '更快', '无抽象'],
+        answer: 1,
+        explain: '组件化可拆开用。',
+        concept: 'langchain-rewrite',
+      },
+    ],
+    [
+      ['bindTools', '把工具绑定到模型'],
+      ['retriever', '检索器抽象'],
+      ['chain', 'LCEL 组合的链'],
+    ],
+    [
+      '简单场景也全量用 LangChain，学习曲线陡、得不偿失。',
+      '把 LangChain 当「银弹」，忽视它抽象层次多的成本。',
+    ],
+  ),
+  'framework',
 )

@@ -4,7 +4,6 @@ export const L05 = L(
   'L05',
   1,
   'map / pipe / lift：纯变换与组合子',
-  28,
   2,
   ['L04'],
   ['c-transform'],

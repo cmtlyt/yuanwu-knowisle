@@ -6,7 +6,6 @@ export const L18 = L(
   'L18',
   4,
   'Fiber：虚拟线程与运行中的 Effect',
-  35,
   3,
   ['L07'],
   ['fiber'],

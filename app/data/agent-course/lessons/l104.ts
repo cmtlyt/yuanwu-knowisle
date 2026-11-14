@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 19 ========== */
 
-export const L104 = L(
-  'L104',
-  19,
-  '对照：用 Mastra 重写工具型 Agent + workflow 编排（对比 L42 / L60）',
-  18,
-  3,
-  ['L103', 'L42', 'L60'],
-  ['mastra-workflow'],
-  [
-    '用 Mastra 重写工具型 Agent 与 workflow 编排',
-    '对比 L42 的 FC 运行时与 L60 的 P&E 引擎',
-    '理解 workflow 与「计划执行」的关系',
-  ],
-  `
+export const L104 = withKind(
+  L(
+    'L104',
+    19,
+    '对照：用 Mastra 重写工具型 Agent + workflow 编排（对比 L42 / L60）',
+    3,
+    ['L103', 'L42', 'L60'],
+    ['mastra-workflow'],
+    [
+      '用 Mastra 重写工具型 Agent 与 workflow 编排',
+      '对比 L42 的 FC 运行时与 L60 的 P&E 引擎',
+      '理解 workflow 与「计划执行」的关系',
+    ],
+    `
 ### 工具 Agent 与 P&E 的 Mastra 版
 
 L42 的 Function Calling 运行时、L60 的 P&E 引擎，用 Mastra 重写，看「工具」和「计划」如何被框架表达。
@@ -61,34 +61,36 @@ Mastra workflow 的 step 链更适合「线性 + 分支」流程，复杂的「�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'L42 手写的 schema/parse/回填，在 Mastra 里被什么替代？',
-      options: ['workflow', 'Agent 的 tools 声明', 'memory', 'rag'],
-      answer: 1,
-      explain: 'tools 声明替代。',
-      concept: 'mastra-workflow',
-    },
-    {
-      text: 'L60 的 P&E 引擎在 Mastra 里对应？',
-      options: ['memory', 'workflow 的 step 链', 'rag', 'observability'],
-      answer: 1,
-      explain: 'workflow step 链。',
-      concept: 'mastra-workflow',
-    },
-    {
-      text: '复杂「环」（ReAct 循环）在 Mastra 里的表达力？',
-      options: ['很强', '不如 LangGraph 的图直观，别硬套', '完全相同', '无法表达'],
-      answer: 1,
-      explain: 'workflow 适合线性+分支，环不如图。',
-      concept: 'mastra-workflow',
-    },
-  ],
-  [
-    ['step 链', 'Mastra workflow 的步骤编排'],
-    ['commit()', 'workflow 显式提交才生效'],
-    ['条件 step', 'Mastra 里表达分支的步骤'],
-  ],
-  ['把复杂循环硬套 workflow，表达力不足。', '忽视 commit()，workflow 修改不生效。'],
+    null,
+    [
+      {
+        text: 'L42 手写的 schema/parse/回填，在 Mastra 里被什么替代？',
+        options: ['workflow', 'Agent 的 tools 声明', 'memory', 'rag'],
+        answer: 1,
+        explain: 'tools 声明替代。',
+        concept: 'mastra-workflow',
+      },
+      {
+        text: 'L60 的 P&E 引擎在 Mastra 里对应？',
+        options: ['memory', 'workflow 的 step 链', 'rag', 'observability'],
+        answer: 1,
+        explain: 'workflow step 链。',
+        concept: 'mastra-workflow',
+      },
+      {
+        text: '复杂「环」（ReAct 循环）在 Mastra 里的表达力？',
+        options: ['很强', '不如 LangGraph 的图直观，别硬套', '完全相同', '无法表达'],
+        answer: 1,
+        explain: 'workflow 适合线性+分支，环不如图。',
+        concept: 'mastra-workflow',
+      },
+    ],
+    [
+      ['step 链', 'Mastra workflow 的步骤编排'],
+      ['commit()', 'workflow 显式提交才生效'],
+      ['条件 step', 'Mastra 里表达分支的步骤'],
+    ],
+    ['把复杂循环硬套 workflow，表达力不足。', '忽视 commit()，workflow 修改不生效。'],
+  ),
+  'framework',
 )

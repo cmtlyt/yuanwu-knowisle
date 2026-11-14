@@ -6,7 +6,6 @@ export const L08 = L(
   'L08',
   2,
   '两类错误：failure 与 defect',
-  25,
   2,
   ['L07'],
   ['typed-error', 'defect'],

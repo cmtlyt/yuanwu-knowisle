@@ -4,7 +4,6 @@ export const L20 = L(
   'L20',
   4,
   '★ Scheduler：协作让出与公平性',
-  40,
   5,
   ['L19'],
   ['scheduler'],

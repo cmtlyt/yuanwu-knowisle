@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 25 ========== */
 
-export const L123 = L(
-  'L123',
-  25,
-  '有状态会话的水平扩展',
-  16,
-  3,
-  ['L53'],
-  ['stateful-scaling'],
-  [
-    '理解「会话状态外置」是水平扩展的前提',
-    '掌握 sticky session vs 状态外置的取舍',
-    '认识多实例下的状态一致性问题',
-  ],
-  `
+export const L123 = withKind(
+  L(
+    'L123',
+    25,
+    '有状态会话的水平扩展',
+    3,
+    ['L53'],
+    ['stateful-scaling'],
+    [
+      '理解「会话状态外置」是水平扩展的前提',
+      '掌握 sticky session vs 状态外置的取舍',
+      '认识多实例下的状态一致性问题',
+    ],
+    `
 ### 有状态是水平扩展的天敌
 
 Agent 会话是有状态的：多轮对话、记忆、进行到一半的工具调用。如果状态存在实例内存里，负载均衡把下一轮请求分到另一台机器，会话就「断了」。水平扩展的前提是「状态外置」——把会话状态从进程内存搬到共享存储。
@@ -61,37 +61,39 @@ sticky session（同一会话固定路由到同一实例）能避免「换实例
 :::
 
 `,
-  null,
-  [
-    {
-      text: '水平扩展的前提是？',
-      options: ['更强的单机', '会话状态外置到共享存储', '更多内存', '更大的模型'],
-      answer: 1,
-      explain: '状态外置才能无状态扩缩容。',
-      concept: 'stateful-scaling',
-    },
-    {
-      text: 'sticky session 的局限是？',
-      options: ['太慢', '解决不了实例挂掉丢状态、弹性伸缩被回收', '太贵', '不兼容'],
-      answer: 1,
-      explain: 'sticky 只是优化，不是解决。',
-      concept: 'stateful-scaling',
-    },
-    {
-      text: '最难外置的状态是？',
-      options: ['对话历史', '进行到一半的长工具调用中间状态', '用户信息', '配置'],
-      answer: 1,
-      explain: '进行中的工具调用中间态最难。',
-      concept: 'stateful-scaling',
-    },
-  ],
-  [
-    ['状态外置', '把会话状态从进程内存搬到共享存储'],
-    ['sticky session', '同一会话固定路由到同一实例'],
-    ['无状态进程', '进程本身不持有会话状态，可随意扩缩容'],
-  ],
-  [
-    '把会话状态存在进程内存，再靠 sticky session「凑合」，实例一挂就丢。',
-    '忽视「进行中的工具调用」中间态的外置。',
-  ],
+    null,
+    [
+      {
+        text: '水平扩展的前提是？',
+        options: ['更强的单机', '会话状态外置到共享存储', '更多内存', '更大的模型'],
+        answer: 1,
+        explain: '状态外置才能无状态扩缩容。',
+        concept: 'stateful-scaling',
+      },
+      {
+        text: 'sticky session 的局限是？',
+        options: ['太慢', '解决不了实例挂掉丢状态、弹性伸缩被回收', '太贵', '不兼容'],
+        answer: 1,
+        explain: 'sticky 只是优化，不是解决。',
+        concept: 'stateful-scaling',
+      },
+      {
+        text: '最难外置的状态是？',
+        options: ['对话历史', '进行到一半的长工具调用中间状态', '用户信息', '配置'],
+        answer: 1,
+        explain: '进行中的工具调用中间态最难。',
+        concept: 'stateful-scaling',
+      },
+    ],
+    [
+      ['状态外置', '把会话状态从进程内存搬到共享存储'],
+      ['sticky session', '同一会话固定路由到同一实例'],
+      ['无状态进程', '进程本身不持有会话状态，可随意扩缩容'],
+    ],
+    [
+      '把会话状态存在进程内存，再靠 sticky session「凑合」，实例一挂就丢。',
+      '忽视「进行中的工具调用」中间态的外置。',
+    ],
+  ),
+  'scenario',
 )

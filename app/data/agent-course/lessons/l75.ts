@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 12 ========== */
 
-export const L75 = L(
-  'L75',
-  12,
-  '实战：从零用 TS 实现 span 追踪中间件（OpenTelemetry 原生手写）',
-  20,
-  4,
-  ['L73'],
-  ['span-middleware'],
-  [
-    '用 TS 手写一个 span 追踪中间件（traceId / parentSpanId / 起止时间）',
-    '理解 OpenTelemetry 的核心抽象（Tracer / Span / Context）',
-    '对照 OpenTelemetry SDK 与 LangSmith 的等价埋点',
-  ],
-  `
+export const L75 = withKind(
+  L(
+    'L75',
+    12,
+    '实战：从零用 TS 实现 span 追踪中间件（OpenTelemetry 原生手写）',
+    4,
+    ['L73'],
+    ['span-middleware'],
+    [
+      '用 TS 手写一个 span 追踪中间件（traceId / parentSpanId / 起止时间）',
+      '理解 OpenTelemetry 的核心抽象（Tracer / Span / Context）',
+      '对照 OpenTelemetry SDK 与 LangSmith 的等价埋点',
+    ],
+    `
 ### 手写一个最小 OpenTelemetry
 
 OpenTelemetry 的核心抽象其实很简单：Tracer 创建 Span，Span 记录起止与属性，Context 传递 traceId/parentSpanId。手写一遍，你就懂了 SDK 在干什么。
@@ -78,34 +78,36 @@ OpenTelemetry SDK 的 \\\`trace.getTracer().startActiveSpan()\\\` 与你的 \\\`
 :::
 
 `,
-  null,
-  [
-    {
-      text: '手写 Tracer 中 `withSpan` 用 finally 导出 span 的原因是？',
-      options: ['好看', '异常时也要 end + export，否则丢数据', '更快', '省内存'],
-      answer: 1,
-      explain: 'finally 保证异常也导出。',
-      concept: 'span-middleware',
-    },
-    {
-      text: '同一条链路的 span 共享什么？',
-      options: ['spanId', 'traceId', 'parentId', 'name'],
-      answer: 1,
-      explain: '共享 traceId。',
-      concept: 'span-middleware',
-    },
-    {
-      text: '并发下 span 串错的原因是？',
-      options: ['内存不够', 'parent 传递错误，需 AsyncLocalStorage 绑定上下文', '网络慢', '代码太长'],
-      answer: 1,
-      explain: '并发下 parent 易串。',
-      concept: 'span-middleware',
-    },
-  ],
-  [
-    ['Tracer', '创建 Span 的入口对象'],
-    ['Span', '一次操作的追踪记录'],
-    ['AsyncLocalStorage', 'Node 中绑定异步上下文的机制'],
-  ],
-  ['span 不在 finally 导出，异常时丢追踪数据。', '并发下不绑定上下文，span 树错乱。'],
+    null,
+    [
+      {
+        text: '手写 Tracer 中 `withSpan` 用 finally 导出 span 的原因是？',
+        options: ['好看', '异常时也要 end + export，否则丢数据', '更快', '省内存'],
+        answer: 1,
+        explain: 'finally 保证异常也导出。',
+        concept: 'span-middleware',
+      },
+      {
+        text: '同一条链路的 span 共享什么？',
+        options: ['spanId', 'traceId', 'parentId', 'name'],
+        answer: 1,
+        explain: '共享 traceId。',
+        concept: 'span-middleware',
+      },
+      {
+        text: '并发下 span 串错的原因是？',
+        options: ['内存不够', 'parent 传递错误，需 AsyncLocalStorage 绑定上下文', '网络慢', '代码太长'],
+        answer: 1,
+        explain: '并发下 parent 易串。',
+        concept: 'span-middleware',
+      },
+    ],
+    [
+      ['Tracer', '创建 Span 的入口对象'],
+      ['Span', '一次操作的追踪记录'],
+      ['AsyncLocalStorage', 'Node 中绑定异步上下文的机制'],
+    ],
+    ['span 不在 finally 导出，异常时丢追踪数据。', '并发下不绑定上下文，span 树错乱。'],
+  ),
+  'practice',
 )

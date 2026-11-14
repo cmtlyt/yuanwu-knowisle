@@ -4,7 +4,6 @@ export const L17 = L(
   'L17',
   3,
   '多 Layer 组合与资源竞争实战',
-  35,
   4,
   ['L15', 'L16'],
   ['layer', 'layer-graph', 'scope'],

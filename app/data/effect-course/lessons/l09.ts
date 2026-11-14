@@ -4,7 +4,6 @@ export const L09 = L(
   'L09',
   2,
   'Cause 的底层结构：扁平 reasons 数组',
-  35,
   4,
   ['L08'],
   ['cause'],

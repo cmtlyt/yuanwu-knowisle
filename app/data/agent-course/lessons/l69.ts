@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
-export const L69 = L(
-  'L69',
-  11,
-  '三种编排模式对比与选型（supervisor / 群聊 / 图 workflow）',
-  12,
-  2,
-  ['L68'],
-  ['orchestration'],
-  [
-    '对比 supervisor / 群聊 / 图 workflow 三种编排模式',
-    '理解各自的控制强度、灵活性与适用场景',
-    '能按任务特点选对编排模式',
-  ],
-  `
+export const L69 = withKind(
+  L(
+    'L69',
+    11,
+    '三种编排模式对比与选型（supervisor / 群聊 / 图 workflow）',
+    2,
+    ['L68'],
+    ['orchestration'],
+    [
+      '对比 supervisor / 群聊 / 图 workflow 三种编排模式',
+      '理解各自的控制强度、灵活性与适用场景',
+      '能按任务特点选对编排模式',
+    ],
+    `
 ### 三种编排，三种控制强度
 
 多 Agent 怎么「组织起来」有三种主流模式：supervisor（集中调度）、群聊（自由发言）、图 workflow（固定流程）。区别在「谁来决定谁发言」。
@@ -56,39 +56,41 @@ export const L69 = L(
 :::
 
 `,
-  null,
-  [
-    {
-      text: '控制强度从高到低的正确排序是？',
-      options: [
-        '群聊 > supervisor > 图',
-        '图 workflow > supervisor > 群聊',
-        'supervisor > 图 > 群聊',
-        '三者相同',
-      ],
-      answer: 1,
-      explain: '图最可控，群聊最灵活。',
-      concept: 'orchestration',
-    },
-    {
-      text: '流程写死、可复现的场景，适合？',
-      options: ['群聊', '图 workflow', 'supervisor', '自由聊天'],
-      answer: 1,
-      explain: '固定流程用图 workflow。',
-      concept: 'orchestration',
-    },
-    {
-      text: '群聊模式的缺点是？',
-      options: ['太可控', '易跑题、重复发言、难收敛', '太快', '太省 token'],
-      answer: 1,
-      explain: '群聊最灵活但最不可控。',
-      concept: 'orchestration',
-    },
-  ],
-  [
-    ['supervisor 编排', '集中调度，决定每轮谁发言'],
-    ['群聊编排', '多 Agent 在消息流自由发言'],
-    ['图 workflow', '固定节点边、按 DAG 执行'],
-  ],
-  ['流程固定却用群聊，结果不可控、难复现。', '开放任务硬套图 workflow，灵活性被写死。'],
+    null,
+    [
+      {
+        text: '控制强度从高到低的正确排序是？',
+        options: [
+          '群聊 > supervisor > 图',
+          '图 workflow > supervisor > 群聊',
+          'supervisor > 图 > 群聊',
+          '三者相同',
+        ],
+        answer: 1,
+        explain: '图最可控，群聊最灵活。',
+        concept: 'orchestration',
+      },
+      {
+        text: '流程写死、可复现的场景，适合？',
+        options: ['群聊', '图 workflow', 'supervisor', '自由聊天'],
+        answer: 1,
+        explain: '固定流程用图 workflow。',
+        concept: 'orchestration',
+      },
+      {
+        text: '群聊模式的缺点是？',
+        options: ['太可控', '易跑题、重复发言、难收敛', '太快', '太省 token'],
+        answer: 1,
+        explain: '群聊最灵活但最不可控。',
+        concept: 'orchestration',
+      },
+    ],
+    [
+      ['supervisor 编排', '集中调度，决定每轮谁发言'],
+      ['群聊编排', '多 Agent 在消息流自由发言'],
+      ['图 workflow', '固定节点边、按 DAG 执行'],
+    ],
+    ['流程固定却用群聊，结果不可控、难复现。', '开放任务硬套图 workflow，灵活性被写死。'],
+  ),
+  'practice',
 )

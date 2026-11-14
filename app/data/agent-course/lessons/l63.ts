@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 10 ========== */
 
-export const L63 = L(
-  'L63',
-  10,
-  'Reflexion 机制：失败经验持久化',
-  12,
-  2,
-  ['L17', 'L18'],
-  ['reflexion-mech'],
-  [
-    '把 Reflexion 从「概念」升级为「可复用的机制组件」',
-    '理解失败经验持久化的三种形态',
-    '认识 Reflexion 机制与评测信号的关系',
-  ],
-  `
+export const L63 = withKind(
+  L(
+    'L63',
+    10,
+    'Reflexion 机制：失败经验持久化',
+    2,
+    ['L17', 'L18'],
+    ['reflexion-mech'],
+    [
+      '把 Reflexion 从「概念」升级为「可复用的机制组件」',
+      '理解失败经验持久化的三种形态',
+      '认识 Reflexion 机制与评测信号的关系',
+    ],
+    `
 ### Reflexion 是一个机制，不是一个 prompt
 
 L17 讲了 Reflexion 的概念，L18 实现了回路。本课把它抽象成**机制组件**：失败信号 → 反思生成 → 持久化 → 检索注入，四个环节可独立替换。
@@ -57,34 +57,36 @@ interface ReflexionMechanism {
 :::
 
 `,
-  null,
-  [
-    {
-      text: '「Reflexion 是机制不是 prompt」指什么？',
-      options: ['它不用模型', '失败信号→反思→持久化→注入，四环节可独立替换', '它不持久化', '它只用一次'],
-      answer: 1,
-      explain: '组件化、可独立演进。',
-      concept: 'reflexion-mech',
-    },
-    {
-      text: '失败经验的三种持久化形态是？',
-      options: ['文字反思、结构化字段、技能代码', '文件、内存、缓存', '增、删、改', '读、写、执行'],
-      answer: 0,
-      explain: '文字、字段、代码。',
-      concept: 'reflexion-mech',
-    },
-    {
-      text: 'Reflexion 机制的三个前提是？',
-      options: ['有 GPU、有数据、有模型', '有评估信号、反思可执行、记忆能注入', '快、稳、省', '增、删、改'],
-      answer: 1,
-      explain: '信号、可执行反思、可注入记忆。',
-      concept: 'reflexion-mech',
-    },
-  ],
-  [
-    ['机制组件', '可独立替换、可测试的环节组合'],
-    ['失败信号', '判断成败的评估输出'],
-    ['反思注入', '把反思写进下一轮上下文'],
-  ],
-  ['评估信号不准仍靠 Reflexion，学到错误经验越改越差。', '把反思写成空话，注入后无帮助还占上下文。'],
+    null,
+    [
+      {
+        text: '「Reflexion 是机制不是 prompt」指什么？',
+        options: ['它不用模型', '失败信号→反思→持久化→注入，四环节可独立替换', '它不持久化', '它只用一次'],
+        answer: 1,
+        explain: '组件化、可独立演进。',
+        concept: 'reflexion-mech',
+      },
+      {
+        text: '失败经验的三种持久化形态是？',
+        options: ['文字反思、结构化字段、技能代码', '文件、内存、缓存', '增、删、改', '读、写、执行'],
+        answer: 0,
+        explain: '文字、字段、代码。',
+        concept: 'reflexion-mech',
+      },
+      {
+        text: 'Reflexion 机制的三个前提是？',
+        options: ['有 GPU、有数据、有模型', '有评估信号、反思可执行、记忆能注入', '快、稳、省', '增、删、改'],
+        answer: 1,
+        explain: '信号、可执行反思、可注入记忆。',
+        concept: 'reflexion-mech',
+      },
+    ],
+    [
+      ['机制组件', '可独立替换、可测试的环节组合'],
+      ['失败信号', '判断成败的评估输出'],
+      ['反思注入', '把反思写进下一轮上下文'],
+    ],
+    ['评估信号不准仍靠 Reflexion，学到错误经验越改越差。', '把反思写成空话，注入后无帮助还占上下文。'],
+  ),
+  'theory',
 )

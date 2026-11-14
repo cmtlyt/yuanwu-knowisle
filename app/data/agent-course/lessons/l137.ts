@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 27 ========== */
 
-export const L137 = L(
-  'L137',
-  27,
-  '实战 Capstone B：从零实现 RAG + Graph RAG 知识库',
-  22,
-  4,
-  ['L136'],
-  ['cap-b-rag'],
-  [
-    '从零实现向量 RAG + Graph RAG 知识库',
-    '掌握「多跳推理检索」与「向量检索」的结合',
-    '理解研究型 Agent 的检索为何需要「多源 + 去重 + 溯源」',
-  ],
-  `
+export const L137 = withKind(
+  L(
+    'L137',
+    27,
+    '实战 Capstone B：从零实现 RAG + Graph RAG 知识库',
+    4,
+    ['L136'],
+    ['cap-b-rag'],
+    [
+      '从零实现向量 RAG + Graph RAG 知识库',
+      '掌握「多跳推理检索」与「向量检索」的结合',
+      '理解研究型 Agent 的检索为何需要「多源 + 去重 + 溯源」',
+    ],
+    `
 ### 检索是研究型 Agent 的「证据来源」
 
 Capstone B 的检索不能只是「向量相似度 top-k」，还要支持多跳推理（Graph RAG）和多源去重。本课从零实现 RAG + Graph RAG，不复用 L49/L50，思路一致。
@@ -63,35 +63,37 @@ return rerank(evidence, question).slice(0, N)
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Graph RAG 补上的是向量检索的？',
-      options: ['速度', '关系盲区（多跳推理）', '成本', '存储'],
-      answer: 1,
-      explain: '多跳关系向量检索做不了。',
-      concept: 'cap-b-rag',
-    },
-    {
-      text: '向量 RAG 擅长的是？',
-      options: ['多跳关系', '语义相似检索', '图遍历', '实体识别'],
-      answer: 1,
-      explain: '相似检索是向量特长。',
-      concept: 'cap-b-rag',
-    },
-    {
-      text: '为什么检索结果必须带 sourceId？',
-      options: ['省空间', '为溯源校验做准备，否则报告不可信', '加速', '去重'],
-      answer: 1,
-      explain: '溯源从检索就开始。',
-      concept: 'cap-b-rag',
-    },
-  ],
-  [
-    ['向量 RAG', '语义相似度检索'],
-    ['Graph RAG', '沿知识图谱多跳遍历'],
-    ['多源去重', '去除重复证据'],
-    ['sourceId', '证据来源标识，溯源基础'],
-  ],
-  ['只用向量检索，研究型任务里漏掉多跳关系。', '检索时丢弃来源，导致后续无法溯源校验。'],
+    null,
+    [
+      {
+        text: 'Graph RAG 补上的是向量检索的？',
+        options: ['速度', '关系盲区（多跳推理）', '成本', '存储'],
+        answer: 1,
+        explain: '多跳关系向量检索做不了。',
+        concept: 'cap-b-rag',
+      },
+      {
+        text: '向量 RAG 擅长的是？',
+        options: ['多跳关系', '语义相似检索', '图遍历', '实体识别'],
+        answer: 1,
+        explain: '相似检索是向量特长。',
+        concept: 'cap-b-rag',
+      },
+      {
+        text: '为什么检索结果必须带 sourceId？',
+        options: ['省空间', '为溯源校验做准备，否则报告不可信', '加速', '去重'],
+        answer: 1,
+        explain: '溯源从检索就开始。',
+        concept: 'cap-b-rag',
+      },
+    ],
+    [
+      ['向量 RAG', '语义相似度检索'],
+      ['Graph RAG', '沿知识图谱多跳遍历'],
+      ['多源去重', '去除重复证据'],
+      ['sourceId', '证据来源标识，溯源基础'],
+    ],
+    ['只用向量检索，研究型任务里漏掉多跳关系。', '检索时丢弃来源，导致后续无法溯源校验。'],
+  ),
+  'capstone',
 )

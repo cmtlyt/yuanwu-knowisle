@@ -4,7 +4,6 @@ export const L15 = L(
   'L15',
   3,
   '依赖图：merge / provide / provideMerge 与记忆化',
-  35,
   4,
   ['L14'],
   ['layer-graph'],

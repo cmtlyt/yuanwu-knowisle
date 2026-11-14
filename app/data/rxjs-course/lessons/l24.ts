@@ -4,7 +4,6 @@ export const L24 = L(
   'L24',
   5,
   '组合多源：combineLatest / merge / zip / withLatestFrom',
-  30,
   3,
   ['L05'],
   ['c-combine'],

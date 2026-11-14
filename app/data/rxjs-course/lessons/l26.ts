@@ -4,7 +4,6 @@ export const L26 = L(
   'L26',
   5,
   'marble 测试与 TestScheduler 深入',
-  30,
   3,
   ['L23'],
   ['c-testing'],

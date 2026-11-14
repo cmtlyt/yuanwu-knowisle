@@ -4,7 +4,6 @@ export const L22 = L(
   'L22',
   5,
   '调度器：把时间注入系统',
-  28,
   3,
   ['L01'],
   ['c-scheduler'],

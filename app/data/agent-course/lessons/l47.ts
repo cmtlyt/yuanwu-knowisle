@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 6 ========== */
 
-export const L47 = L(
-  'L47',
-  6,
-  '接入一个 MCP Server 并让 Agent 用起来（手写 Client → SDK Client）',
-  18,
-  3,
-  ['L46'],
-  ['mcp-integration'],
-  [
-    '实现一个 MCP Client，把远程工具接进自己的 Agent',
-    '理解「工具发现 → 转成 Function Calling 工具 → 调用」的桥接',
-    '对照手写 Client 与 SDK Client 的差异',
-  ],
-  `
+export const L47 = withKind(
+  L(
+    'L47',
+    6,
+    '接入一个 MCP Server 并让 Agent 用起来（手写 Client → SDK Client）',
+    3,
+    ['L46'],
+    ['mcp-integration'],
+    [
+      '实现一个 MCP Client，把远程工具接进自己的 Agent',
+      '理解「工具发现 → 转成 Function Calling 工具 → 调用」的桥接',
+      '对照手写 Client 与 SDK Client 的差异',
+    ],
+    `
 ### 让 Agent 用上 MCP 工具
 
 MCP Server 只是「提供工具」，要让 Agent 真正用它，需要一个 Client 把 MCP 工具**桥接**成 Agent 认识的 Function Calling 工具。
@@ -65,34 +65,39 @@ stdio Server 是子进程：Agent 不用它时要关闭进程、释放句柄，�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '让 Agent 用上 MCP 工具，Client 的核心工作是？',
-      options: ['写 UI', '把 MCP 工具桥接成 Agent 认识的 Function Calling 工具', '训练模型', '存数据'],
-      answer: 1,
-      explain: '发现 + 调用 + 桥接。',
-      concept: 'mcp-integration',
-    },
-    {
-      text: '桥接中，MCP `tools/call` 对应 Agent 工具的？',
-      options: ['名字', 'run 函数', 'schema 声明', '文档'],
-      answer: 1,
-      explain: 'tools/call 包装成 run 函数。',
-      concept: 'mcp-integration',
-    },
-    {
-      text: 'stdio Server 不用时要做什么？',
-      options: ['留着不管', '关闭子进程、释放句柄，防止泄漏', '重启', '删除'],
-      answer: 1,
-      explain: '进程生命周期要管理，否则泄漏。',
-      concept: 'mcp-integration',
-    },
-  ],
-  [
-    ['Client 桥接', '把 MCP 工具翻译成 Agent Function Calling 工具'],
-    ['tools/list', 'MCP 的工具发现方法'],
-    ['tools/call', 'MCP 的工具调用方法'],
-  ],
-  ['不管理子进程生命周期，反复接入导致句柄/进程泄漏。', '把 MCP 工具与 Agent 工具当成两套，忘了桥接这一层。'],
+    null,
+    [
+      {
+        text: '让 Agent 用上 MCP 工具，Client 的核心工作是？',
+        options: ['写 UI', '把 MCP 工具桥接成 Agent 认识的 Function Calling 工具', '训练模型', '存数据'],
+        answer: 1,
+        explain: '发现 + 调用 + 桥接。',
+        concept: 'mcp-integration',
+      },
+      {
+        text: '桥接中，MCP `tools/call` 对应 Agent 工具的？',
+        options: ['名字', 'run 函数', 'schema 声明', '文档'],
+        answer: 1,
+        explain: 'tools/call 包装成 run 函数。',
+        concept: 'mcp-integration',
+      },
+      {
+        text: 'stdio Server 不用时要做什么？',
+        options: ['留着不管', '关闭子进程、释放句柄，防止泄漏', '重启', '删除'],
+        answer: 1,
+        explain: '进程生命周期要管理，否则泄漏。',
+        concept: 'mcp-integration',
+      },
+    ],
+    [
+      ['Client 桥接', '把 MCP 工具翻译成 Agent Function Calling 工具'],
+      ['tools/list', 'MCP 的工具发现方法'],
+      ['tools/call', 'MCP 的工具调用方法'],
+    ],
+    [
+      '不管理子进程生命周期，反复接入导致句柄/进程泄漏。',
+      '把 MCP 工具与 Agent 工具当成两套，忘了桥接这一层。',
+    ],
+  ),
+  'practice',
 )

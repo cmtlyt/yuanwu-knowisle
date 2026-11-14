@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 5 ========== */
 
-export const L38 = L(
-  'L38',
-  5,
-  'Function Calling 是怎么工作的',
-  12,
-  2,
-  ['L36'],
-  ['function-calling'],
-  [
-    '理解 Function Calling 的「模型产出结构化调用」机制',
-    '区分 Function Calling 与「解析模型文本」的本质差异',
-    '掌握一次完整 Function Calling 的请求-响应-回填闭环',
-  ],
-  `
+export const L38 = withKind(
+  L(
+    'L38',
+    5,
+    'Function Calling 是怎么工作的',
+    2,
+    ['L36'],
+    ['function-calling'],
+    [
+      '理解 Function Calling 的「模型产出结构化调用」机制',
+      '区分 Function Calling 与「解析模型文本」的本质差异',
+      '掌握一次完整 Function Calling 的请求-响应-回填闭环',
+    ],
+    `
 ### 让模型「叫」工具，而不是「写」工具名
 
 前面 ReAct 里模型用「文本」写 Action（\\\`Action: search(...)\\\`），靠正则解析，脆弱。Function Calling 让模型直接产出**结构化的工具调用**（工具名 + JSON 参数），不再依赖自由文本解析。
@@ -62,37 +62,39 @@ messages.push({ role: "tool", tool_call_id: "call_1", content: "晴 18°C" })
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Function Calling 相对文本解析 ReAct 的核心优势是？',
-      options: ['更快', '模型按 JSON Schema 产出结构化调用，更可靠', '更省 token', '不需要工具'],
-      answer: 1,
-      explain: '结构化调用受 Schema 约束、有唯一 id 关联。',
-      concept: 'function-calling',
-    },
-    {
-      text: 'Function Calling 的 `arguments` 字段是？',
-      options: ['对象', 'JSON 字符串，需 JSON.parse 并容错', '数组', '二进制'],
-      answer: 1,
-      explain: '是 JSON 字符串，需解析且容错。',
-      concept: 'function-calling',
-    },
-    {
-      text: '一次 Function Calling 的三件事是？',
-      options: ['声明、解析、回填', '加密、解密、签名', '训练、推理、部署', '增、删、改'],
-      answer: 0,
-      explain: '声明工具、解析调用、回填结果。',
-      concept: 'function-calling',
-    },
-  ],
-  [
-    ['tool_calls', '模型返回的结构化工具调用列表'],
-    ['JSON Schema', '描述工具参数结构与类型的声明'],
-    ['tool role', '回填工具结果所用的消息角色'],
-  ],
-  [
-    '仍用正则解析模型文本，忽略了 Function Calling 的结构化优势。',
-    '把 arguments 当对象直接用，忘了它其实是 JSON 字符串。',
-  ],
+    null,
+    [
+      {
+        text: 'Function Calling 相对文本解析 ReAct 的核心优势是？',
+        options: ['更快', '模型按 JSON Schema 产出结构化调用，更可靠', '更省 token', '不需要工具'],
+        answer: 1,
+        explain: '结构化调用受 Schema 约束、有唯一 id 关联。',
+        concept: 'function-calling',
+      },
+      {
+        text: 'Function Calling 的 `arguments` 字段是？',
+        options: ['对象', 'JSON 字符串，需 JSON.parse 并容错', '数组', '二进制'],
+        answer: 1,
+        explain: '是 JSON 字符串，需解析且容错。',
+        concept: 'function-calling',
+      },
+      {
+        text: '一次 Function Calling 的三件事是？',
+        options: ['声明、解析、回填', '加密、解密、签名', '训练、推理、部署', '增、删、改'],
+        answer: 0,
+        explain: '声明工具、解析调用、回填结果。',
+        concept: 'function-calling',
+      },
+    ],
+    [
+      ['tool_calls', '模型返回的结构化工具调用列表'],
+      ['JSON Schema', '描述工具参数结构与类型的声明'],
+      ['tool role', '回填工具结果所用的消息角色'],
+    ],
+    [
+      '仍用正则解析模型文本，忽略了 Function Calling 的结构化优势。',
+      '把 arguments 当对象直接用，忘了它其实是 JSON 字符串。',
+    ],
+  ),
+  'practice',
 )

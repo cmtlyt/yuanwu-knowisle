@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 5 ========== */
 
-export const L39 = L(
-  'L39',
-  5,
-  '写好工具 Schema：让模型「用得对」',
-  12,
-  2,
-  ['L38'],
-  ['tool-schema'],
-  [
-    '理解工具 Schema 是「模型正确用工具」的关键',
-    '掌握用 TS 类型 + zod 校验写 Schema 的实践',
-    '认识好 Schema 的特征：描述清晰、参数最小、带示例',
-  ],
-  `
+export const L39 = withKind(
+  L(
+    'L39',
+    5,
+    '写好工具 Schema：让模型「用得对」',
+    2,
+    ['L38'],
+    ['tool-schema'],
+    [
+      '理解工具 Schema 是「模型正确用工具」的关键',
+      '掌握用 TS 类型 + zod 校验写 Schema 的实践',
+      '认识好 Schema 的特征：描述清晰、参数最小、带示例',
+    ],
+    `
 ### Schema 决定模型会不会用错
 
 模型靠 Schema 理解「这个工具干什么、参数怎么填」。Schema 写得好，模型用得对；写得含糊，模型就会传错参数。Schema 是工具设计的一半工作。
@@ -62,39 +62,46 @@ const args = SearchWeather.parse(JSON.parse(rawArguments))  // 不合法直接�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '为什么工具 Schema 是「工具设计的一半工作」？',
-      options: [
-        'Schema 决定模型能否正确理解并填写参数',
-        'Schema 能减少代码',
-        'Schema 影响性能',
-        'Schema 不需要维护',
-      ],
-      answer: 0,
-      explain: '模型靠 Schema 理解工具与参数。',
-      concept: 'tool-schema',
-    },
-    {
-      text: '用 zod 定义工具的好处是？',
-      options: ['性能更快', '一次定义、两处复用：生成 JSON Schema + 校验模型参数', '不用 JSON', '自动写文档'],
-      answer: 1,
-      explain: '单一事实来源，消除 Schema 与校验的分叉。',
-      concept: 'tool-schema',
-    },
-    {
-      text: '好 Schema 的三个特征不包括？',
-      options: ['描述清晰', '参数最小', '带示例', '参数越多越好'],
-      answer: 3,
-      explain: '清晰、最小、带示例；参数多反而是坑。',
-      concept: 'tool-schema',
-    },
-  ],
-  [
-    ['zod', '运行时 Schema 校验库，可生成 JSON Schema'],
-    ['describe()', '给字段附加语义描述，帮助模型理解'],
-    ['单一事实来源', 'Schema 定义一处、生成与校验共用'],
-  ],
-  ['给模型的 Schema 与执行校验用两套，早晚不一致。', '参数名含糊（data/info），模型无从下手。'],
+    null,
+    [
+      {
+        text: '为什么工具 Schema 是「工具设计的一半工作」？',
+        options: [
+          'Schema 决定模型能否正确理解并填写参数',
+          'Schema 能减少代码',
+          'Schema 影响性能',
+          'Schema 不需要维护',
+        ],
+        answer: 0,
+        explain: '模型靠 Schema 理解工具与参数。',
+        concept: 'tool-schema',
+      },
+      {
+        text: '用 zod 定义工具的好处是？',
+        options: [
+          '性能更快',
+          '一次定义、两处复用：生成 JSON Schema + 校验模型参数',
+          '不用 JSON',
+          '自动写文档',
+        ],
+        answer: 1,
+        explain: '单一事实来源，消除 Schema 与校验的分叉。',
+        concept: 'tool-schema',
+      },
+      {
+        text: '好 Schema 的三个特征不包括？',
+        options: ['描述清晰', '参数最小', '带示例', '参数越多越好'],
+        answer: 3,
+        explain: '清晰、最小、带示例；参数多反而是坑。',
+        concept: 'tool-schema',
+      },
+    ],
+    [
+      ['zod', '运行时 Schema 校验库，可生成 JSON Schema'],
+      ['describe()', '给字段附加语义描述，帮助模型理解'],
+      ['单一事实来源', 'Schema 定义一处、生成与校验共用'],
+    ],
+    ['给模型的 Schema 与执行校验用两套，早晚不一致。', '参数名含糊（data/info），模型无从下手。'],
+  ),
+  'practice',
 )

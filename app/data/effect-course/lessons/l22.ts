@@ -4,7 +4,6 @@ export const L22 = L(
   'L22',
   4,
   '中断语义与 Channel',
-  40,
   5,
   ['L21'],
   ['concurrency', 'channel'],

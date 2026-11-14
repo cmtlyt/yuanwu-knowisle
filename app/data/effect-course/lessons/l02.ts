@@ -4,7 +4,6 @@ export const L02 = L(
   'L02',
   0,
   '程序即值：Effect<Success, Error, Requirements>',
-  25,
   1,
   ['L01'],
   ['three-channels', 'laziness'],

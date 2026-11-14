@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 3 ========== */
 
-export const L27 = L(
-  'L27',
-  3,
-  '一张对比矩阵看懂 12 种范式',
-  14,
-  2,
-  ['L11', 'L12', 'L14', 'L19', 'L17'],
-  ['paradigm-matrix'],
-  [
-    '用一张矩阵记住 12 种范式的核心差异',
-    '掌握「上下文成本 / 可靠性 / 可控性 / 典型场景」四维',
-    '能把矩阵当选型速查表使用',
-  ],
-  `
+export const L27 = withKind(
+  L(
+    'L27',
+    3,
+    '一张对比矩阵看懂 12 种范式',
+    2,
+    ['L11', 'L12', 'L14', 'L19', 'L17'],
+    ['paradigm-matrix'],
+    [
+      '用一张矩阵记住 12 种范式的核心差异',
+      '掌握「上下文成本 / 可靠性 / 可控性 / 典型场景」四维',
+      '能把矩阵当选型速查表使用',
+    ],
+    `
 ### 一张矩阵，选型速查
 
 前面学了 12 种范式，现在把它们压成一张可操作的对比矩阵。四个维度：上下文成本（token 多少）、可靠性（结果多稳）、可控性（流程多可控）、典型场景。
@@ -59,37 +59,39 @@ Self-Consistency   高(并行) 高    低      单点推理提鲁棒
 :::
 
 `,
-  null,
-  [
-    {
-      text: '矩阵里「高可靠」范式普遍的特点是？',
-      options: ['高成本、低可控', '低成本、高可控', '零成本', '不需要模型'],
-      answer: 0,
-      explain: '高可靠几乎都高成本、低可控。',
-      concept: 'paradigm-matrix',
-    },
-    {
-      text: 'token 预算紧、步骤相对确定的场景，优先选？',
-      options: ['ToT', 'ReWOO / P&E', 'LATS', 'Voyager'],
-      answer: 1,
-      explain: 'ReWOO / P&E 成本低、流程可控。',
-      concept: 'paradigm-matrix',
-    },
-    {
-      text: '「错了代价极高」的任务，优先考虑？',
-      options: ['ReAct', 'ToT / LATS / Self-Consistency', 'AutoGPT 谱系', '纯 CoT'],
-      answer: 1,
-      explain: '高可靠范式（搜索/投票）适合错误代价高的场景。',
-      concept: 'paradigm-matrix',
-    },
-  ],
-  [
-    ['可靠性', '结果正确与稳定的程度'],
-    ['可控性', '流程可人工干预、可审阅的程度'],
-    ['选型三问', '成本 / 可靠性 / 可控性三问定位范式'],
-  ],
-  [
-    '只背矩阵不理解「成本-可靠性-可控性」的权衡，换个任务就选错。',
-    '认为矩阵是「二选一」——真实系统常混合多范式。',
-  ],
+    null,
+    [
+      {
+        text: '矩阵里「高可靠」范式普遍的特点是？',
+        options: ['高成本、低可控', '低成本、高可控', '零成本', '不需要模型'],
+        answer: 0,
+        explain: '高可靠几乎都高成本、低可控。',
+        concept: 'paradigm-matrix',
+      },
+      {
+        text: 'token 预算紧、步骤相对确定的场景，优先选？',
+        options: ['ToT', 'ReWOO / P&E', 'LATS', 'Voyager'],
+        answer: 1,
+        explain: 'ReWOO / P&E 成本低、流程可控。',
+        concept: 'paradigm-matrix',
+      },
+      {
+        text: '「错了代价极高」的任务，优先考虑？',
+        options: ['ReAct', 'ToT / LATS / Self-Consistency', 'AutoGPT 谱系', '纯 CoT'],
+        answer: 1,
+        explain: '高可靠范式（搜索/投票）适合错误代价高的场景。',
+        concept: 'paradigm-matrix',
+      },
+    ],
+    [
+      ['可靠性', '结果正确与稳定的程度'],
+      ['可控性', '流程可人工干预、可审阅的程度'],
+      ['选型三问', '成本 / 可靠性 / 可控性三问定位范式'],
+    ],
+    [
+      '只背矩阵不理解「成本-可靠性-可控性」的权衡，换个任务就选错。',
+      '认为矩阵是「二选一」——真实系统常混合多范式。',
+    ],
+  ),
+  'theory',
 )

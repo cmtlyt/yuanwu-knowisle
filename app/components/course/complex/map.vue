@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
 import { useLearning } from '~/composables/use-learning'
+import { lessonMinutes } from '~/lib/lesson-time'
 
 const router = useRouter()
 const {
@@ -143,7 +144,7 @@ function scrollToModule(id: number) {
                   <div>
                     <div class="t">{{ l.title }}</div>
                     <div class="meta">
-                      <span>⏱ {{ l.minutes }} min</span>
+                      <span>⏱ {{ lessonMinutes(l) }} min</span>
                       <span>难度 {{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</span>
                       <span>{{ l.concepts.map(conceptName).join(' / ') }}</span>
                     </div>
@@ -162,7 +163,7 @@ function scrollToModule(id: number) {
                 <div>
                   <div class="t">{{ l.title }}</div>
                   <div class="meta">
-                    <span>⏱ {{ l.minutes }} min</span>
+                    <span>⏱ {{ lessonMinutes(l) }} min</span>
                     <span>难度 {{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</span>
                     <span>{{ l.concepts.map(conceptName).join(' / ') }}</span>
                   </div>
@@ -182,7 +183,7 @@ function scrollToModule(id: number) {
                 <div>
                   <div class="t">{{ l.title }}</div>
                   <div class="meta">
-                    <span>⏱ {{ l.minutes }} min</span>
+                    <span>⏱ {{ lessonMinutes(l) }} min</span>
                     <span>难度 {{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</span>
                     <span>{{ l.concepts.map(conceptName).join(' / ') }}</span>
                   </div>

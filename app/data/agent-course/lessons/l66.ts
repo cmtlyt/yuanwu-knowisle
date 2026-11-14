@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
-export const L66 = L(
-  'L66',
-  11,
-  '什么时候需要多个 Agent',
-  12,
-  2,
-  ['L27'],
-  ['multi-agent-when'],
-  [
-    '理解多 Agent 解决的是「单 Agent 做不到」的什么问题',
-    '掌握判断「该拆多个 Agent」的几个信号',
-    '避免「为多而多」的过度设计',
-  ],
-  `
+export const L66 = withKind(
+  L(
+    'L66',
+    11,
+    '什么时候需要多个 Agent',
+    2,
+    ['L27'],
+    ['multi-agent-when'],
+    [
+      '理解多 Agent 解决的是「单 Agent 做不到」的什么问题',
+      '掌握判断「该拆多个 Agent」的几个信号',
+      '避免「为多而多」的过度设计',
+    ],
+    `
 ### 多 Agent 不是「更高级」
 
 多 Agent 系统的价值不是「看起来厉害」，而是解决单 Agent 的客观瓶颈：上下文冲突、角色冲突、职责耦合。拆之前先问：真的需要拆吗？
@@ -53,37 +53,39 @@ export const L66 = L(
 :::
 
 `,
-  null,
-  [
-    {
-      text: '多 Agent 系统的硬理由（换 prompt 无法替代）是？',
-      options: ['更炫', '上下文隔离：每个角色有独立上下文', '更快', '更省 token'],
-      answer: 1,
-      explain: '上下文隔离是多 Agent 的硬理由。',
-      concept: 'multi-agent-when',
-    },
-    {
-      text: '以下哪项是「该拆多 Agent」的信号？',
-      options: ['写代码 + 写文档', '需要「研究员 + 评审 + 合成」多视角', '单步问答', '格式转换'],
-      answer: 1,
-      explain: '多专长、多视角需要拆。',
-      concept: 'multi-agent-when',
-    },
-    {
-      text: '「为多而多」的过度设计指？',
-      options: ['Agent 太多', '拆出的 Agent 没有独立上下文需求，只是换名字', '工具太多', '模型太大'],
-      answer: 1,
-      explain: '无独立上下文需求就别拆。',
-      concept: 'multi-agent-when',
-    },
-  ],
-  [
-    ['上下文隔离', '每个角色有独立上下文、互不干扰'],
-    ['角色分工', '按专长拆分的多 Agent 协作'],
-    ['风险隔离', '高风险动作独立成 Agent'],
-  ],
-  [
-    '把「换个 prompt 就能做」的任务也拆成多 Agent，徒增编排成本。',
-    '忽视上下文冲突，让一个 Agent 承担互相打架的指令。',
-  ],
+    null,
+    [
+      {
+        text: '多 Agent 系统的硬理由（换 prompt 无法替代）是？',
+        options: ['更炫', '上下文隔离：每个角色有独立上下文', '更快', '更省 token'],
+        answer: 1,
+        explain: '上下文隔离是多 Agent 的硬理由。',
+        concept: 'multi-agent-when',
+      },
+      {
+        text: '以下哪项是「该拆多 Agent」的信号？',
+        options: ['写代码 + 写文档', '需要「研究员 + 评审 + 合成」多视角', '单步问答', '格式转换'],
+        answer: 1,
+        explain: '多专长、多视角需要拆。',
+        concept: 'multi-agent-when',
+      },
+      {
+        text: '「为多而多」的过度设计指？',
+        options: ['Agent 太多', '拆出的 Agent 没有独立上下文需求，只是换名字', '工具太多', '模型太大'],
+        answer: 1,
+        explain: '无独立上下文需求就别拆。',
+        concept: 'multi-agent-when',
+      },
+    ],
+    [
+      ['上下文隔离', '每个角色有独立上下文、互不干扰'],
+      ['角色分工', '按专长拆分的多 Agent 协作'],
+      ['风险隔离', '高风险动作独立成 Agent'],
+    ],
+    [
+      '把「换个 prompt 就能做」的任务也拆成多 Agent，徒增编排成本。',
+      '忽视上下文冲突，让一个 Agent 承担互相打架的指令。',
+    ],
+  ),
+  'practice',
 )

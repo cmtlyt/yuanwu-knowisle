@@ -4,7 +4,6 @@ export const L03 = L(
   'L03',
   0,
   '订阅与资源回收：Subscription 与 teardown',
-  24,
   1,
   ['L02'],
   ['c-teardown'],

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
 import { useLearning } from '~/composables/use-learning'
+import { lessonMinutes } from '~/lib/lesson-time'
 import MarkdownArticle from '~/components/course/markdown-article.vue'
 import QuizCard from '~/components/course/quiz-card.vue'
 import CourseWidget from '~/components/course/course-widget.vue'
@@ -78,7 +79,7 @@ function go(id: string) {
         <div class="pill">{{ stageById(lesson!.stage)?.name }}</div>
         <h1>{{ lesson!.id }}　{{ lesson!.title }}</h1>
         <div class="lesson-meta">
-          <span class="pill">⏱ {{ lesson!.minutes }} min</span>
+          <span class="pill">⏱ {{ lessonMinutes(lesson!) }} min</span>
           <span class="pill">难度 {{ lesson!.difficulty }}/5</span>
           <span class="pill">前置：{{ lesson!.prereqs.length ? lesson!.prereqs.join('、') : '无' }}</span>
         </div>
@@ -105,26 +106,33 @@ function go(id: string) {
       <CourseWidget :key="lesson!.id" :name="lesson!.widget" @done="onWidgetDone" />
     </template>
 
-    <div class="section-title">关键术语</div>
-    <div class="terms">
-      <div v-for="(t, i) in lesson!.terms" :key="i" class="term">
-        <b>{{ t[0] }}</b>
-        <div>{{ t[1] }}</div>
+    <!-- 术语 / 误区 / 测验：导览课（kind: 'overview'）可能整节不设题，空分区不渲染标题 -->
+    <template v-if="lesson!.terms.length">
+      <div class="section-title">关键术语</div>
+      <div class="terms">
+        <div v-for="(t, i) in lesson!.terms" :key="i" class="term">
+          <b>{{ t[0] }}</b>
+          <div>{{ t[1] }}</div>
+        </div>
       </div>
-    </div>
+    </template>
 
-    <div class="section-title">常见误区</div>
-    <div v-for="(p, i) in lesson!.pitfalls" :key="i" class="pitfall">× {{ p }}</div>
+    <template v-if="lesson!.pitfalls.length">
+      <div class="section-title">常见误区</div>
+      <div v-for="(p, i) in lesson!.pitfalls" :key="i" class="pitfall">× {{ p }}</div>
+    </template>
 
-    <div class="section-title">随堂测验（即时反馈，答题计入掌握度）</div>
-    <QuizCard
-      v-for="(q, qi) in lesson!.quiz"
-      :key="`${lesson!.id}:${qi}`"
-      :question="q"
-      :index="qi"
-      :concept-name="conceptName(q.concept)"
-      @answer="onAnswer"
-    />
+    <template v-if="lesson!.quiz.length">
+      <div class="section-title">随堂测验（即时反馈，答题计入掌握度）</div>
+      <QuizCard
+        v-for="(q, qi) in lesson!.quiz"
+        :key="`${lesson!.id}:${qi}`"
+        :question="q"
+        :index="qi"
+        :concept-name="conceptName(q.concept)"
+        @answer="onAnswer"
+      />
+    </template>
 
     <div class="lesson-footer">
       <button v-if="prev" type="button" class="btn sm" @click="go(prev.id)">← 上一课</button>

@@ -4,7 +4,6 @@ export const L14 = L(
   'L14',
   3,
   '恢复与重试：catchError / retry / retryWhen',
-  30,
   3,
   ['L13'],
   ['c-retry'],

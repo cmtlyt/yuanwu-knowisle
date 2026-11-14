@@ -12,7 +12,7 @@
 │   ├── index.ts           聚合 LESSONS
 │   └── lNN.ts            一课时一文件
         │
-        ├── course-builders.ts   跨课程共享构造器 prose/code/call/list/q/L（不与单课耦合）
+        ├── course-builders.ts   跨课程共享构造器 L（正文为 md 串，不与单课耦合）
         ├── analytics.ts        纯计算，零 DOM；createAnalytics(course, storageKey) 工厂
         ├── widgets/            演练目录：index.ts 注册表 + dom.ts helper + effect/ + rxjs/，一演练一文件
         └── types/*.ts          共享类型契约
@@ -29,7 +29,7 @@
 ```
 app/data/
 ├── courses.ts            # 注册表：import { TOPIC_COURSE } from './<topic>-course'（省略扩展名，不变）
-├── course-builders.ts    # 共享构造器 prose/code/call/list/q/L（跨课程复用，不与单课耦合）
+├── course-builders.ts    # 共享构造器 L（正文为 md 串，跨课程复用，不与单课耦合）
 └── <topic>-course/
 ├── index.ts          # export const TOPIC_COURSE = { STAGES, CONCEPTS, LESSONS, META, DESIGN }
 ├── stages.ts         # export const STAGES: Stage[]
@@ -70,21 +70,25 @@ interface CourseMeta {
   release: string; playground: string; source: string; notes: string[]
 }
 
-type LessonBlock =
-  | { type: 'prose';   title?: string; text: string }
-  | { type: 'code';    title?: string; code: string; note: string }
-  | { type: 'callout'; tone: string; title: string; text: string }
-  | { type: 'list';    title?: string; items: string[] }
+type LessonKind =
+  | 'theory'     // 理论 / 范式：机制与边界，代码只作印证
+  | 'practice'   // 实战 / 实现：完整可跑实现 + 递进代码
+  | 'framework'  // 框架对照：手写版 ↔ 框架版逐项对照
+  | 'scenario'   // 专项 Agent：单一场景的落地实现
+  | 'capstone'   // Capstone：端到端交付 + 可执行验收断言
+  | 'overview'   // 导航 / 收束：整节职责就是导览，不写实现代码、不设题
 
 interface QuizQuestion {
   text: string; options: string[]; answer: number; explain: string; concept: string
 }
 interface Lesson {
-  id: string; stage: number; title: string; minutes: number; difficulty: number
+  id: string; stage: number; title: string; difficulty: number   // 无 minutes：用时按 md 体量现算
   prereqs: string[]; concepts: string[]; goals: string[]
-  blocks: LessonBlock[]; widget: string | null
+  md: string; widget: string | null          // 正文 Markdown（00053 起取代 blocks）
   quiz: QuizQuestion[]; terms: string[][]; pitfalls: string[]
   subStage?: string | null     // 复杂模式专属：所属子阶段 id（如 '3.1'）；simple 或不归子阶段时缺省
+  kind?: LessonKind            // 课时课型（见下）：用 withKind() 标注，不从阶段继承
+  kindReason?: string          // kind: 'overview' 时必填，说明为何本节不需要实现代码
 }
 interface CourseData {
   STAGES: Stage[]; CONCEPTS: Concept[]; LESSONS: Lesson[]; META: CourseMeta
@@ -95,6 +99,25 @@ interface CourseData {
 ```
 
 > 上面的接口块即 `app/types/course.ts` 的形状（`~/types/course` 为单一源）；`CourseData.renderMode`/`MODULES` 与 `Stage.module`/`subStages`/`Lesson.subStage` 均为**可选**，simple 课不填。
+
+### 课时用时（`minutes`）：不落数据，渲染时现算
+
+`Lesson` **没有 `minutes` 字段**，`L()` 也没有这个形参。用时由 `lessonMinutes(lesson)` 按正文体量现算（宿主仓库 `app/lib/lesson-time.ts`），页面在需要的地方调用（如 `{{ lessonMinutes(l) }} min`）。单课约 0.02 ms，142 课全量约 4 ms。
+
+- **为什么不存**：存下来就有两份真相（数字 vs 正文），正文一改数字不跟，就出现「写着 20 分钟、内容只够读 8 分钟」；而且得在**所有课时创建时**都算一遍，而这些课时大部分在本次访问里根本不会打开。
+- **口径**：正文 1/320 分钟/字、代码 1/200 分钟/字符、提示框 0.6/个、每题 1.2、每条术语 0.25、每条误区 0.5、每个交互演练 5；总时长 = 各项之和（下限 3 分钟）。`lessonTime()` 另返回分项占比，可解释「为什么是这个时长」。
+- **写课时只管内容**：不估时间。内容薄，显示的时间自然就短——这正是想要的信号，也是体量闸门存在的理由。
+
+### 课型（`kind`）：课程元数据，不是脚本配置
+
+课型决定体量闸门（`scripts/content-gate.mjs`，`pnpm verify` 第三段）用哪一档正文 / 代码下限、是否允许 0 题，取值见上面的 `LessonKind`。
+
+- **标在课时上**：每节课在自己的 `lNN.ts` 里用 `withKind(L(...), 'theory')` 标注，一个课时一个值，没有继承、没有优先级。`overview`（整节职责就是导览 / 收束）必须配 `kindReason`。
+- **为什么不是阶段级**：课型回答「这一节该多厚」，判定单位本来就是课。阶段级默认会带来三笔代价：看单课文件看不出课型、要额外校验「阶段漏标 / 越权覆盖」、以及假设「阶段内 5 节课同课型」——而现实里阶段内确实会混（导览课就是阶段内的异类）。
+- **闸门零配置读取**：判定式就是 `lesson.kind`，脚本里没有「阶段 → 课型」映射表，新增课程 / 新增阶段 / 重划阶段都不需要改脚本。
+- **不标 = 不纳入**：整门课一节都没标 `kind`，闸门打印「未标注课型，跳过」（simple 课如 effect / rxjs）；但只要标了一节就得标全——漏标任一课、取值非法，直接判失败。
+- **`overview` 课型护栏**：理由必填、每模块 ≤1 节、总量 ≤8%、Capstone 阶段禁用（阶段是否为 Capstone 区按阶段名 / `en` 识别）。
+- `L()` 构造器不含 `kind` 形参，所以课时文件导出时包一层：`export const L01 = withKind(L(...), 'overview', '课程地图：全课导览')`。`withKind` 与 `L` 同在 `course-builders.ts`（仓库级共享），一起 import。
 
 ### 课程设计说明书（绑定课程的数据，非独立文件）
 
@@ -121,7 +144,7 @@ interface CourseDesign  { title: string; summary: string; sections: DesignSectio
 - `quiz[].concept` 必须存在于 `CONCEPTS`；这是学情归因能定位薄弱点的唯一依据。
 - `lesson.prereqs` 指向的课时必须在数组中且**顺序更早**（保证 DAG 可线性学习）。
 - `lesson.widget` 必须能在演练注册表中解析；允许 `null`。
-- 每课 `blocks` / `goals` / `pitfalls` / `terms` 非空。
+- 每课 `md`（正文 Markdown，非空）/ `goals` / `pitfalls` / `terms` 非空。
 - `META.version` 是唯一版本源，正文不得散落硬编码版本号。
 - **数量动态化（禁止用固定个数约束生成）**：课时数、概念数、阶段数随知识复杂度浮动——铺垫阶段可少（如 3 课）、核心/难点阶段可多（如 5 课），「6 阶段 × 4 课 = 24 课」只是经验起点而非硬约束，**不得为凑整而拆碎知识点或硬塞课时**。题目数由**该课涉及知识点的完整性**驱动：先列出每个知识点要被讲透的**各个面向**（定义 / 语义、常见陷阱、选型对比、边界与例外、典型用法、易混淆点……），每个面向至少 1 题；同一知识点面向多时**可以有更多题**（哪怕一个知识点出 10 题来覆盖它的全部面向），面向少则题少——**换角度补题是常态手段，与难度高低、weight 大小无关**。禁止按 `difficulty` 一刀切定「每课 N 题」，也**不**把「题数 = 概念数」当成下限或上限，更**不**把同一个面向反复堆题。改题后必跑覆盖审计：该课每个知识点需覆盖的各面向都有题、全课程无「未被任何题覆盖」的知识点。
 

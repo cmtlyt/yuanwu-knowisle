@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 23 ========== */
 
-export const L118 = L(
-  'L118',
-  23,
-  '研究 Agent：带溯源的综述',
-  17,
-  3,
-  ['L49', 'L50'],
-  ['research-agent'],
-  [
-    '理解研究 Agent 的「检索 → 综合 → 溯源」管线',
-    '掌握引用与溯源校验的工程做法',
-    '认识「深度研究」与「RAG 问答」的本质区别',
-  ],
-  `
+export const L118 = withKind(
+  L(
+    'L118',
+    23,
+    '研究 Agent：带溯源的综述',
+    3,
+    ['L49', 'L50'],
+    ['research-agent'],
+    [
+      '理解研究 Agent 的「检索 → 综合 → 溯源」管线',
+      '掌握引用与溯源校验的工程做法',
+      '认识「深度研究」与「RAG 问答」的本质区别',
+    ],
+    `
 ### 研究 Agent 不只是 RAG 问答
 
 RAG 问答是「一个问题 → 一段答案」；研究 Agent 是「一个开放主题 → 多轮检索 → 综合 → 一份带引用的综述」。区别在于：研究是多步、多源、需要综合与溯源，且中途要不断「发现新检索词」。
@@ -62,37 +62,39 @@ await verifyCitations(report, sources)
 :::
 
 `,
-  null,
-  [
-    {
-      text: '研究 Agent 与 RAG 问答的本质区别是？',
-      options: ['模型不同', '研究是多步、多源、带溯源的综合', '只是报告更长', '用 Python 写'],
-      answer: 1,
-      explain: '研究强调迭代检索 + 综合 + 溯源。',
-      concept: 'research-agent',
-    },
-    {
-      text: '研究 Agent 最隐蔽的失败是？',
-      options: ['检索太慢', '编造引用：引用存在但内容对不上', '报告太长', 'token 太贵'],
-      answer: 1,
-      explain: '幻觉从编内容变成编引用。',
-      concept: 'research-agent',
-    },
-    {
-      text: '溯源校验做的是？',
-      options: ['检查拼写', '验证每条 claim 是否真的被其 source 支持', '压缩上下文', '加速检索'],
-      answer: 1,
-      explain: '验证引用真实性。',
-      concept: 'research-agent',
-    },
-  ],
-  [
-    ['溯源校验', '验证 claim 与 source 的一致性'],
-    ['多步检索', '据已有发现迭代扩展检索词'],
-    ['综合', '把多源信息融合成连贯结论'],
-  ],
-  [
-    '把研究 Agent 当成「多问几句的 RAG」，忽略溯源校验。',
-    '只要求「有引用」，不验证引用内容是否真的支持结论。',
-  ],
+    null,
+    [
+      {
+        text: '研究 Agent 与 RAG 问答的本质区别是？',
+        options: ['模型不同', '研究是多步、多源、带溯源的综合', '只是报告更长', '用 Python 写'],
+        answer: 1,
+        explain: '研究强调迭代检索 + 综合 + 溯源。',
+        concept: 'research-agent',
+      },
+      {
+        text: '研究 Agent 最隐蔽的失败是？',
+        options: ['检索太慢', '编造引用：引用存在但内容对不上', '报告太长', 'token 太贵'],
+        answer: 1,
+        explain: '幻觉从编内容变成编引用。',
+        concept: 'research-agent',
+      },
+      {
+        text: '溯源校验做的是？',
+        options: ['检查拼写', '验证每条 claim 是否真的被其 source 支持', '压缩上下文', '加速检索'],
+        answer: 1,
+        explain: '验证引用真实性。',
+        concept: 'research-agent',
+      },
+    ],
+    [
+      ['溯源校验', '验证 claim 与 source 的一致性'],
+      ['多步检索', '据已有发现迭代扩展检索词'],
+      ['综合', '把多源信息融合成连贯结论'],
+    ],
+    [
+      '把研究 Agent 当成「多问几句的 RAG」，忽略溯源校验。',
+      '只要求「有引用」，不验证引用内容是否真的支持结论。',
+    ],
+  ),
+  'scenario',
 )

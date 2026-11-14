@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 20 ========== */
 
-export const L107 = L(
-  'L107',
-  20,
-  '对照：用 AI SDK 重写工具调用 + 流式 + 模型路由（对比 L42 / L89）',
-  18,
-  3,
-  ['L106', 'L42', 'L89'],
-  ['ai-sdk-rewrite'],
-  [
-    '用 AI SDK 重写工具调用、流式输出与模型路由',
-    '对比 L42 的 FC 运行时与 L89 的模型路由',
-    '理解 provider 抽象如何简化路由',
-  ],
-  `
+export const L107 = withKind(
+  L(
+    'L107',
+    20,
+    '对照：用 AI SDK 重写工具调用 + 流式 + 模型路由（对比 L42 / L89）',
+    3,
+    ['L106', 'L42', 'L89'],
+    ['ai-sdk-rewrite'],
+    [
+      '用 AI SDK 重写工具调用、流式输出与模型路由',
+      '对比 L42 的 FC 运行时与 L89 的模型路由',
+      '理解 provider 抽象如何简化路由',
+    ],
+    `
 ### 模型交互层，三件事重写
 
 L42 的 FC 运行时、L37 的流式、L89 的模型路由，用 AI SDK 重写——这三件事恰好是 AI SDK 的主场。
@@ -60,34 +60,36 @@ AI SDK 给了 provider 抽象（换模型方便），但「难度分流 + 兜底
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'L89 手写的 ModelProvider 接口，在 AI SDK 里是？',
-      options: ['手写', '内置 provider 抽象（openai("...") 统一接口）', 'workflow', '无对应'],
-      answer: 1,
-      explain: 'provider 抽象内置。',
-      concept: 'ai-sdk-rewrite',
-    },
-    {
-      text: 'L37 手写的流式，在 AI SDK 里是？',
-      options: ['SSE 解析', 'streamText + textStream', 'generateText', 'tool'],
-      answer: 1,
-      explain: 'streamText。',
-      concept: 'ai-sdk-rewrite',
-    },
-    {
-      text: 'AI SDK 不替你做什么？',
-      options: ['切换模型', '路由决策（难度分流+兜底）', '流式', '工具调用'],
-      answer: 1,
-      explain: '路由逻辑仍要自己写。',
-      concept: 'ai-sdk-rewrite',
-    },
-  ],
-  [
-    ['provider 抽象', '统一多供应商的模型接口'],
-    ['generateText', '非流式文本生成'],
-    ['streamText', '流式文本生成'],
-  ],
-  ['以为用了 AI SDK 就自动路由了——路由逻辑仍要自己写。', '换模型仍写死供应商，忽视 provider 抽象。'],
+    null,
+    [
+      {
+        text: 'L89 手写的 ModelProvider 接口，在 AI SDK 里是？',
+        options: ['手写', '内置 provider 抽象（openai("...") 统一接口）', 'workflow', '无对应'],
+        answer: 1,
+        explain: 'provider 抽象内置。',
+        concept: 'ai-sdk-rewrite',
+      },
+      {
+        text: 'L37 手写的流式，在 AI SDK 里是？',
+        options: ['SSE 解析', 'streamText + textStream', 'generateText', 'tool'],
+        answer: 1,
+        explain: 'streamText。',
+        concept: 'ai-sdk-rewrite',
+      },
+      {
+        text: 'AI SDK 不替你做什么？',
+        options: ['切换模型', '路由决策（难度分流+兜底）', '流式', '工具调用'],
+        answer: 1,
+        explain: '路由逻辑仍要自己写。',
+        concept: 'ai-sdk-rewrite',
+      },
+    ],
+    [
+      ['provider 抽象', '统一多供应商的模型接口'],
+      ['generateText', '非流式文本生成'],
+      ['streamText', '流式文本生成'],
+    ],
+    ['以为用了 AI SDK 就自动路由了——路由逻辑仍要自己写。', '换模型仍写死供应商，忽视 provider 抽象。'],
+  ),
+  'framework',
 )

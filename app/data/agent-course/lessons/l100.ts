@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 18 ========== */
 
-export const L100 = L(
-  'L100',
-  18,
-  'OpenAI Agents SDK 核心概念：Agent / run / handoff / guardrail / session / tracing',
-  14,
-  3,
-  ['L93'],
-  ['oa-core'],
-  [
-    '掌握 OpenAI Agents SDK 的六大核心概念',
-    '理解 `run()` 内置的 agent loop',
-    '认识 handoff 与 guardrail 的定位',
-  ],
-  `
+export const L100 = withKind(
+  L(
+    'L100',
+    18,
+    'OpenAI Agents SDK 核心概念：Agent / run / handoff / guardrail / session / tracing',
+    3,
+    ['L93'],
+    ['oa-core'],
+    [
+      '掌握 OpenAI Agents SDK 的六大核心概念',
+      '理解 `run()` 内置的 agent loop',
+      '认识 handoff 与 guardrail 的定位',
+    ],
+    `
 ### 轻量的多 Agent 工作流
 
 OpenAI Agents SDK（\\\`@openai/agents\\\`）定位「轻量多 Agent」：核心是 \\\`Agent\\\`（角色 + 指令 + 工具），\\\`run()\\\` 内置 agent loop，\\\`handoff\\\` 让 Agent 交接，\\\`guardrail\\\` 做护栏。
@@ -68,34 +68,36 @@ OpenAI Agents 的 handoff 是一个 Agent 把对话「交棒」给下一个（�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '`run(agent, ...)` 对应你手写的什么？',
-      options: ['parseReAct', 'runAgent（内置循环/终止/工具回填）', 'tool schema', 'Tracer'],
-      answer: 1,
-      explain: 'run() 内置 agent loop。',
-      concept: 'oa-core',
-    },
-    {
-      text: 'handoff 的编排模式是？',
-      options: ['集中调度', '链式交接（一个交棒给下一个）', '群聊', '图 workflow'],
-      answer: 1,
-      explain: 'handoff 是链式交接。',
-      concept: 'oa-core',
-    },
-    {
-      text: 'SDK 的 run() 替你打包了哪些你已手写的能力？',
-      options: ['只循环', '循环、工具调用、finish、错误回填、追踪、session', '只追踪', '只工具'],
-      answer: 1,
-      explain: '循环/工具/finish/回填/追踪/session。',
-      concept: 'oa-core',
-    },
-  ],
-  [
-    ['Agent', '角色 + 指令 + 工具 + handoffs'],
-    ['run', '内置 agent loop 的执行入口'],
-    ['handoff', '把对话交接给另一个 Agent'],
-  ],
-  ['把 handoff 当集中调度，混淆编排模式。', '不理解 run() 内部，出问题时对着 SDK 干瞪眼。'],
+    null,
+    [
+      {
+        text: '`run(agent, ...)` 对应你手写的什么？',
+        options: ['parseReAct', 'runAgent（内置循环/终止/工具回填）', 'tool schema', 'Tracer'],
+        answer: 1,
+        explain: 'run() 内置 agent loop。',
+        concept: 'oa-core',
+      },
+      {
+        text: 'handoff 的编排模式是？',
+        options: ['集中调度', '链式交接（一个交棒给下一个）', '群聊', '图 workflow'],
+        answer: 1,
+        explain: 'handoff 是链式交接。',
+        concept: 'oa-core',
+      },
+      {
+        text: 'SDK 的 run() 替你打包了哪些你已手写的能力？',
+        options: ['只循环', '循环、工具调用、finish、错误回填、追踪、session', '只追踪', '只工具'],
+        answer: 1,
+        explain: '循环/工具/finish/回填/追踪/session。',
+        concept: 'oa-core',
+      },
+    ],
+    [
+      ['Agent', '角色 + 指令 + 工具 + handoffs'],
+      ['run', '内置 agent loop 的执行入口'],
+      ['handoff', '把对话交接给另一个 Agent'],
+    ],
+    ['把 handoff 当集中调度，混淆编排模式。', '不理解 run() 内部，出问题时对着 SDK 干瞪眼。'],
+  ),
+  'framework',
 )

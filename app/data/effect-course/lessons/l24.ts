@@ -4,7 +4,6 @@ export const L24 = L(
   'L24',
   5,
   'Schedule：把重试策略变成值',
-  30,
   3,
   ['L10'],
   ['schedule'],

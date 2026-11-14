@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 26 ========== */
 
-export const L133 = L(
-  'L133',
-  26,
-  '实战 Capstone A：从零加安全护栏 + 成本优化 + 降级兜底',
-  22,
-  4,
-  ['L132'],
-  ['cap-a-safety'],
-  [
-    '从零为执行型 Agent 加上安全护栏与沙箱隔离',
-    '从零实现模型路由与成本优化',
-    '从零实现降级兜底，保证执行型 Agent 稳定',
-  ],
-  `
+export const L133 = withKind(
+  L(
+    'L133',
+    26,
+    '实战 Capstone A：从零加安全护栏 + 成本优化 + 降级兜底',
+    4,
+    ['L132'],
+    ['cap-a-safety'],
+    [
+      '从零为执行型 Agent 加上安全护栏与沙箱隔离',
+      '从零实现模型路由与成本优化',
+      '从零实现降级兜底，保证执行型 Agent 稳定',
+    ],
+    `
 ### 执行型 Agent 的安全是「硬需求」
 
 Capstone A 会「产生副作用」（重启服务、写数据），所以安全护栏必须拉满：工具最小权限、危险操作确认、输出护栏。同时要做成本优化（模型路由）和降级兜底。不复用 L84/L89/L124，思路一致。
@@ -63,37 +63,39 @@ prompt 级护栏（「不许执行危险操作」）可能被提示注入绕过�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '执行型 Agent 最可靠的安全措施是？',
-      options: ['更长的安全 prompt', '危险动作「人在回路」确认', '更贵的模型', '更多日志'],
-      answer: 1,
-      explain: '护栏可被绕过，人不会。',
-      concept: 'cap-a-safety',
-    },
-    {
-      text: '「工具分级」的意义是？',
-      options: ['更快', 'read/write 分明，write 类可配置确认', '更省 token', '更美观'],
-      answer: 1,
-      explain: '按风险分级，危险动作额外确认。',
-      concept: 'cap-a-safety',
-    },
-    {
-      text: 'prompt 级护栏的局限是？',
-      options: ['太慢', '可能被提示注入绕过', '太贵', '没人用'],
-      answer: 1,
-      explain: '劝模型不如卡工具。',
-      concept: 'cap-a-safety',
-    },
-  ],
-  [
-    ['人在回路', '关键动作交还人类确认'],
-    ['工具分级', '按风险给工具分 read/write 等级'],
-    ['沙箱隔离', '工具执行在受限环境'],
-  ],
-  [
-    '把安全寄托在「prompt 里劝模型别乱来」，而不是工具分级 + 人在回路。',
-    '执行型 Agent 不隔离沙箱，工具直接触碰生产环境。',
-  ],
+    null,
+    [
+      {
+        text: '执行型 Agent 最可靠的安全措施是？',
+        options: ['更长的安全 prompt', '危险动作「人在回路」确认', '更贵的模型', '更多日志'],
+        answer: 1,
+        explain: '护栏可被绕过，人不会。',
+        concept: 'cap-a-safety',
+      },
+      {
+        text: '「工具分级」的意义是？',
+        options: ['更快', 'read/write 分明，write 类可配置确认', '更省 token', '更美观'],
+        answer: 1,
+        explain: '按风险分级，危险动作额外确认。',
+        concept: 'cap-a-safety',
+      },
+      {
+        text: 'prompt 级护栏的局限是？',
+        options: ['太慢', '可能被提示注入绕过', '太贵', '没人用'],
+        answer: 1,
+        explain: '劝模型不如卡工具。',
+        concept: 'cap-a-safety',
+      },
+    ],
+    [
+      ['人在回路', '关键动作交还人类确认'],
+      ['工具分级', '按风险给工具分 read/write 等级'],
+      ['沙箱隔离', '工具执行在受限环境'],
+    ],
+    [
+      '把安全寄托在「prompt 里劝模型别乱来」，而不是工具分级 + 人在回路。',
+      '执行型 Agent 不隔离沙箱，工具直接触碰生产环境。',
+    ],
+  ),
+  'capstone',
 )

@@ -4,7 +4,6 @@ export const L10 = L(
   'L10',
   2,
   '恢复策略与重试边界',
-  30,
   3,
   ['L09'],
   ['recovery', 'schedule'],

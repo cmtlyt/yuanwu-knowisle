@@ -6,7 +6,6 @@ export const L23 = L(
   'L23',
   5,
   'Stream：零到多个值与背压',
-  35,
   3,
   ['L21'],
   ['stream'],

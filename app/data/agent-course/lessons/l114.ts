@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 22 ========== */
 
-export const L114 = L(
-  'L114',
-  22,
-  '综合对照：用 4 种框架各实现同一个 Agent 并对比',
-  18,
-  3,
-  ['L112'],
-  ['framework-benchmark'],
-  [
-    '用 LangGraph / OpenAI Agents / Mastra / AI SDK 各实现同一个「天气查询 + 工具调用」Agent',
-    '对比四者的代码量 / 可维护性 / 运行时位置',
-    '形成「同一需求多实现」的选型直觉',
-  ],
-  `
+export const L114 = withKind(
+  L(
+    'L114',
+    22,
+    '综合对照：用 4 种框架各实现同一个 Agent 并对比',
+    3,
+    ['L112'],
+    ['framework-benchmark'],
+    [
+      '用 LangGraph / OpenAI Agents / Mastra / AI SDK 各实现同一个「天气查询 + 工具调用」Agent',
+      '对比四者的代码量 / 可维护性 / 运行时位置',
+      '形成「同一需求多实现」的选型直觉',
+    ],
+    `
 ### 同一需求，四种写法
 
 选定一个最小需求：一个能调「查天气」工具的 Agent，跑一个「查明天北京的天气」的任务。用四种框架各写一遍，逐行对比。需求小，但足以暴露框架的「默认哲学」。
@@ -64,34 +64,36 @@ OpenAI Agents 的 \\\`run()\\\` 一行把循环、工具执行、会话都包了
 :::
 
 `,
-  null,
-  [
-    {
-      text: '这个综合对照用了哪个最小需求？',
-      options: ['写一个网站', '天气查询 + 工具调用', '训练模型', '爬虫'],
-      answer: 1,
-      explain: '「查天气」工具 Agent。',
-      concept: 'framework-benchmark',
-    },
-    {
-      text: '代码量最少的通常是？',
-      options: ['OpenAI Agents（run 包循环）', 'LangGraph（显式图）', 'AI SDK（手写循环）', '手写'],
-      answer: 1,
-      explain: 'OpenAI Agents / Mastra 把循环内置，代码最少。',
-      concept: 'framework-benchmark',
-    },
-    {
-      text: '「代码量少」可能意味着？',
-      options: ['一定更好', '框架替你做了很多决定，定制时可能变枷锁', '没有抽象', '运行更快'],
-      answer: 1,
-      explain: '代码少 = 让渡更多决定。',
-      concept: 'framework-benchmark',
-    },
-  ],
-  [
-    ['同一需求多实现', '选型方法论：用真实需求对比框架'],
-    ['代码量', '实现同一需求的代码行数'],
-    ['默认哲学', '框架替你做决定的倾向'],
-  ],
-  ['只比代码量，忽略可控性与需求匹配度。', '把「少代码」等同于「简单」，忽视背后的抽象成本。'],
+    null,
+    [
+      {
+        text: '这个综合对照用了哪个最小需求？',
+        options: ['写一个网站', '天气查询 + 工具调用', '训练模型', '爬虫'],
+        answer: 1,
+        explain: '「查天气」工具 Agent。',
+        concept: 'framework-benchmark',
+      },
+      {
+        text: '代码量最少的通常是？',
+        options: ['OpenAI Agents（run 包循环）', 'LangGraph（显式图）', 'AI SDK（手写循环）', '手写'],
+        answer: 1,
+        explain: 'OpenAI Agents / Mastra 把循环内置，代码最少。',
+        concept: 'framework-benchmark',
+      },
+      {
+        text: '「代码量少」可能意味着？',
+        options: ['一定更好', '框架替你做了很多决定，定制时可能变枷锁', '没有抽象', '运行更快'],
+        answer: 1,
+        explain: '代码少 = 让渡更多决定。',
+        concept: 'framework-benchmark',
+      },
+    ],
+    [
+      ['同一需求多实现', '选型方法论：用真实需求对比框架'],
+      ['代码量', '实现同一需求的代码行数'],
+      ['默认哲学', '框架替你做决定的倾向'],
+    ],
+    ['只比代码量，忽略可控性与需求匹配度。', '把「少代码」等同于「简单」，忽视背后的抽象成本。'],
+  ),
+  'framework',
 )

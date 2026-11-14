@@ -21,6 +21,22 @@ unset GIT_INDEX_FILE
 
 预期：oxfmt / oxlint 任务全绿并自动重新暂存；再注入一个语法错误文件，hook 应退出 1 阻断。测完确认 `git ls-files | wc -l` 与 `git stash list` 未变。
 
+## lint-staged 参数超长（Windows 命令行上限，实测阻断提交）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| 大提交（≈120+ 文件）时 `pre-commit` 失败：`✖ oxfmt` + `Task killed: oxfmt`，错误文案显示成 `������̫����` / `锟斤拷锟斤拷` 这类乱码 | lint-staged 把**全部暂存文件的绝对路径**拼进一条命令；Windows 上经 pnpm / `.cmd` shim 走 cmd.exe，受 **8191 字符**上限。本项目单文件绝对路径约 70 字符，208 个文件即 14.4K 字符 → `命令行太长。`（GBK 文案被按 UTF-8 解码，就成了乱码），任务被杀 | 给 hook 加 lint-staged v17 自带的分片开关：`.husky/pre-commit` 改 `pnpm exec lint-staged --max-arg-length=4000`（默认 0 = 不分片）。实测 4000（~55 个/批）通过；**8000 仍会超**——分片后的单批 ~7.2K 再加 cmd 包装就过线。改完 `pnpm exec lint-staged --max-arg-length=4000` 直接试跑即可验证，不必真提交 |
+| 想用 JS 函数式配置自己切片 | lint-staged v17 的函数任务**必须返回命令字符串**（或字符串数组，最多一层嵌套）；返回 `undefined`（自己 spawn 完就结束）会报 `Invalid value for '[Function]': undefined` / `Commands must be strings…`。且函数任务的 `files` 会被置空，路径得自己拼进命令串 | 不要自写切片配置，用 `--max-arg-length`。若确需函数任务，返回 `files` 拼好的命令字符串（绝对路径含反斜杠时注意 shell 解析），不要指望 lint-staged 再补文件列表 |
+
+诊断手法（不碰索引）：
+
+```bash
+git diff --cached --name-only | grep -E '\.(ts|vue|mjs|js|cjs)$' > .git/staged.txt
+node -e "const fs=require('fs'),p=require('path');const f=fs.readFileSync('.git/staged.txt','utf8').trim().split('\n').map(x=>p.resolve(x));console.log('绝对路径总长',f.join(' ').length,'/ 上限 8191')"
+```
+
+超过 8191 就一定触发。注：同样数量的**相对路径**往往不超（7.8K vs 14.4K），所以本地 `pnpm fmt` / `pnpm lint` 全绿也可能照旧被 hook 挡住——门禁脚本按目录/通配符扫描，lint-staged 传的是绝对路径。
+
 ## husky / commitlint
 
 | 症状 | 根因 | 处理 |

@@ -6,7 +6,6 @@ export const L17 = L(
   'L17',
   4,
   'Subject：把冷流变成可多播的热源',
-  26,
   3,
   ['L02'],
   ['c-subject'],

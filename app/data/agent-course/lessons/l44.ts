@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 6 ========== */
 
-export const L44 = L(
-  'L44',
-  6,
-  'MCP 三件套：Host / Client / Server，transport',
-  12,
-  2,
-  ['L43'],
-  ['mcp-triad'],
-  [
-    '厘清 MCP 的 Host / Client / Server 三者角色',
-    '理解 transport（stdio / SSE / 流式）的差异',
-    '掌握 JSON-RPC 在 MCP 中的基础地位',
-  ],
-  `
+export const L44 = withKind(
+  L(
+    'L44',
+    6,
+    'MCP 三件套：Host / Client / Server，transport',
+    2,
+    ['L43'],
+    ['mcp-triad'],
+    [
+      '厘清 MCP 的 Host / Client / Server 三者角色',
+      '理解 transport（stdio / SSE / 流式）的差异',
+      '掌握 JSON-RPC 在 MCP 中的基础地位',
+    ],
+    `
 ### 三个角色，两种传输
 
 MCP 架构里有三个角色：**Host**（宿主应用，如 Claude Desktop）、**Client**（协议客户端，通常内嵌在 Host 里）、**Server**（提供工具/资源的服务）。它们之间用 JSON-RPC 通信，通过 transport 连接。
@@ -54,35 +54,37 @@ Host 是「应用」（有界面、有交互），Client 是「协议客户端�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'MCP 的三个角色是？',
-      options: ['模型、工具、用户', 'Host / Client / Server', '前端、后端、数据库', '请求、响应、缓存'],
-      answer: 1,
-      explain: 'Host、Client、Server。',
-      concept: 'mcp-triad',
-    },
-    {
-      text: 'MCP 的「语言」是什么？',
-      options: ['SQL', 'JSON-RPC', 'GraphQL', 'gRPC'],
-      answer: 1,
-      explain: 'JSON-RPC：method 表示动作，id 关联请求响应。',
-      concept: 'mcp-triad',
-    },
-    {
-      text: '三种 transport 中最简单、最适合入门的是？',
-      options: ['SSE', 'stdio（本地子进程、无网络）', '流式 HTTP', 'WebSocket'],
-      answer: 1,
-      explain: 'stdio 最可靠，适合理解协议本体。',
-      concept: 'mcp-triad',
-    },
-  ],
-  [
-    ['Host', '宿主应用（有界面与交互，如 Claude Desktop）'],
-    ['Client', '协议客户端，发 JSON-RPC 消息'],
-    ['Server', '提供工具与资源的服务'],
-    ['transport', 'Client 与 Server 之间的通信管道（stdio/SSE/流式）'],
-  ],
-  ['把 Host 与 Client 混为一谈。', '以为 SSE 与 stdio 是不同的协议——只是不同的 transport 管道。'],
+    null,
+    [
+      {
+        text: 'MCP 的三个角色是？',
+        options: ['模型、工具、用户', 'Host / Client / Server', '前端、后端、数据库', '请求、响应、缓存'],
+        answer: 1,
+        explain: 'Host、Client、Server。',
+        concept: 'mcp-triad',
+      },
+      {
+        text: 'MCP 的「语言」是什么？',
+        options: ['SQL', 'JSON-RPC', 'GraphQL', 'gRPC'],
+        answer: 1,
+        explain: 'JSON-RPC：method 表示动作，id 关联请求响应。',
+        concept: 'mcp-triad',
+      },
+      {
+        text: '三种 transport 中最简单、最适合入门的是？',
+        options: ['SSE', 'stdio（本地子进程、无网络）', '流式 HTTP', 'WebSocket'],
+        answer: 1,
+        explain: 'stdio 最可靠，适合理解协议本体。',
+        concept: 'mcp-triad',
+      },
+    ],
+    [
+      ['Host', '宿主应用（有界面与交互，如 Claude Desktop）'],
+      ['Client', '协议客户端，发 JSON-RPC 消息'],
+      ['Server', '提供工具与资源的服务'],
+      ['transport', 'Client 与 Server 之间的通信管道（stdio/SSE/流式）'],
+    ],
+    ['把 Host 与 Client 混为一谈。', '以为 SSE 与 stdio 是不同的协议——只是不同的 transport 管道。'],
+  ),
+  'practice',
 )

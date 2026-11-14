@@ -4,7 +4,6 @@ export const L06 = L(
   'L06',
   1,
   '过滤与取舍：filter / take / skip / distinctUntilChanged',
-  26,
   2,
   ['L05'],
   ['c-filter'],

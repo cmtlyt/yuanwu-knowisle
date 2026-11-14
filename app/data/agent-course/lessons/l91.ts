@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 15 ========== */
 
-export const L91 = L(
-  'L91',
-  15,
-  '提示裁剪与上下文复用',
-  12,
-  3,
-  ['L33'],
-  ['prompt-pruning'],
-  [
-    '理解提示裁剪「只留有用的」的核心',
-    '掌握静态裁剪与动态裁剪两种方式',
-    '认识上下文复用（prefix caching）的省成本价值',
-  ],
-  `
+export const L91 = withKind(
+  L(
+    'L91',
+    15,
+    '提示裁剪与上下文复用',
+    3,
+    ['L33'],
+    ['prompt-pruning'],
+    [
+      '理解提示裁剪「只留有用的」的核心',
+      '掌握静态裁剪与动态裁剪两种方式',
+      '认识上下文复用（prefix caching）的省成本价值',
+    ],
+    `
 ### 能省的 token，一分钱都别多花
 
 提示裁剪（prompt pruning）是删掉对当前任务无用的内容：无关的示例、过时的历史、多余的指令。上下文复用（prefix caching）则是「不变的前缀不重复计费/重复计算」。
@@ -56,34 +56,36 @@ const pruned = [systemPrompt, ...relevant, currentTask]  // 只拼相关的
 :::
 
 `,
-  null,
-  [
-    {
-      text: '静态裁剪与动态裁剪的区别是？',
-      options: ['没区别', '静态按规则删、动态按相关性检索保留', '静态更准', '动态更慢'],
-      answer: 1,
-      explain: '静态粗、动态准。',
-      concept: 'prompt-pruning',
-    },
-    {
-      text: 'prefix caching 的价值是？',
-      options: ['删内容', '复用不变前缀，只算一次，降延迟省成本', '加内容', '加密'],
-      answer: 1,
-      explain: '复用不变前缀。',
-      concept: 'prompt-pruning',
-    },
-    {
-      text: '裁剪过度的后果是？',
-      options: ['更省', 'Agent 失忆，做出前后矛盾决策', '更快', '更准'],
-      answer: 1,
-      explain: '裁剪过度 = 失忆。',
-      concept: 'prompt-pruning',
-    },
-  ],
-  [
-    ['提示裁剪', '删掉对当前任务无用的内容'],
-    ['静态裁剪', '按规则删除（最近 N 条等）'],
-    ['prefix caching', '复用不变前缀、只算一次'],
-  ],
-  ['裁剪太狠删掉关键工具结果，Agent 失忆。', '忽视 prefix caching，重复计算共享前缀。'],
+    null,
+    [
+      {
+        text: '静态裁剪与动态裁剪的区别是？',
+        options: ['没区别', '静态按规则删、动态按相关性检索保留', '静态更准', '动态更慢'],
+        answer: 1,
+        explain: '静态粗、动态准。',
+        concept: 'prompt-pruning',
+      },
+      {
+        text: 'prefix caching 的价值是？',
+        options: ['删内容', '复用不变前缀，只算一次，降延迟省成本', '加内容', '加密'],
+        answer: 1,
+        explain: '复用不变前缀。',
+        concept: 'prompt-pruning',
+      },
+      {
+        text: '裁剪过度的后果是？',
+        options: ['更省', 'Agent 失忆，做出前后矛盾决策', '更快', '更准'],
+        answer: 1,
+        explain: '裁剪过度 = 失忆。',
+        concept: 'prompt-pruning',
+      },
+    ],
+    [
+      ['提示裁剪', '删掉对当前任务无用的内容'],
+      ['静态裁剪', '按规则删除（最近 N 条等）'],
+      ['prefix caching', '复用不变前缀、只算一次'],
+    ],
+    ['裁剪太狠删掉关键工具结果，Agent 失忆。', '忽视 prefix caching，重复计算共享前缀。'],
+  ),
+  'practice',
 )

@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 4 ========== */
 
-export const L33 = L(
-  'L33',
-  4,
-  '上下文预算：你的 Agent 只有「这么大」的内存',
-  12,
-  2,
-  ['L31'],
-  ['context-budget'],
-  [
-    '理解上下文窗口是 Agent 的硬性内存上限',
-    '掌握「预算」思维：每一步都在消耗 token',
-    '认识超预算的后果与基本控制手段',
-  ],
-  `
+export const L33 = withKind(
+  L(
+    'L33',
+    4,
+    '上下文预算：你的 Agent 只有「这么大」的内存',
+    2,
+    ['L31'],
+    ['context-budget'],
+    [
+      '理解上下文窗口是 Agent 的硬性内存上限',
+      '掌握「预算」思维：每一步都在消耗 token',
+      '认识超预算的后果与基本控制手段',
+    ],
+    `
 ### 上下文窗口 = Agent 的内存上限
 
 模型的上下文窗口（context window）是硬性的：超过它，模型要么报错、要么「忘记」最前面的内容。Agent 每一步的 Thought / Action / Observation 都在往里塞，所以上下文是**会耗尽的资源**，必须像预算一样管理。
@@ -54,42 +54,44 @@ system prompt (500)
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Agent 的「内存上限」指的是？',
-      options: ['磁盘大小', '模型的上下文窗口', 'RAM', '数据库容量'],
-      answer: 1,
-      explain: '上下文窗口是硬性内存上限。',
-      concept: 'context-budget',
-    },
-    {
-      text: '上下文爆炸的两大来源是？',
-      options: ['注释和日志', '多步任务累积 + 大 Observation（如整段文档）', '变量名太长', '模型太小'],
-      answer: 1,
-      explain: '步数累积与大观测是两大来源。',
-      concept: 'context-budget',
-    },
-    {
-      text: '预算三板斧是？',
-      options: [
-        '加内存、换 CPU、换 GPU',
-        '裁剪、压缩、外置（按需检索）',
-        '删代码、删注释、删日志',
-        '降温、降参、降层',
-      ],
-      answer: 1,
-      explain: '裁剪、压缩、外置检索。',
-      concept: 'context-budget',
-    },
-  ],
-  [
-    ['上下文窗口', '模型一次能处理的最大 token 数'],
-    ['预算思维', '把上下文当会耗尽、需管理的资源'],
-    ['注意力稀释', '上下文过长时模型对关键信息敏感度下降'],
-  ],
-  [
-    '以为「窗口大就随便塞」，忽视延迟、成本与注意力稀释。',
-    '把整段文档直接塞进 Observation，上下文快速爆炸。',
-  ],
+    null,
+    [
+      {
+        text: 'Agent 的「内存上限」指的是？',
+        options: ['磁盘大小', '模型的上下文窗口', 'RAM', '数据库容量'],
+        answer: 1,
+        explain: '上下文窗口是硬性内存上限。',
+        concept: 'context-budget',
+      },
+      {
+        text: '上下文爆炸的两大来源是？',
+        options: ['注释和日志', '多步任务累积 + 大 Observation（如整段文档）', '变量名太长', '模型太小'],
+        answer: 1,
+        explain: '步数累积与大观测是两大来源。',
+        concept: 'context-budget',
+      },
+      {
+        text: '预算三板斧是？',
+        options: [
+          '加内存、换 CPU、换 GPU',
+          '裁剪、压缩、外置（按需检索）',
+          '删代码、删注释、删日志',
+          '降温、降参、降层',
+        ],
+        answer: 1,
+        explain: '裁剪、压缩、外置检索。',
+        concept: 'context-budget',
+      },
+    ],
+    [
+      ['上下文窗口', '模型一次能处理的最大 token 数'],
+      ['预算思维', '把上下文当会耗尽、需管理的资源'],
+      ['注意力稀释', '上下文过长时模型对关键信息敏感度下降'],
+    ],
+    [
+      '以为「窗口大就随便塞」，忽视延迟、成本与注意力稀释。',
+      '把整段文档直接塞进 Observation，上下文快速爆炸。',
+    ],
+  ),
+  'practice',
 )

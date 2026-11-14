@@ -4,7 +4,6 @@ export const L16 = L(
   'L16',
   3,
   '安全订阅与空流：throwIfEmpty / defaultIfEmpty / 防御式',
-  24,
   2,
   ['L15'],
   ['c-safe'],

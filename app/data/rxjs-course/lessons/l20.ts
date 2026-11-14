@@ -4,7 +4,6 @@ export const L20 = L(
   'L20',
   4,
   'share 的陷阱：连接、断开与重放边界',
-  26,
   3,
   ['L19'],
   ['c-share-pitfall'],

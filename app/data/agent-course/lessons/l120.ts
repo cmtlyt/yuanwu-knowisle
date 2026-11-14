@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 23 ========== */
 
-export const L120 = L(
-  'L120',
-  23,
-  '语音 Agent：低时延对话流水线',
-  17,
-  3,
-  ['L37'],
-  ['voice-agent'],
-  [
-    '理解语音 Agent 的「ASR → LLM → TTS」三段流水线',
-    '掌握低时延的核心：流式 + 打断（barge-in）',
-    '认识语音场景下的时延预算与降级',
-  ],
-  `
+export const L120 = withKind(
+  L(
+    'L120',
+    23,
+    '语音 Agent：低时延对话流水线',
+    3,
+    ['L37'],
+    ['voice-agent'],
+    [
+      '理解语音 Agent 的「ASR → LLM → TTS」三段流水线',
+      '掌握低时延的核心：流式 + 打断（barge-in）',
+      '认识语音场景下的时延预算与降级',
+    ],
+    `
 ### 语音 Agent 是一条三段流水线
 
 语音 Agent 把「说 → 听 → 想 → 说」串起来：ASR（语音转文字）→ LLM（生成回复）→ TTS（文字转语音）。用户体验取决于端到端时延——人对话的「响应感」窗口只有几百毫秒。
@@ -60,38 +60,40 @@ mic.onSpeechStart(() => abort(llmStream, ttsStream))
 :::
 
 `,
-  null,
-  [
-    {
-      text: '语音 Agent 的三段流水线是？',
-      options: ['ASR → LLM → TTS', 'TTS → ASR → LLM', 'LLM → ASR → TTS', 'OCR → LLM → 渲染'],
-      answer: 1,
-      explain: '听 → 想 → 说。',
-      concept: 'voice-agent',
-    },
-    {
-      text: '语音 Agent 体验的关键是？',
-      options: ['更贵的模型', '低时延：流式 + 打断（barge-in）', '更长的回复', '更响的音量'],
-      answer: 1,
-      explain: '流式 + 打断决定体验。',
-      concept: 'voice-agent',
-    },
-    {
-      text: '「打断」机制做的是？',
-      options: ['用户开口时中止 LLM/TTS 进入新回合', '关掉麦克风', '加快语速', '降低音量'],
-      answer: 1,
-      explain: '用户一开口就中断当前输出。',
-      concept: 'voice-agent',
-    },
-  ],
-  [
-    ['ASR', '自动语音识别'],
-    ['TTS', '文字转语音'],
-    ['barge-in', '用户开口即打断当前输出'],
-    ['VAD', '语音活动检测，判断「说完」'],
-  ],
-  [
-    '把语音 Agent 做成「录音 + 全文转写 + 全文合成」，端到端时延秒级。',
-    '不做打断机制，用户只能等 Agent 说完才能插话。',
-  ],
+    null,
+    [
+      {
+        text: '语音 Agent 的三段流水线是？',
+        options: ['ASR → LLM → TTS', 'TTS → ASR → LLM', 'LLM → ASR → TTS', 'OCR → LLM → 渲染'],
+        answer: 1,
+        explain: '听 → 想 → 说。',
+        concept: 'voice-agent',
+      },
+      {
+        text: '语音 Agent 体验的关键是？',
+        options: ['更贵的模型', '低时延：流式 + 打断（barge-in）', '更长的回复', '更响的音量'],
+        answer: 1,
+        explain: '流式 + 打断决定体验。',
+        concept: 'voice-agent',
+      },
+      {
+        text: '「打断」机制做的是？',
+        options: ['用户开口时中止 LLM/TTS 进入新回合', '关掉麦克风', '加快语速', '降低音量'],
+        answer: 1,
+        explain: '用户一开口就中断当前输出。',
+        concept: 'voice-agent',
+      },
+    ],
+    [
+      ['ASR', '自动语音识别'],
+      ['TTS', '文字转语音'],
+      ['barge-in', '用户开口即打断当前输出'],
+      ['VAD', '语音活动检测，判断「说完」'],
+    ],
+    [
+      '把语音 Agent 做成「录音 + 全文转写 + 全文合成」，端到端时延秒级。',
+      '不做打断机制，用户只能等 Agent 说完才能插话。',
+    ],
+  ),
+  'scenario',
 )

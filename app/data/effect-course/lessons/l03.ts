@@ -4,7 +4,6 @@ export const L03 = L(
   'L03',
   0,
   'pipe、Effect.gen 与组合的本质',
-  30,
   2,
   ['L01'],
   ['composition', 'gen'],

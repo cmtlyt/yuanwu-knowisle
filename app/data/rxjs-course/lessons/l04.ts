@@ -6,7 +6,6 @@ export const L04 = L(
   'L04',
   1,
   '用 new Observable 自定义源：观察者协议',
-  28,
   2,
   ['L03'],
   ['c-new-observable'],

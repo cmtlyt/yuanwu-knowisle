@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 9 ========== */
 
-export const L59 = L(
-  'L59',
-  9,
-  '任务分解与计划执行分离：从拆解技巧到工程结构',
-  12,
-  2,
-  ['L14'],
-  ['task-decomposition'],
-  [
-    '理解「任务分解」与「计划执行分离」的关系',
-    '掌握子目标表示与 plan/execute 分离的工程结构',
-    '认识「分解粒度」对计划质量的影响',
-  ],
-  `
+export const L59 = withKind(
+  L(
+    'L59',
+    9,
+    '任务分解与计划执行分离：从拆解技巧到工程结构',
+    2,
+    ['L14'],
+    ['task-decomposition'],
+    [
+      '理解「任务分解」与「计划执行分离」的关系',
+      '掌握子目标表示与 plan/execute 分离的工程结构',
+      '认识「分解粒度」对计划质量的影响',
+    ],
+    `
 ### 分解是技巧，分离是结构
 
 任务分解（把大任务拆成子任务）是「技巧」；计划执行分离（plan 与 execute 是独立组件）是「工程结构」。前者决定计划好不好，后者决定计划能不能独立演进。
@@ -60,34 +60,36 @@ for (const sg of topologicalOrder(plan)) {   // ② 执行组件：按依赖拓�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '「任务分解」与「计划执行分离」的关系是？',
-      options: ['同一回事', '分解是技巧，分离是工程结构', '分离是技巧', '互不相关'],
-      answer: 1,
-      explain: '一个管计划质量，一个管结构。',
-      concept: 'task-decomposition',
-    },
-    {
-      text: '子目标表示应包含？',
-      options: ['只含描述', '状态、依赖（dependsOn）、产出（output）', '只含 id', '只含时间'],
-      answer: 1,
-      explain: '子目标要有状态、依赖、产出。',
-      concept: 'task-decomposition',
-    },
-    {
-      text: '不标依赖关系的后果是？',
-      options: ['更灵活', '执行只能盲目串行或盲目并行，要么慢要么错', '更快', '更省 token'],
-      answer: 1,
-      explain: '依赖图是执行顺序的骨架。',
-      concept: 'task-decomposition',
-    },
-  ],
-  [
-    ['子目标', '拆解出的、带状态与依赖的子任务'],
-    ['拓扑序', '按依赖关系排列的执行顺序'],
-    ['plan/execute 分离', '规划与执行作为独立组件解耦'],
-  ],
-  ['分解粒度不当，计划冗长或没拆到位。', '不标依赖，执行顺序混乱。'],
+    null,
+    [
+      {
+        text: '「任务分解」与「计划执行分离」的关系是？',
+        options: ['同一回事', '分解是技巧，分离是工程结构', '分离是技巧', '互不相关'],
+        answer: 1,
+        explain: '一个管计划质量，一个管结构。',
+        concept: 'task-decomposition',
+      },
+      {
+        text: '子目标表示应包含？',
+        options: ['只含描述', '状态、依赖（dependsOn）、产出（output）', '只含 id', '只含时间'],
+        answer: 1,
+        explain: '子目标要有状态、依赖、产出。',
+        concept: 'task-decomposition',
+      },
+      {
+        text: '不标依赖关系的后果是？',
+        options: ['更灵活', '执行只能盲目串行或盲目并行，要么慢要么错', '更快', '更省 token'],
+        answer: 1,
+        explain: '依赖图是执行顺序的骨架。',
+        concept: 'task-decomposition',
+      },
+    ],
+    [
+      ['子目标', '拆解出的、带状态与依赖的子任务'],
+      ['拓扑序', '按依赖关系排列的执行顺序'],
+      ['plan/execute 分离', '规划与执行作为独立组件解耦'],
+    ],
+    ['分解粒度不当，计划冗长或没拆到位。', '不标依赖，执行顺序混乱。'],
+  ),
+  'practice',
 )

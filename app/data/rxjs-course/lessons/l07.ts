@@ -4,7 +4,6 @@ export const L07 = L(
   'L07',
   1,
   '归约与收集：reduce / toArray / count / buffer',
-  24,
   2,
   ['L06'],
   ['c-reduce'],

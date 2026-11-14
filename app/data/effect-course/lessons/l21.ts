@@ -4,7 +4,6 @@ export const L21 = L(
   'L21',
   4,
   '★ 结构化并发与异步中断',
-  45,
   5,
   ['L16', 'L18'],
   ['concurrency'],

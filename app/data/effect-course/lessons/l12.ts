@@ -4,7 +4,6 @@ export const L12 = L(
   'L12',
   2,
   'Cause 诊断实战：从 reasons 到恢复决策',
-  35,
   4,
   ['L09', 'L10'],
   ['cause', 'recovery'],

@@ -4,7 +4,6 @@ export const L16 = L(
   'L16',
   3,
   'Scope 与资源安全：finalizer 为什么不会漏',
-  35,
   4,
   ['L15'],
   ['scope'],

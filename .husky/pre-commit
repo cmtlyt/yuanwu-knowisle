@@ -1,1 +1,5 @@
-pnpm exec lint-staged
+# --max-arg-length：让 lint-staged 自己把暂存文件切片。
+# Windows 下它会把全部暂存文件的绝对路径拼进一条命令，经 .cmd shim 走 cmd.exe 时受
+# 8191 字符上限约束——仓库单文件绝对路径约 70 字符，一次提交约 120 个文件即报「命令行太长。」
+# 而失败（错误文案还会因编码显示成乱码）。4000 留足余量，切成 ~55 个/批（实测 8000 仍会超）。
+pnpm exec lint-staged --max-arg-length=4000

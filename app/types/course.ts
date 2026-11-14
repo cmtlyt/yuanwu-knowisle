@@ -1,5 +1,27 @@
 /** 课程内容与学情档案的类型契约。内容层、引擎层、视图层共用。 */
 
+/**
+ * 课时课型。决定 `scripts/content-gate.mjs` 用哪一档体量下限、是否允许 0 题。
+ * 定义在课程数据里（每课时自己的 `Lesson.kind`，见 `withKind()`），脚本按数据判定，
+ * 不再维护「阶段 → 课型」映射表，也不再从阶段继承——同一阶段允许不同课型。
+ *
+ * 取值直接用语义名，不用 A/B/C/D 代号：读 `withKind(L(...), 'practice')` 就知道这节是实战课，
+ * 不需要回头查字母映射表。
+ */
+export type LessonKind =
+  /** 理论 / 范式：讲清机制与边界，代码只作印证 */
+  | 'theory'
+  /** 实战 / 实现：完整可跑实现 + 递进代码 */
+  | 'practice'
+  /** 框架对照：手写版 ↔ 框架版逐项对照 */
+  | 'framework'
+  /** 专项 Agent：单一场景（编码 / 研究 / 浏览器…）的端到端落地实现 */
+  | 'scenario'
+  /** Capstone：端到端交付，含可执行验收断言 */
+  | 'capstone'
+  /** 导览 / 收束：整节职责就是指路、选型全景、收束回顾，不写实现代码、不设题 */
+  | 'overview'
+
 export interface Stage {
   id: number
   name: string
@@ -46,11 +68,14 @@ export interface QuizQuestion {
   concept: string
 }
 
+/**
+ * 课时。**刻意不含 `minutes`**：用时是正文体量的函数，由 `lessonMinutes()` 渲染时现算
+ * （`app/lib/lesson-time.ts`）。存成字段就会多一份与正文脱节的真相。
+ */
 export interface Lesson {
   id: string
   stage: number
   title: string
-  minutes: number
   difficulty: number
   prereqs: string[]
   concepts: string[]
@@ -63,6 +88,14 @@ export interface Lesson {
   pitfalls: string[]
   /** 复杂模式专属：所属子阶段 id（如 '3.1'）；simple 模式或不属于任何子阶段时为空。 */
   subStage?: string | null
+  /**
+   * 课时课型，由课程数据用 `withKind()` 标注。complex 模式的课程**每节课都必须标注**
+   * （漏标会被 `content-gate.mjs` 判失败，避免「漏配即逃检」）；simple 模式的课程
+   * （effect / rxjs）不纳入体量闸门，可以不填。
+   */
+  kind?: LessonKind
+  /** `kind: 'overview'` 时必填：说明为什么这节课不需要实现代码（闸门豁免实现代码的唯一凭据）。 */
+  kindReason?: string
 }
 
 /**

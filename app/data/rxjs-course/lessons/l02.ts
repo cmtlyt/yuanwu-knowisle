@@ -4,7 +4,6 @@ export const L02 = L(
   'L02',
   0,
   '冷流与热流：订阅才产生数据',
-  25,
   1,
   ['L01'],
   ['c-cold-hot', 'c-triplet'],

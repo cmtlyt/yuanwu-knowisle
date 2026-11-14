@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 6 ========== */
 
-export const L46 = L(
-  'L46',
-  6,
-  '对照：用官方 TS SDK 重写同一个 Server',
-  16,
-  3,
-  ['L45'],
-  ['mcp-sdk'],
-  [
-    '用 @modelcontextprotocol/sdk 重写 L45 的同一个 Server',
-    '对比手写版与 SDK 版的代码量与健壮性',
-    '理解 SDK 补上了哪些工程细节',
-  ],
-  `
+export const L46 = withKind(
+  L(
+    'L46',
+    6,
+    '对照：用官方 TS SDK 重写同一个 Server',
+    3,
+    ['L45'],
+    ['mcp-sdk'],
+    [
+      '用 @modelcontextprotocol/sdk 重写 L45 的同一个 Server',
+      '对比手写版与 SDK 版的代码量与健壮性',
+      '理解 SDK 补上了哪些工程细节',
+    ],
+    `
 ### 同一个 Server，两种写法
 
 用官方 SDK 重写 L45 的天气 Server，直接对比：同样的 tools/list、tools/call，SDK 替你处理了分帧、并发、错误分类、类型。
@@ -58,37 +58,39 @@ await server.connect(new StdioServerTransport())
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'SDK 版 `server.tool(name, schema, handler)` 一句完成了什么？',
-      options: ['只注册名字', '声明工具 + zod 校验 + 注册 handler', '只生成文档', '只连数据库'],
-      answer: 1,
-      explain: '一句完成声明、校验、注册。',
-      concept: 'mcp-sdk',
-    },
-    {
-      text: 'SDK 相比手写版补上的工程细节不包括？',
-      options: ['分帧（长度前缀/转义）', '并发 request id 匹配', '错误分类', '工具的实际业务逻辑'],
-      answer: 3,
-      explain: '业务逻辑（查天气）仍要你自己写。',
-      concept: 'mcp-sdk',
-    },
-    {
-      text: '换一种 transport（如 SSE）时，SDK 版需要？',
-      options: ['重写整个 Server', '一行换成新的 Transport 类', '改协议', '换语言'],
-      answer: 1,
-      explain: 'transport 可插拔，一行切换。',
-      concept: 'mcp-sdk',
-    },
-  ],
-  [
-    ['McpServer', 'SDK 的 Server 构建器'],
-    ['server.tool', '声明工具 + schema + handler 的便捷方法'],
-    ['可插拔 transport', '同一 Server 可换 stdio/SSE/流式'],
-  ],
-  [
-    '跳过手写直接上 SDK，出问题时对内部机制一无所知。',
-    '以为 SDK 连业务逻辑都替你写了——工具实际逻辑仍需自己实现。',
-  ],
+    null,
+    [
+      {
+        text: 'SDK 版 `server.tool(name, schema, handler)` 一句完成了什么？',
+        options: ['只注册名字', '声明工具 + zod 校验 + 注册 handler', '只生成文档', '只连数据库'],
+        answer: 1,
+        explain: '一句完成声明、校验、注册。',
+        concept: 'mcp-sdk',
+      },
+      {
+        text: 'SDK 相比手写版补上的工程细节不包括？',
+        options: ['分帧（长度前缀/转义）', '并发 request id 匹配', '错误分类', '工具的实际业务逻辑'],
+        answer: 3,
+        explain: '业务逻辑（查天气）仍要你自己写。',
+        concept: 'mcp-sdk',
+      },
+      {
+        text: '换一种 transport（如 SSE）时，SDK 版需要？',
+        options: ['重写整个 Server', '一行换成新的 Transport 类', '改协议', '换语言'],
+        answer: 1,
+        explain: 'transport 可插拔，一行切换。',
+        concept: 'mcp-sdk',
+      },
+    ],
+    [
+      ['McpServer', 'SDK 的 Server 构建器'],
+      ['server.tool', '声明工具 + schema + handler 的便捷方法'],
+      ['可插拔 transport', '同一 Server 可换 stdio/SSE/流式'],
+    ],
+    [
+      '跳过手写直接上 SDK，出问题时对内部机制一无所知。',
+      '以为 SDK 连业务逻辑都替你写了——工具实际逻辑仍需自己实现。',
+    ],
+  ),
+  'practice',
 )

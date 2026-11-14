@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 26 ========== */
 
-export const L130 = L(
-  'L130',
-  26,
-  '实战 Capstone A：从零实现多 Agent 编排（supervisor + 专门角色）',
-  22,
-  4,
-  ['L129'],
-  ['cap-a-multi'],
-  [
-    '从零实现 supervisor + 专门角色的多 Agent 编排',
-    '掌握角色定义、消息路由、结果汇总的从零实现',
-    '理解「何时分工」与「避免过度编排」的平衡',
-  ],
-  `
+export const L130 = withKind(
+  L(
+    'L130',
+    26,
+    '实战 Capstone A：从零实现多 Agent 编排（supervisor + 专门角色）',
+    4,
+    ['L129'],
+    ['cap-a-multi'],
+    [
+      '从零实现 supervisor + 专门角色的多 Agent 编排',
+      '掌握角色定义、消息路由、结果汇总的从零实现',
+      '理解「何时分工」与「避免过度编排」的平衡',
+    ],
+    `
 ### Capstone A 的多 Agent：监督者 + 专门角色
 
 在运维助手场景里，单一 Agent 既诊断又执行容易「管不住」。从零实现一个 supervisor 编排：诊断 Agent（分析告警）、执行 Agent（调工具执行修复）。不复用 L68，但复用「supervisor 编排」这一思路。
@@ -64,37 +64,39 @@ async function supervise(task: string) {
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'supervisor 在编排中的职责是？',
-      options: ['亲自干活', '分派 → 汇总 → 冲突仲裁', '只做诊断', '只做执行'],
-      answer: 1,
-      explain: 'supervisor 只编排，不干活。',
-      concept: 'cap-a-multi',
-    },
-    {
-      text: 'Capstone A 拆「诊断/执行」两个角色的正当理由是？',
-      options: ['Agent 越多越好', '工具权限不同（只读 vs 写）+ 职责边界清晰', '更便宜', '更简单'],
-      answer: 1,
-      explain: '权限隔离 + 职责清晰。',
-      concept: 'cap-a-multi',
-    },
-    {
-      text: '多 Agent 拆分的反面是？',
-      options: ['过度编排：能 2 个就别 5 个', '太少', '太快', '太贵'],
-      answer: 1,
-      explain: '避免为多而多。',
-      concept: 'cap-a-multi',
-    },
-  ],
-  [
-    ['supervisor', '只做分派/汇总/仲裁的编排角色'],
-    ['角色定义', '每个 Agent 的 prompt + 工具集'],
-    ['职责边界', '不同角色承担不同职责与权限'],
-  ],
-  [
-    '为「多 Agent」而多 Agent，职责不清、工具重叠也硬拆。',
-    '把诊断和执行揉进一个 Agent，写权限与只读权限混用。',
-  ],
+    null,
+    [
+      {
+        text: 'supervisor 在编排中的职责是？',
+        options: ['亲自干活', '分派 → 汇总 → 冲突仲裁', '只做诊断', '只做执行'],
+        answer: 1,
+        explain: 'supervisor 只编排，不干活。',
+        concept: 'cap-a-multi',
+      },
+      {
+        text: 'Capstone A 拆「诊断/执行」两个角色的正当理由是？',
+        options: ['Agent 越多越好', '工具权限不同（只读 vs 写）+ 职责边界清晰', '更便宜', '更简单'],
+        answer: 1,
+        explain: '权限隔离 + 职责清晰。',
+        concept: 'cap-a-multi',
+      },
+      {
+        text: '多 Agent 拆分的反面是？',
+        options: ['过度编排：能 2 个就别 5 个', '太少', '太快', '太贵'],
+        answer: 1,
+        explain: '避免为多而多。',
+        concept: 'cap-a-multi',
+      },
+    ],
+    [
+      ['supervisor', '只做分派/汇总/仲裁的编排角色'],
+      ['角色定义', '每个 Agent 的 prompt + 工具集'],
+      ['职责边界', '不同角色承担不同职责与权限'],
+    ],
+    [
+      '为「多 Agent」而多 Agent，职责不清、工具重叠也硬拆。',
+      '把诊断和执行揉进一个 Agent，写权限与只读权限混用。',
+    ],
+  ),
+  'capstone',
 )

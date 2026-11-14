@@ -4,7 +4,6 @@ export const L07 = L(
   'L07',
   1,
   '运行边界与 Exit：把结果变成值',
-  25,
   2,
   ['L06'],
   ['exit', 'runners'],

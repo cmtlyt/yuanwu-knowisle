@@ -90,6 +90,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 单独调试：`git hook run pre-commit`、`printf 'feat: 示例' | pnpm exec commitlint`。
 - hook 由 husky wrapper 以 `sh -e` 执行，不依赖可执行位；从 GUI 客户端提交需保证 `pnpm` 在 PATH 中。
 - 仓库尚无初始提交时 lint-staged 提示 `Skipping backup because there's no initial commit yet` 并跳过备份 stash，属预期；首次提交后恢复常规机制。
+- **`pre-commit` 现行命令是 `pnpm exec lint-staged --max-arg-length=4000`**（覆盖上表单元格里的字面写法）：Windows 下 lint-staged 会把全部暂存文件的**绝对路径**拼进一条命令，经 `.cmd` shim 走 cmd.exe 时受 8191 字符上限约束——单文件绝对路径约 70 字符，一次提交约 120 个文件即报「命令行太长。」（文案还会因编码显示成乱码），任务被杀、提交被拒。4000 切成 ~55 个/批；实测 8000 仍会超（分片后的单批约 7.2K，加 cmd 包装即越界）。
 
 ## 5. 文件命名
 

@@ -4,7 +4,6 @@ export const L13 = L(
   'L13',
   3,
   '终结语义：error 与 complete 不可逆',
-  24,
   2,
   ['L03'],
   ['c-terminal'],

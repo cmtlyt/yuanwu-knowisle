@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 15 ========== */
 
-export const L89 = L(
-  'L89',
-  15,
-  '实战：实现模型路由（provider 抽象 + 按成本/质量分流）',
-  20,
-  4,
-  ['L88'],
-  ['routing-impl'],
-  [
-    '用 TS 实现 provider 抽象 + 路由分流的模型路由',
-    '实现成本/质量分流的决策逻辑',
-    '对照 Vercel AI SDK provider 切换 / LiteLLM 思路',
-  ],
-  `
+export const L89 = withKind(
+  L(
+    'L89',
+    15,
+    '实战：实现模型路由（provider 抽象 + 按成本/质量分流）',
+    4,
+    ['L88'],
+    ['routing-impl'],
+    [
+      '用 TS 实现 provider 抽象 + 路由分流的模型路由',
+      '实现成本/质量分流的决策逻辑',
+      '对照 Vercel AI SDK provider 切换 / LiteLLM 思路',
+    ],
+    `
 ### 把 L88 的路由写成可运行代码
 
 本课实现一个 provider 抽象层 + 路由器：统一不同模型的接口，按成本/质量策略分流。
@@ -74,34 +74,36 @@ Vercel AI SDK 的 provider 抽象让你一行切换模型（\\\`openai\\\` / \\\
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'provider 抽象的核心收益是？',
-      options: ['代码更短', '可替换、可对比、可扩展（换模型不改业务代码）', '更快', '省内存'],
-      answer: 1,
-      explain: '统一接口、可替换。',
-      concept: 'routing-impl',
-    },
-    {
-      text: '路由器的「分流 + 兜底」逻辑是？',
-      options: ['只分流', '难度分流 + 质量/失败时升级兜底', '只兜底', '随机'],
-      answer: 1,
-      explain: '分流 + 兜底。',
-      concept: 'routing-impl',
-    },
-    {
-      text: '难度评估要「轻量」的原因是？',
-      options: ['好看', '评估太重（又调大模型）会让路由省的钱被吃掉', '更快', '省内存'],
-      answer: 1,
-      explain: '评估要轻量。',
-      concept: 'routing-impl',
-    },
-  ],
-  [
-    ['provider 抽象', '统一不同模型接口的抽象层'],
-    ['难度评估', '判断任务复杂度以分流的轻量逻辑'],
-    ['升级兜底', '失败或质量不够时升级到强模型'],
-  ],
-  ['难度评估又调大模型，路由省的钱被评估吃掉。', 'provider 抽象不做，换模型要改一堆业务代码。'],
+    null,
+    [
+      {
+        text: 'provider 抽象的核心收益是？',
+        options: ['代码更短', '可替换、可对比、可扩展（换模型不改业务代码）', '更快', '省内存'],
+        answer: 1,
+        explain: '统一接口、可替换。',
+        concept: 'routing-impl',
+      },
+      {
+        text: '路由器的「分流 + 兜底」逻辑是？',
+        options: ['只分流', '难度分流 + 质量/失败时升级兜底', '只兜底', '随机'],
+        answer: 1,
+        explain: '分流 + 兜底。',
+        concept: 'routing-impl',
+      },
+      {
+        text: '难度评估要「轻量」的原因是？',
+        options: ['好看', '评估太重（又调大模型）会让路由省的钱被吃掉', '更快', '省内存'],
+        answer: 1,
+        explain: '评估要轻量。',
+        concept: 'routing-impl',
+      },
+    ],
+    [
+      ['provider 抽象', '统一不同模型接口的抽象层'],
+      ['难度评估', '判断任务复杂度以分流的轻量逻辑'],
+      ['升级兜底', '失败或质量不够时升级到强模型'],
+    ],
+    ['难度评估又调大模型，路由省的钱被评估吃掉。', 'provider 抽象不做，换模型要改一堆业务代码。'],
+  ),
+  'practice',
 )

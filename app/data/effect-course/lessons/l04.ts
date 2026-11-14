@@ -6,7 +6,6 @@ export const L04 = L(
   'L04',
   1,
   '构造子全景：把现实世界装进 Effect',
-  25,
   2,
   ['L03'],
   ['constructors', 'typed-error'],

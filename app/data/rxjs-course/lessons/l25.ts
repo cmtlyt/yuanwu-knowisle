@@ -4,7 +4,6 @@ export const L25 = L(
   'L25',
   5,
   '背压与落地：buffer 整形与框架接入',
-  28,
   3,
   ['L23', 'L24'],
   ['c-backpressure'],

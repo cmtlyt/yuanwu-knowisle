@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 21 ========== */
 
-export const L109 = L(
-  'L109',
-  21,
-  '对照：用 LlamaIndex.TS 重写向量 / Graph RAG（对比 L49 / L50 手写版）',
-  18,
-  3,
-  ['L108', 'L49', 'L50'],
-  ['llamaindex-rag'],
-  [
-    '用 LlamaIndex 重写向量 RAG 与 Graph RAG，对比 L49 / L50 手写版',
-    '理解索引抽象如何替代手写 embedding/检索/图遍历',
-    '度量代码量与可控性的差异',
-  ],
-  `
+export const L109 = withKind(
+  L(
+    'L109',
+    21,
+    '对照：用 LlamaIndex.TS 重写向量 / Graph RAG（对比 L49 / L50 手写版）',
+    3,
+    ['L108', 'L49', 'L50'],
+    ['llamaindex-rag'],
+    [
+      '用 LlamaIndex 重写向量 RAG 与 Graph RAG，对比 L49 / L50 手写版',
+      '理解索引抽象如何替代手写 embedding/检索/图遍历',
+      '度量代码量与可控性的差异',
+    ],
+    `
 ### RAG 的框架版
 
 L49 手写的向量 RAG（embedding + 检索 + 重排）、L50 的 Graph RAG（实体 + 关系 + 多跳），用 LlamaIndex 重写。
@@ -56,34 +56,36 @@ LlamaIndex 有默认切块策略，但「怎么切」仍直接影响检索质量
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'L49 手写的 embed+检索+重排，在 LlamaIndex 里是？',
-      options: ['手写', 'VectorStoreIndex + asQueryEngine', 'KnowledgeGraphIndex', 'Document'],
-      answer: 1,
-      explain: 'VectorStoreIndex。',
-      concept: 'llamaindex-rag',
-    },
-    {
-      text: 'L50 手写的图构建+遍历，在 LlamaIndex 里是？',
-      options: ['VectorStoreIndex', 'KnowledgeGraphIndex', 'SummaryIndex', 'Document'],
-      answer: 1,
-      explain: 'KnowledgeGraphIndex。',
-      concept: 'llamaindex-rag',
-    },
-    {
-      text: '框架替你切块后，你还要关心什么？',
-      options: ['不用关心', '切块策略仍直接影响检索质量', '颜色', '日志'],
-      answer: 1,
-      explain: '切块质量仍关键。',
-      concept: 'llamaindex-rag',
-    },
-  ],
-  [
-    ['VectorStoreIndex', '向量索引'],
-    ['asQueryEngine', '把索引转成查询引擎'],
-    ['KnowledgeGraphIndex', '图索引'],
-  ],
-  ['切块交给框架就不管了，检索质量下降。', '需要精细控制重排时仍用默认配置。'],
+    null,
+    [
+      {
+        text: 'L49 手写的 embed+检索+重排，在 LlamaIndex 里是？',
+        options: ['手写', 'VectorStoreIndex + asQueryEngine', 'KnowledgeGraphIndex', 'Document'],
+        answer: 1,
+        explain: 'VectorStoreIndex。',
+        concept: 'llamaindex-rag',
+      },
+      {
+        text: 'L50 手写的图构建+遍历，在 LlamaIndex 里是？',
+        options: ['VectorStoreIndex', 'KnowledgeGraphIndex', 'SummaryIndex', 'Document'],
+        answer: 1,
+        explain: 'KnowledgeGraphIndex。',
+        concept: 'llamaindex-rag',
+      },
+      {
+        text: '框架替你切块后，你还要关心什么？',
+        options: ['不用关心', '切块策略仍直接影响检索质量', '颜色', '日志'],
+        answer: 1,
+        explain: '切块质量仍关键。',
+        concept: 'llamaindex-rag',
+      },
+    ],
+    [
+      ['VectorStoreIndex', '向量索引'],
+      ['asQueryEngine', '把索引转成查询引擎'],
+      ['KnowledgeGraphIndex', '图索引'],
+    ],
+    ['切块交给框架就不管了，检索质量下降。', '需要精细控制重排时仍用默认配置。'],
+  ),
+  'framework',
 )

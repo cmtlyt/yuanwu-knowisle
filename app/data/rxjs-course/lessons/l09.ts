@@ -4,7 +4,6 @@ export const L09 = L(
   'L09',
   2,
   'concatMap 与 mergeMap：排队 vs 并发',
-  30,
   3,
   ['L08'],
   ['c-concat', 'c-merge'],

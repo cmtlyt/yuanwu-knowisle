@@ -4,7 +4,6 @@ export const L23 = L(
   'L23',
   5,
   '时间算子：debounceTime / throttleTime / sampleTime',
-  30,
   3,
   ['L22'],
   ['c-time-ops'],

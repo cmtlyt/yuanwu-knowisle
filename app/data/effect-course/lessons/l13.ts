@@ -6,7 +6,6 @@ export const L13 = L(
   'L13',
   3,
   'Context.Service：类型化的服务键',
-  25,
   2,
   ['L06'],
   ['context'],

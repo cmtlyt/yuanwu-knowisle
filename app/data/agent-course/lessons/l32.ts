@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 4 ========== */
 
-export const L32 = L(
-  'L32',
-  4,
-  'Thought / Action / Observation 各司其职',
-  12,
-  1,
-  ['L31'],
-  ['tao'],
-  [
-    '厘清 Thought / Action / Observation 三者的职责边界',
-    '理解三者如何通过上下文串成闭环',
-    '避免三者职责混淆导致的实现错误',
-  ],
-  `
+export const L32 = withKind(
+  L(
+    'L32',
+    4,
+    'Thought / Action / Observation 各司其职',
+    1,
+    ['L31'],
+    ['tao'],
+    [
+      '厘清 Thought / Action / Observation 三者的职责边界',
+      '理解三者如何通过上下文串成闭环',
+      '避免三者职责混淆导致的实现错误',
+    ],
+    `
 ### 三个词，三种职责
 
 ReAct 循环里反复出现三个角色：Thought（想什么）、Action（做什么）、Observation（看到了什么）。它们的职责边界清晰，但新手容易混。
@@ -52,37 +52,39 @@ Observation 不是给程序员看的日志，而是喂回给模型的上下文�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Thought 和 Action 由谁产出？',
-      options: ['工具', '模型', '用户', '数据库'],
-      answer: 1,
-      explain: 'Thought 与 Action 都是模型产出；Observation 是环境/工具产出。',
-      concept: 'tao',
-    },
-    {
-      text: 'Observation 的正确角色是？',
-      options: ['给程序员的日志', '工具执行结果，回填上下文作为下一轮决策输入', '模型的推理', '用户的输入'],
-      answer: 1,
-      explain: 'Observation 由环境回填，喂给模型影响下一轮。',
-      concept: 'tao',
-    },
-    {
-      text: '把 Observation 当模型输出解析，属于哪类错误？',
-      options: ['性能问题', '职责混淆（环境产出误当模型产出）', '安全问题', '无影响'],
-      answer: 1,
-      explain: '混淆「谁产出谁」导致低级实现错误。',
-      concept: 'tao',
-    },
-  ],
-  [
-    ['Thought', '模型对下一步的推理，参与决策'],
-    ['Action', '模型决定执行的动作（调工具/finish）'],
-    ['Observation', '工具执行结果，环境回填'],
-  ],
-  [
-    '把 Observation 当模型输出解析，或把 Thought 当工具调用执行。',
-    'Observation 写得像日志，模型读不懂导致下一轮误判。',
-  ],
+    null,
+    [
+      {
+        text: 'Thought 和 Action 由谁产出？',
+        options: ['工具', '模型', '用户', '数据库'],
+        answer: 1,
+        explain: 'Thought 与 Action 都是模型产出；Observation 是环境/工具产出。',
+        concept: 'tao',
+      },
+      {
+        text: 'Observation 的正确角色是？',
+        options: ['给程序员的日志', '工具执行结果，回填上下文作为下一轮决策输入', '模型的推理', '用户的输入'],
+        answer: 1,
+        explain: 'Observation 由环境回填，喂给模型影响下一轮。',
+        concept: 'tao',
+      },
+      {
+        text: '把 Observation 当模型输出解析，属于哪类错误？',
+        options: ['性能问题', '职责混淆（环境产出误当模型产出）', '安全问题', '无影响'],
+        answer: 1,
+        explain: '混淆「谁产出谁」导致低级实现错误。',
+        concept: 'tao',
+      },
+    ],
+    [
+      ['Thought', '模型对下一步的推理，参与决策'],
+      ['Action', '模型决定执行的动作（调工具/finish）'],
+      ['Observation', '工具执行结果，环境回填'],
+    ],
+    [
+      '把 Observation 当模型输出解析，或把 Thought 当工具调用执行。',
+      'Observation 写得像日志，模型读不懂导致下一轮误判。',
+    ],
+  ),
+  'practice',
 )

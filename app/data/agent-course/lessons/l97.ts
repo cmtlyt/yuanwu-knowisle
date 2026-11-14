@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 17 ========== */
 
-export const L97 = L(
-  'L97',
-  17,
-  '对照：用 LangGraph 重写 ReAct / Plan-and-Execute（对比 L13 / L15 手写版）',
-  18,
-  3,
-  ['L96', 'L13', 'L15'],
-  ['langgraph-react'],
-  [
-    '用 LangGraph 重写 ReAct 与 P&E，对比 L13 / L15 手写版',
-    '理解「循环」与「计划」在图上的表达差异',
-    '度量代码量、可控性、运行时位置的差异',
-  ],
-  `
+export const L97 = withKind(
+  L(
+    'L97',
+    17,
+    '对照：用 LangGraph 重写 ReAct / Plan-and-Execute（对比 L13 / L15 手写版）',
+    3,
+    ['L96', 'L13', 'L15'],
+    ['langgraph-react'],
+    [
+      '用 LangGraph 重写 ReAct 与 P&E，对比 L13 / L15 手写版',
+      '理解「循环」与「计划」在图上的表达差异',
+      '度量代码量、可控性、运行时位置的差异',
+    ],
+    `
 ### 同一需求，图上重写
 
 把 L13 的 ReAct 和 L15 的 P&E 用 LangGraph 重写，直接对比：循环怎么变成图、状态怎么管理。
@@ -62,34 +62,36 @@ const graph = new StateGraph({ plan: ..., results: ... })
 - 重规划 = 边：手写重规划钩子对应「executor → planner」边。
 
 `,
-  null,
-  [
-    {
-      text: 'LangGraph 里 ReAct 的「终止」对应手写版的什么？',
-      options: ['parseReAct', 'maxSteps 终止 → 图的 __end__ 条件边', '工具注册表', 'while'],
-      answer: 1,
-      explain: '终止对应条件边。',
-      concept: 'langgraph-react',
-    },
-    {
-      text: 'P&E 的「重规划」在 LangGraph 里是？',
-      options: ['一个 while', 'executor → planner 的条件边', '一个节点', '一个 reducer'],
-      answer: 1,
-      explain: '重规划是一条边。',
-      concept: 'langgraph-react',
-    },
-    {
-      text: 'LangGraph 版「可控性」相对手写版？',
-      options: ['更高', '更低（状态管理被框架接管）', '相同', '无关'],
-      answer: 1,
-      explain: '框架接管了状态管理，可控性让渡。',
-      concept: 'langgraph-react',
-    },
-  ],
-  [
-    ['条件边', '根据状态决定下一节点的边'],
-    ['环', '图中的循环（边回到节点）'],
-    ['让渡', '框架接管的部分（状态/运行）'],
-  ],
-  ['以为 LangGraph 只是「换写法」，忽视可控性让渡。', '把重规划硬写进节点逻辑，而非用条件边。'],
+    null,
+    [
+      {
+        text: 'LangGraph 里 ReAct 的「终止」对应手写版的什么？',
+        options: ['parseReAct', 'maxSteps 终止 → 图的 __end__ 条件边', '工具注册表', 'while'],
+        answer: 1,
+        explain: '终止对应条件边。',
+        concept: 'langgraph-react',
+      },
+      {
+        text: 'P&E 的「重规划」在 LangGraph 里是？',
+        options: ['一个 while', 'executor → planner 的条件边', '一个节点', '一个 reducer'],
+        answer: 1,
+        explain: '重规划是一条边。',
+        concept: 'langgraph-react',
+      },
+      {
+        text: 'LangGraph 版「可控性」相对手写版？',
+        options: ['更高', '更低（状态管理被框架接管）', '相同', '无关'],
+        answer: 1,
+        explain: '框架接管了状态管理，可控性让渡。',
+        concept: 'langgraph-react',
+      },
+    ],
+    [
+      ['条件边', '根据状态决定下一节点的边'],
+      ['环', '图中的循环（边回到节点）'],
+      ['让渡', '框架接管的部分（状态/运行）'],
+    ],
+    ['以为 LangGraph 只是「换写法」，忽视可控性让渡。', '把重规划硬写进节点逻辑，而非用条件边。'],
+  ),
+  'framework',
 )

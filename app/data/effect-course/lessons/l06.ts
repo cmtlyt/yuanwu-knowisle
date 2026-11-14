@@ -4,7 +4,6 @@ export const L06 = L(
   'L06',
   1,
   '类型是怎么长出来的：E 与 R 的累积',
-  30,
   3,
   ['L05'],
   ['type-accumulation', 'gen'],

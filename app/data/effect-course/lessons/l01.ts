@@ -6,7 +6,6 @@ export const L01 = L(
   'L01',
   0,
   '动机与起步：TypeScript 的缺口与第一次运行',
-  35,
   1,
   [],
   ['program-value', 'runners'],

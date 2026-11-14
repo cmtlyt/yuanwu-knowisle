@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L23 = L(
-  'L23',
-  2,
-  '自主智能体谱系：AutoGPT / BabyAGI / Generative Agents',
-  12,
-  2,
-  ['L12'],
-  ['autogpt-lineage'],
-  [
-    '了解自主智能体谱系的三位代表及其机制',
-    '理解「目标自驱动循环」的核心与风险',
-    '认识为何纯自主 Agent 风险高、可控性低',
-  ],
-  `
+export const L23 = withKind(
+  L(
+    'L23',
+    2,
+    '自主智能体谱系：AutoGPT / BabyAGI / Generative Agents',
+    2,
+    ['L12'],
+    ['autogpt-lineage'],
+    [
+      '了解自主智能体谱系的三位代表及其机制',
+      '理解「目标自驱动循环」的核心与风险',
+      '认识为何纯自主 Agent 风险高、可控性低',
+    ],
+    `
 ### 「自主」到极致的谱系
 
 AutoGPT、BabyAGI、Generative Agents 都试图让 Agent 在给定大目标后**长期自主运行**，自己拆目标、自己调度、自己推进。它们开启了「自主智能体」的想象，也暴露了纯自主的风险。
@@ -53,42 +53,44 @@ while (tasks.notEmpty()) {
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'BabyAGI 的最小自主循环核心是？',
-      options: ['树搜索', '任务队列 + 执行 + 结果反馈（结果派生新任务）', '技能库', '多路径投票'],
-      answer: 1,
-      explain: 'BabyAGI 强调任务队列、优先级、结果驱动新任务。',
-      concept: 'autogpt-lineage',
-    },
-    {
-      text: 'Generative Agents 的开创性在于？',
-      options: [
-        '第一个用 GPU 的 Agent',
-        '记忆 + 反思 + 计划让虚拟角色自主互动（多 Agent 社会）',
-        '第一个用 Python 的 Agent',
-        '第一个能编码的 Agent',
-      ],
-      answer: 1,
-      explain: '它开创了「多 Agent 社会」的研究方向。',
-      concept: 'autogpt-lineage',
-    },
-    {
-      text: '纯自主 Agent 最大的风险是？',
-      options: ['太慢', '无限烧 token、方向失控、执行危险动作', '代码太长', '不兼容'],
-      answer: 1,
-      explain: '无人工闸门的自主循环有成本、方向、安全三重风险。',
-      concept: 'autogpt-lineage',
-    },
-  ],
-  [
-    ['自主智能体', '给定大目标后长期自主运行、自拆自调度的 Agent'],
-    ['任务队列', '自增长、按优先级排序的任务池'],
-    ['结果驱动', '执行结果派生新任务、推进循环'],
-  ],
-  [
-    '把「完全自主」当生产目标，忽视成本、方向与安全风险。',
-    '只见谱系的噱头，不见「拆解 + 优先级 + 结果驱动」的可复用思想。',
-  ],
+    null,
+    [
+      {
+        text: 'BabyAGI 的最小自主循环核心是？',
+        options: ['树搜索', '任务队列 + 执行 + 结果反馈（结果派生新任务）', '技能库', '多路径投票'],
+        answer: 1,
+        explain: 'BabyAGI 强调任务队列、优先级、结果驱动新任务。',
+        concept: 'autogpt-lineage',
+      },
+      {
+        text: 'Generative Agents 的开创性在于？',
+        options: [
+          '第一个用 GPU 的 Agent',
+          '记忆 + 反思 + 计划让虚拟角色自主互动（多 Agent 社会）',
+          '第一个用 Python 的 Agent',
+          '第一个能编码的 Agent',
+        ],
+        answer: 1,
+        explain: '它开创了「多 Agent 社会」的研究方向。',
+        concept: 'autogpt-lineage',
+      },
+      {
+        text: '纯自主 Agent 最大的风险是？',
+        options: ['太慢', '无限烧 token、方向失控、执行危险动作', '代码太长', '不兼容'],
+        answer: 1,
+        explain: '无人工闸门的自主循环有成本、方向、安全三重风险。',
+        concept: 'autogpt-lineage',
+      },
+    ],
+    [
+      ['自主智能体', '给定大目标后长期自主运行、自拆自调度的 Agent'],
+      ['任务队列', '自增长、按优先级排序的任务池'],
+      ['结果驱动', '执行结果派生新任务、推进循环'],
+    ],
+    [
+      '把「完全自主」当生产目标，忽视成本、方向与安全风险。',
+      '只见谱系的噱头，不见「拆解 + 优先级 + 结果驱动」的可复用思想。',
+    ],
+  ),
+  'theory',
 )

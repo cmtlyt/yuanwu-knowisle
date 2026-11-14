@@ -4,7 +4,6 @@ export const L05 = L(
   'L05',
   1,
   '组合与变换：map / flatMap / all / zip',
-  30,
   2,
   ['L04'],
   ['composition'],

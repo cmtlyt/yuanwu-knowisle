@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 13 ========== */
 
-export const L81 = L(
-  'L81',
-  13,
-  '实战：搭建 Eval harness 与 agent 检测（自动化轨迹评测 + 异常/退化检测）',
-  20,
-  4,
-  ['L80', 'L78'],
-  ['eval-harness'],
-  [
-    '用 TS 搭建一个可运行的 Eval harness',
-    '实现自动化轨迹评测与异常/退化检测',
-    '对照 LangSmith Evals / Ragas 等价用法',
-  ],
-  `
+export const L81 = withKind(
+  L(
+    'L81',
+    13,
+    '实战：搭建 Eval harness 与 agent 检测（自动化轨迹评测 + 异常/退化检测）',
+    4,
+    ['L80', 'L78'],
+    ['eval-harness'],
+    [
+      '用 TS 搭建一个可运行的 Eval harness',
+      '实现自动化轨迹评测与异常/退化检测',
+      '对照 LangSmith Evals / Ragas 等价用法',
+    ],
+    `
 ### 把评测做成可重复的 harness
 
 Eval harness 是把「跑样本 → 评测 → 汇总 → 告警」固化成可重复执行的工具。它让你每次改动都能一键回归。
@@ -71,34 +71,36 @@ LangSmith Evals 提供「数据集 + evaluator + 在线评估」的托管；Raga
 - 可告警：退化或异常时明确报出，而非靠人肉看。
 
 `,
-  null,
-  [
-    {
-      text: 'Eval harness 的核心价值是？',
-      options: ['好看', '把「跑样本→评测→汇总→告警」固化为可重复工具', '省 token', '更快'],
-      answer: 1,
-      explain: '可重复、自动化、可告警。',
-      concept: 'eval-harness',
-    },
-    {
-      text: '「agent 检测」本质是？',
-      options: ['评测正确性', '发现不该发生的行为（重复/危险/超时）', '选模型', '写 prompt'],
-      answer: 1,
-      explain: '检测异常与退化。',
-      concept: 'eval-harness',
-    },
-    {
-      text: '一次 harness 运行同时产出？',
-      options: ['只对错', '结果对错 + 轨迹质量 + 异常检测', '只轨迹', '只异常'],
-      answer: 1,
-      explain: '三合一。',
-      concept: 'eval-harness',
-    },
-  ],
-  [
-    ['Eval harness', '可重复执行的评测工具'],
-    ['agent 检测', '发现重复/危险/超时等异常行为'],
-    ['退化检测', '发现指标低于基线的变化'],
-  ],
-  ['评测靠人肉跑，无法重复、无法告警。', '只测对错不做异常检测，漏掉「结果对但乱来」的问题。'],
+    null,
+    [
+      {
+        text: 'Eval harness 的核心价值是？',
+        options: ['好看', '把「跑样本→评测→汇总→告警」固化为可重复工具', '省 token', '更快'],
+        answer: 1,
+        explain: '可重复、自动化、可告警。',
+        concept: 'eval-harness',
+      },
+      {
+        text: '「agent 检测」本质是？',
+        options: ['评测正确性', '发现不该发生的行为（重复/危险/超时）', '选模型', '写 prompt'],
+        answer: 1,
+        explain: '检测异常与退化。',
+        concept: 'eval-harness',
+      },
+      {
+        text: '一次 harness 运行同时产出？',
+        options: ['只对错', '结果对错 + 轨迹质量 + 异常检测', '只轨迹', '只异常'],
+        answer: 1,
+        explain: '三合一。',
+        concept: 'eval-harness',
+      },
+    ],
+    [
+      ['Eval harness', '可重复执行的评测工具'],
+      ['agent 检测', '发现重复/危险/超时等异常行为'],
+      ['退化检测', '发现指标低于基线的变化'],
+    ],
+    ['评测靠人肉跑，无法重复、无法告警。', '只测对错不做异常检测，漏掉「结果对但乱来」的问题。'],
+  ),
+  'practice',
 )

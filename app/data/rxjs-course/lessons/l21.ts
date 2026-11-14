@@ -4,7 +4,6 @@ export const L21 = L(
   'L21',
   4,
   '热流选型与内存泄漏排查：Subject vs share 实战',
-  30,
   3,
   ['L20'],
   ['c-subject'],

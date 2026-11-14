@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 2 ========== */
 
-export const L25 = L(
-  'L25',
-  2,
-  '多路径投票：Self-Consistency 提升鲁棒性',
-  12,
-  2,
-  ['L11'],
-  ['self-consistency'],
-  [
-    '理解 Self-Consistency 的「多次采样 + 投票」机制',
-    '认识它与 ToT / 多数投票的异同',
-    '掌握它「用并行成本换单点鲁棒性」的取舍',
-  ],
-  `
+export const L25 = withKind(
+  L(
+    'L25',
+    2,
+    '多路径投票：Self-Consistency 提升鲁棒性',
+    2,
+    ['L11'],
+    ['self-consistency'],
+    [
+      '理解 Self-Consistency 的「多次采样 + 投票」机制',
+      '认识它与 ToT / 多数投票的异同',
+      '掌握它「用并行成本换单点鲁棒性」的取舍',
+    ],
+    `
 ### 一个问题，多解几条，投票定答案
 
 Self-Consistency（自洽性）的机制很简单：对同一个问题**采样多条推理链**，各自得到答案，然后**投票**选出出现最多的答案。它假设「正确答案在多条采样里会反复出现」。
@@ -56,39 +56,41 @@ const winner = mode(answers)                // "42"
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Self-Consistency 的机制是？',
-      options: ['单次推理', '多次采样多条推理链 + 投票取众数', '树搜索剪枝', '失败反思'],
-      answer: 1,
-      explain: '采样 N 条链、提取答案、投票取众数。',
-      concept: 'self-consistency',
-    },
-    {
-      text: 'Self-Consistency 相比 ToT 的关键差异是？',
-      options: [
-        'ToT 更简单',
-        'Self-Consistency 是独立采样+投票，ToT 是带评估剪枝的搜索',
-        'Self-Consistency 不能并行',
-        '无差异',
-      ],
-      answer: 1,
-      explain: '一个独立投票、一个搜索剪枝。',
-      concept: 'self-consistency',
-    },
-    {
-      text: 'Self-Consistency 失效的场景是？',
-      options: ['数学题', '开放式创作（答案不唯一、无法比众数）', '逻辑题', '代码题'],
-      answer: 1,
-      explain: '自由文本任务答案不唯一，投票无意义。',
-      concept: 'self-consistency',
-    },
-  ],
-  [
-    ['采样多样性', '调高温度让多条链「各想各的」，避免重复'],
-    ['众数投票', '取出现次数最多的答案作为最终结果'],
-    ['并行成本', 'N 条链带来的 N 倍 token 与延迟'],
-  ],
-  ['温度太低导致多条链高度重复，投票退化为单次推理。', '对开放式创作任务硬做投票，答案不唯一无法比众数。'],
+    null,
+    [
+      {
+        text: 'Self-Consistency 的机制是？',
+        options: ['单次推理', '多次采样多条推理链 + 投票取众数', '树搜索剪枝', '失败反思'],
+        answer: 1,
+        explain: '采样 N 条链、提取答案、投票取众数。',
+        concept: 'self-consistency',
+      },
+      {
+        text: 'Self-Consistency 相比 ToT 的关键差异是？',
+        options: [
+          'ToT 更简单',
+          'Self-Consistency 是独立采样+投票，ToT 是带评估剪枝的搜索',
+          'Self-Consistency 不能并行',
+          '无差异',
+        ],
+        answer: 1,
+        explain: '一个独立投票、一个搜索剪枝。',
+        concept: 'self-consistency',
+      },
+      {
+        text: 'Self-Consistency 失效的场景是？',
+        options: ['数学题', '开放式创作（答案不唯一、无法比众数）', '逻辑题', '代码题'],
+        answer: 1,
+        explain: '自由文本任务答案不唯一，投票无意义。',
+        concept: 'self-consistency',
+      },
+    ],
+    [
+      ['采样多样性', '调高温度让多条链「各想各的」，避免重复'],
+      ['众数投票', '取出现次数最多的答案作为最终结果'],
+      ['并行成本', 'N 条链带来的 N 倍 token 与延迟'],
+    ],
+    ['温度太低导致多条链高度重复，投票退化为单次推理。', '对开放式创作任务硬做投票，答案不唯一无法比众数。'],
+  ),
+  'theory',
 )

@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 23 ========== */
 
-export const L117 = L(
-  'L117',
-  23,
-  '数据 Agent：说人话查数',
-  16,
-  2,
-  ['L42', 'L49'],
-  ['data-agent'],
-  [
-    '理解「自然语言 → SQL / 查询」的数据 Agent 管线',
-    '掌握 Text-to-SQL 的 schema 注入与结果校验',
-    '认识「让 Agent 查数」比「让 Agent 写报告」更危险的边界',
-  ],
-  `
+export const L117 = withKind(
+  L(
+    'L117',
+    23,
+    '数据 Agent：说人话查数',
+    2,
+    ['L42', 'L49'],
+    ['data-agent'],
+    [
+      '理解「自然语言 → SQL / 查询」的数据 Agent 管线',
+      '掌握 Text-to-SQL 的 schema 注入与结果校验',
+      '认识「让 Agent 查数」比「让 Agent 写报告」更危险的边界',
+    ],
+    `
 ### 数据 Agent 的经典形态：Text-to-SQL
 
 数据 Agent 让用户用自然语言问「上季度各区域销售额」，Agent 翻译成 SQL、执行、再解释结果。它把 Function Calling（L38）用到了「查询工具」上，并把「数据库 schema」作为工具的上下文注入。
@@ -65,34 +65,36 @@ Text-to-SQL 的准确率很大程度上取决于 schema 注入得清不清楚：
 :::
 
 `,
-  null,
-  [
-    {
-      text: '数据 Agent 的经典形态是？',
-      options: ['Text-to-SQL', 'RAG', '语音合成', '图像识别'],
-      answer: 1,
-      explain: '自然语言 → SQL → 执行 → 解释。',
-      concept: 'data-agent',
-    },
-    {
-      text: '为什么数据 Agent 比写报告更危险？',
-      options: ['SQL 更难', '直接触碰真实数据库，错误查询可造成生产事故', 'token 更贵', '没人用'],
-      answer: 1,
-      explain: '数据 Agent 直接操作真实数据，风险高。',
-      concept: 'data-agent',
-    },
-    {
-      text: 'Text-to-SQL 的 prompt 核心是？',
-      options: ['更长的提问', '清晰的 schema 注入', '更大的温度', '更贵的模型'],
-      answer: 1,
-      explain: 'schema 描述质量决定准确率。',
-      concept: 'data-agent',
-    },
-  ],
-  [
-    ['Text-to-SQL', '自然语言翻译成 SQL 查询'],
-    ['schema 注入', '把表 / 列结构作为上下文喂给模型'],
-    ['只读账号', '物理上禁止写操作的数据库连接'],
-  ],
-  ['给数据 Agent 一个可写的数据库账号，事故风险极大。', '不做行数上限 / 超时，一条慢查询拖垮库。'],
+    null,
+    [
+      {
+        text: '数据 Agent 的经典形态是？',
+        options: ['Text-to-SQL', 'RAG', '语音合成', '图像识别'],
+        answer: 1,
+        explain: '自然语言 → SQL → 执行 → 解释。',
+        concept: 'data-agent',
+      },
+      {
+        text: '为什么数据 Agent 比写报告更危险？',
+        options: ['SQL 更难', '直接触碰真实数据库，错误查询可造成生产事故', 'token 更贵', '没人用'],
+        answer: 1,
+        explain: '数据 Agent 直接操作真实数据，风险高。',
+        concept: 'data-agent',
+      },
+      {
+        text: 'Text-to-SQL 的 prompt 核心是？',
+        options: ['更长的提问', '清晰的 schema 注入', '更大的温度', '更贵的模型'],
+        answer: 1,
+        explain: 'schema 描述质量决定准确率。',
+        concept: 'data-agent',
+      },
+    ],
+    [
+      ['Text-to-SQL', '自然语言翻译成 SQL 查询'],
+      ['schema 注入', '把表 / 列结构作为上下文喂给模型'],
+      ['只读账号', '物理上禁止写操作的数据库连接'],
+    ],
+    ['给数据 Agent 一个可写的数据库账号，事故风险极大。', '不做行数上限 / 超时，一条慢查询拖垮库。'],
+  ),
+  'scenario',
 )

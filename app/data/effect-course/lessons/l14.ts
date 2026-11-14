@@ -4,7 +4,6 @@ export const L14 = L(
   'L14',
   3,
   'Layer 是构造配方，不是服务本身',
-  30,
   3,
   ['L13'],
   ['layer'],

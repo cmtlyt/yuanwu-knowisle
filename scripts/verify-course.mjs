@@ -135,10 +135,17 @@ for (const { label, C } of discovered) {
     [...widgetIds].join(', '),
   )
 
-  /* 每个概念至少被一道题覆盖（缺失只告警，不强判失败） */
+  /* 每个概念至少被一道题覆盖（缺失只告警，不强判失败）
+   * 导览课（`Lesson.kind: 'overview'`）按设计不设题，其承载的「导览概念」
+   * 是「知道有这么个东西」级别的指路信息，不要求出题考核，因此不参与覆盖检查。 */
+  const navConcepts = new Set(C.LESSONS.filter((l) => l.kind === 'overview').flatMap((l) => l.concepts))
   const covered = new Set(C.LESSONS.flatMap((l) => l.quiz.map((qq) => qq.concept)))
-  const uncovered = [...conceptIds].filter((c) => !covered.has(c))
+  const uncovered = [...conceptIds].filter((c) => !covered.has(c) && !navConcepts.has(c))
   if (uncovered.length) console.log('  ! 未被题目覆盖的概念：' + uncovered.join(', '))
+  const navOnly = [...navConcepts].filter((c) => !covered.has(c))
+  if (navOnly.length) {
+    console.log('  · 导览课承载的导览概念（按设计不设题）：' + navOnly.join(', '))
+  }
 
   /* ---------- 复杂模式专属校验（renderMode === 'complex'）---------- */
   console.log('--- 渲染模式与结构 ---')

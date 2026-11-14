@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 3 ========== */
 
-export const L28 = L(
-  'L28',
-  3,
-  '混合范式实战：Plan + ReAct + Reflexion 怎么串',
-  14,
-  2,
-  ['L27', 'L15', 'L18'],
-  ['hybrid-paradigm'],
-  [
-    '理解范式如何组合成更健壮的系统',
-    '掌握「P&E 骨架 + ReAct 执行 + Reflexion 纠错」的串法',
-    '知道混合的收益与复杂度代价',
-  ],
-  `
+export const L28 = withKind(
+  L(
+    'L28',
+    3,
+    '混合范式实战：Plan + ReAct + Reflexion 怎么串',
+    2,
+    ['L27', 'L15', 'L18'],
+    ['hybrid-paradigm'],
+    [
+      '理解范式如何组合成更健壮的系统',
+      '掌握「P&E 骨架 + ReAct 执行 + Reflexion 纠错」的串法',
+      '知道混合的收益与复杂度代价',
+    ],
+    `
 ### 三种范式各取所长
 
 真实系统很少只用一种范式。经典组合：P&E 做**骨架**（先列计划、流程可控）、ReAct 做**执行**（边做边看、灵活应变）、Reflexion 做**纠错**（失败后反思重试）。
@@ -71,34 +71,39 @@ async function hybridAgent(client, memory, task) {
 :::
 
 `,
-  null,
-  [
-    {
-      text: '经典混合组合中，P&E / ReAct / Reflexion 各司什么职？',
-      options: ['都不重要', 'P&E 做骨架、ReAct 做执行、Reflexion 做纠错', '都做执行', '都做反思'],
-      answer: 1,
-      explain: 'P&E 管做什么、ReAct 管怎么做、Reflexion 管做错了怎么办。',
-      concept: 'hybrid-paradigm',
-    },
-    {
-      text: '混合范式的代价是？',
-      options: ['更简单', '复杂度、成本、调试难度都上升', '更便宜', '不需要模型'],
-      answer: 1,
-      explain: '三套机制协调，复杂度与成本都更高。',
-      concept: 'hybrid-paradigm',
-    },
-    {
-      text: '混合范式的正确使用原则是？',
-      options: ['堆越多越好', '按需混合，每层有明确职责且真的需要', '只用一种', '不用反思'],
-      answer: 1,
-      explain: '按需混合，避免堆砌。',
-      concept: 'hybrid-paradigm',
-    },
-  ],
-  [
-    ['混合范式', '组合多种范式、各取所长的编排方式'],
-    ['职责分离', '计划 / 执行 / 纠错各有独立模块'],
-    ['重规划', '失败反思后修正计划再执行'],
-  ],
-  ['为混合而混合，把不需要的范式硬塞进系统，徒增复杂度。', '混合后出问题分不清是计划错、执行错还是反思错。'],
+    null,
+    [
+      {
+        text: '经典混合组合中，P&E / ReAct / Reflexion 各司什么职？',
+        options: ['都不重要', 'P&E 做骨架、ReAct 做执行、Reflexion 做纠错', '都做执行', '都做反思'],
+        answer: 1,
+        explain: 'P&E 管做什么、ReAct 管怎么做、Reflexion 管做错了怎么办。',
+        concept: 'hybrid-paradigm',
+      },
+      {
+        text: '混合范式的代价是？',
+        options: ['更简单', '复杂度、成本、调试难度都上升', '更便宜', '不需要模型'],
+        answer: 1,
+        explain: '三套机制协调，复杂度与成本都更高。',
+        concept: 'hybrid-paradigm',
+      },
+      {
+        text: '混合范式的正确使用原则是？',
+        options: ['堆越多越好', '按需混合，每层有明确职责且真的需要', '只用一种', '不用反思'],
+        answer: 1,
+        explain: '按需混合，避免堆砌。',
+        concept: 'hybrid-paradigm',
+      },
+    ],
+    [
+      ['混合范式', '组合多种范式、各取所长的编排方式'],
+      ['职责分离', '计划 / 执行 / 纠错各有独立模块'],
+      ['重规划', '失败反思后修正计划再执行'],
+    ],
+    [
+      '为混合而混合，把不需要的范式硬塞进系统，徒增复杂度。',
+      '混合后出问题分不清是计划错、执行错还是反思错。',
+    ],
+  ),
+  'theory',
 )

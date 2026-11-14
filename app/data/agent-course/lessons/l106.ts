@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 20 ========== */
 
-export const L106 = L(
-  'L106',
-  20,
-  'Vercel AI SDK 核心概念：ai 包 / provider / tool / streaming',
-  14,
-  3,
-  ['L93'],
-  ['ai-sdk-core'],
-  [
-    '掌握 Vercel AI SDK 的核心概念：ai 包 / provider / tool / streaming',
-    '理解「聚焦模型交互层」的定位',
-    '认识它与其它框架的分工差异',
-  ],
-  `
+export const L106 = withKind(
+  L(
+    'L106',
+    20,
+    'Vercel AI SDK 核心概念：ai 包 / provider / tool / streaming',
+    3,
+    ['L93'],
+    ['ai-sdk-core'],
+    [
+      '掌握 Vercel AI SDK 的核心概念：ai 包 / provider / tool / streaming',
+      '理解「聚焦模型交互层」的定位',
+      '认识它与其它框架的分工差异',
+    ],
+    `
 ### 只做「模型交互」这一层
 
 Vercel AI SDK（\\\`ai\\\` 包）定位「模型交互层」：provider（统一多供应商）、tool（工具调用）、streaming（流式）。它**不管**多 Agent 编排、记忆、RAG——那些由其它框架或你自己做。
@@ -62,39 +62,41 @@ AI SDK 不提供多 Agent 编排、记忆、RAG。如果你需要这些，要么
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Vercel AI SDK 的核心概念是？',
-      options: [
-        'agent/workflow/memory',
-        'ai 包 / provider / tool / streaming',
-        '图/状态/reducer',
-        'Agent/run/handoff',
-      ],
-      answer: 1,
-      explain: 'ai/provider/tool/streaming。',
-      concept: 'ai-sdk-core',
-    },
-    {
-      text: 'AI SDK 的定位是？',
-      options: ['多 Agent 编排框架', '模型交互层（provider/tool/streaming）', 'RAG 框架', '记忆框架'],
-      answer: 1,
-      explain: '聚焦模型交互层。',
-      concept: 'ai-sdk-core',
-    },
-    {
-      text: 'AI SDK 的 `tool()` 对应 L42 的什么？',
-      options: ['runWithTools 整个', 'zod schema + run 的声明', '消息总线', 'Tracer'],
-      answer: 1,
-      explain: 'tool() 对应 zod schema + run。',
-      concept: 'ai-sdk-core',
-    },
-  ],
-  [
-    ['provider', '统一多供应商的模型抽象'],
-    ['tool()', '声明式工具（zod 校验 + execute）'],
-    ['streamText', '流式文本生成'],
-  ],
-  ['期待 AI SDK 提供多 Agent/记忆/RAG，结果缺这缺那。', '把 AI SDK 当完整 Agent 框架用。'],
+    null,
+    [
+      {
+        text: 'Vercel AI SDK 的核心概念是？',
+        options: [
+          'agent/workflow/memory',
+          'ai 包 / provider / tool / streaming',
+          '图/状态/reducer',
+          'Agent/run/handoff',
+        ],
+        answer: 1,
+        explain: 'ai/provider/tool/streaming。',
+        concept: 'ai-sdk-core',
+      },
+      {
+        text: 'AI SDK 的定位是？',
+        options: ['多 Agent 编排框架', '模型交互层（provider/tool/streaming）', 'RAG 框架', '记忆框架'],
+        answer: 1,
+        explain: '聚焦模型交互层。',
+        concept: 'ai-sdk-core',
+      },
+      {
+        text: 'AI SDK 的 `tool()` 对应 L42 的什么？',
+        options: ['runWithTools 整个', 'zod schema + run 的声明', '消息总线', 'Tracer'],
+        answer: 1,
+        explain: 'tool() 对应 zod schema + run。',
+        concept: 'ai-sdk-core',
+      },
+    ],
+    [
+      ['provider', '统一多供应商的模型抽象'],
+      ['tool()', '声明式工具（zod 校验 + execute）'],
+      ['streamText', '流式文本生成'],
+    ],
+    ['期待 AI SDK 提供多 Agent/记忆/RAG，结果缺这缺那。', '把 AI SDK 当完整 Agent 框架用。'],
+  ),
+  'framework',
 )

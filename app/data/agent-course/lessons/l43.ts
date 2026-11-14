@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 6 ========== */
 
-export const L43 = L(
-  'L43',
-  6,
-  '为什么需要 MCP：告别「每家一套工具接口」',
-  12,
-  2,
-  ['L39'],
-  ['mcp-motivation'],
-  [
-    '理解「每家一套工具接口」造成的集成负担',
-    '理解 MCP 想解决的 N×M 集成问题',
-    '建立「统一协议 = 一次适配、处处复用」的心智',
-  ],
-  `
+export const L43 = withKind(
+  L(
+    'L43',
+    6,
+    '为什么需要 MCP：告别「每家一套工具接口」',
+    2,
+    ['L39'],
+    ['mcp-motivation'],
+    [
+      '理解「每家一套工具接口」造成的集成负担',
+      '理解 MCP 想解决的 N×M 集成问题',
+      '建立「统一协议 = 一次适配、处处复用」的心智',
+    ],
+    `
 ### N 个 Agent × M 个工具的集成爆炸
 
 没有统一协议时，每个 Agent 要接每个数据源/工具，都要写一套定制适配：N 个 Agent × M 个工具 = N×M 套集成。MCP（Model Context Protocol）把「工具/数据源」和「Agent」解耦，各自只需适配一次。
@@ -55,34 +55,36 @@ MCP 定义的是「消息格式与传输」，不是某个框架。你可以手�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'MCP 要解决的核心问题是？',
-      options: ['模型太慢', 'N×M 的集成爆炸：每家一套工具接口', 'token 太贵', '内存泄漏'],
-      answer: 1,
-      explain: '把 N×M 降为 N+M。',
-      concept: 'mcp-motivation',
-    },
-    {
-      text: 'MCP 最恰当的类比是？',
-      options: ['操作系统', 'USB-C：只规定接口，不规定设备功能', '编译器', '数据库'],
-      answer: 1,
-      explain: '统一协议类比 USB-C。',
-      concept: 'mcp-motivation',
-    },
-    {
-      text: 'MCP 的定位是？',
-      options: ['一个框架', '一个协议（消息格式与传输）', '一个模型', '一门语言'],
-      answer: 1,
-      explain: 'MCP 是协议，不是框架。',
-      concept: 'mcp-motivation',
-    },
-  ],
-  [
-    ['MCP', 'Model Context Protocol，Agent 与工具/数据源之间的统一协议'],
-    ['N×M 问题', '每个 Agent 为每个工具写定制适配的集成爆炸'],
-    ['Client/Server', 'MCP 的调用方（Agent）与提供方（工具）'],
-  ],
-  ['把 MCP 当框架而非协议，忽略「手写协议也能通」的本质。', '为每个工具写定制适配，重复劳动。'],
+    null,
+    [
+      {
+        text: 'MCP 要解决的核心问题是？',
+        options: ['模型太慢', 'N×M 的集成爆炸：每家一套工具接口', 'token 太贵', '内存泄漏'],
+        answer: 1,
+        explain: '把 N×M 降为 N+M。',
+        concept: 'mcp-motivation',
+      },
+      {
+        text: 'MCP 最恰当的类比是？',
+        options: ['操作系统', 'USB-C：只规定接口，不规定设备功能', '编译器', '数据库'],
+        answer: 1,
+        explain: '统一协议类比 USB-C。',
+        concept: 'mcp-motivation',
+      },
+      {
+        text: 'MCP 的定位是？',
+        options: ['一个框架', '一个协议（消息格式与传输）', '一个模型', '一门语言'],
+        answer: 1,
+        explain: 'MCP 是协议，不是框架。',
+        concept: 'mcp-motivation',
+      },
+    ],
+    [
+      ['MCP', 'Model Context Protocol，Agent 与工具/数据源之间的统一协议'],
+      ['N×M 问题', '每个 Agent 为每个工具写定制适配的集成爆炸'],
+      ['Client/Server', 'MCP 的调用方（Agent）与提供方（工具）'],
+    ],
+    ['把 MCP 当框架而非协议，忽略「手写协议也能通」的本质。', '为每个工具写定制适配，重复劳动。'],
+  ),
+  'practice',
 )

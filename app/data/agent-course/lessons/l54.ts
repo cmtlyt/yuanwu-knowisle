@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 8 ========== */
 
-export const L54 = L(
-  'L54',
-  8,
-  'CoT 与零样本推理链',
-  12,
-  2,
-  ['L26'],
-  ['cot-engineering'],
-  [
-    '把 CoT 从「技巧」升级为「工程化组件」',
-    '掌握零样本 CoT 的工程写法与边界',
-    '理解何时值得显式 CoT、何时纯浪费',
-  ],
-  `
+export const L54 = withKind(
+  L(
+    'L54',
+    8,
+    'CoT 与零样本推理链',
+    2,
+    ['L26'],
+    ['cot-engineering'],
+    [
+      '把 CoT 从「技巧」升级为「工程化组件」',
+      '掌握零样本 CoT 的工程写法与边界',
+      '理解何时值得显式 CoT、何时纯浪费',
+    ],
+    `
 ### 把 CoT 做成可复用的工程组件
 
 L26 讲了 CoT 的原理，本课讲工程化：怎么把「逐步推理」稳定地嵌进 Agent 流程，而不是靠 prompt 里的几句话碰运气。
@@ -58,34 +58,36 @@ CoT 对「需要多步推理」的任务（数学、逻辑、复杂决策）收�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '工程化 CoT 中「分离推理与答案」的目的是？',
-      options: ['代码更好看', '推理可丢弃，答案要保留，控制上下文', '更快', '省内存'],
-      answer: 1,
-      explain: '推理与答案分离，推理不进最终结果。',
-      concept: 'cot-engineering',
-    },
-    {
-      text: 'CoT 最值得用的任务是？',
-      options: ['事实问答', '需要多步推理的任务（数学/逻辑/复杂决策）', '简单生成', '格式转换'],
-      answer: 1,
-      explain: '多步推理任务 CoT 收益大。',
-      concept: 'cot-engineering',
-    },
-    {
-      text: '对简单问题强行 CoT 的后果是？',
-      options: ['更准确', '浪费 token，甚至想得越多错得越多', '更快', '无影响'],
-      answer: 1,
-      explain: 'CoT 是工具不是仪式。',
-      concept: 'cot-engineering',
-    },
-  ],
-  [
-    ['显式 CoT', '把推理与答案拆成两步调用'],
-    ['结构化 CoT', '让模型输出可解析的步骤+结论结构'],
-    ['零样本 CoT', '一句话触发逐步推理'],
-  ],
-  ['对简单问题强行 CoT，浪费且可能更错。', '把推理和答案混在一起，无法丢弃中间步骤。'],
+    null,
+    [
+      {
+        text: '工程化 CoT 中「分离推理与答案」的目的是？',
+        options: ['代码更好看', '推理可丢弃，答案要保留，控制上下文', '更快', '省内存'],
+        answer: 1,
+        explain: '推理与答案分离，推理不进最终结果。',
+        concept: 'cot-engineering',
+      },
+      {
+        text: 'CoT 最值得用的任务是？',
+        options: ['事实问答', '需要多步推理的任务（数学/逻辑/复杂决策）', '简单生成', '格式转换'],
+        answer: 1,
+        explain: '多步推理任务 CoT 收益大。',
+        concept: 'cot-engineering',
+      },
+      {
+        text: '对简单问题强行 CoT 的后果是？',
+        options: ['更准确', '浪费 token，甚至想得越多错得越多', '更快', '无影响'],
+        answer: 1,
+        explain: 'CoT 是工具不是仪式。',
+        concept: 'cot-engineering',
+      },
+    ],
+    [
+      ['显式 CoT', '把推理与答案拆成两步调用'],
+      ['结构化 CoT', '让模型输出可解析的步骤+结论结构'],
+      ['零样本 CoT', '一句话触发逐步推理'],
+    ],
+    ['对简单问题强行 CoT，浪费且可能更错。', '把推理和答案混在一起，无法丢弃中间步骤。'],
+  ),
+  'theory',
 )

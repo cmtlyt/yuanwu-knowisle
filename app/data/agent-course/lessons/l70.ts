@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
-export const L70 = L(
-  'L70',
-  11,
-  '多 Agent 的冲突与一致性保障',
-  12,
-  3,
-  ['L68'],
-  ['conflict-consistency'],
-  [
-    '理解多 Agent 协作中的两类冲突：意见冲突与数据冲突',
-    '掌握冲突消解与一致性保障的基本手段',
-    '认识「最终一致性」在多 Agent 场景的定位',
-  ],
-  `
+export const L70 = withKind(
+  L(
+    'L70',
+    11,
+    '多 Agent 的冲突与一致性保障',
+    3,
+    ['L68'],
+    ['conflict-consistency'],
+    [
+      '理解多 Agent 协作中的两类冲突：意见冲突与数据冲突',
+      '掌握冲突消解与一致性保障的基本手段',
+      '认识「最终一致性」在多 Agent 场景的定位',
+    ],
+    `
 ### 多个 Agent，冲突不可避免
 
 两个 Agent 可能给出矛盾结论（意见冲突），也可能读到同一数据的不同版本（数据冲突）。多 Agent 系统必须有**冲突消解**与**一致性保障**机制。
@@ -60,35 +60,37 @@ const merged = await mergeWithCheck([resultA, resultB, resultC])  // 去重、�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '多 Agent 的两类冲突是？',
-      options: ['语法冲突、运行冲突', '意见冲突与数据冲突', '内存冲突、磁盘冲突', '读冲突、写冲突'],
-      answer: 1,
-      explain: '意见冲突、数据冲突。',
-      concept: 'conflict-consistency',
-    },
-    {
-      text: '意见冲突的应对是？',
-      options: ['忽略', '仲裁者（arbiter）或投票裁决', '重启', '删除'],
-      answer: 1,
-      explain: '仲裁或投票。',
-      concept: 'conflict-consistency',
-    },
-    {
-      text: '多 Agent 系统中「副作用要幂等」的原因是？',
-      options: ['性能', '防止重复执行产生额外副作用（如重复发邮件）', '好看', '省 token'],
-      answer: 1,
-      explain: '幂等是多 Agent 一致性底线。',
-      concept: 'conflict-consistency',
-    },
-  ],
-  [
-    ['意见冲突', '多 Agent 结论相互矛盾'],
-    ['数据冲突', '多 Agent 读到同一数据的不同版本'],
-    ['最终一致性', '允许短暂不一致、但最终收敛'],
-    ['幂等', '重复执行不产生额外副作用'],
-  ],
-  ['无仲裁机制，意见冲突永久悬而未决。', '副作用操作不幂等，多 Agent 重复执行产生重复扣款/发信。'],
+    null,
+    [
+      {
+        text: '多 Agent 的两类冲突是？',
+        options: ['语法冲突、运行冲突', '意见冲突与数据冲突', '内存冲突、磁盘冲突', '读冲突、写冲突'],
+        answer: 1,
+        explain: '意见冲突、数据冲突。',
+        concept: 'conflict-consistency',
+      },
+      {
+        text: '意见冲突的应对是？',
+        options: ['忽略', '仲裁者（arbiter）或投票裁决', '重启', '删除'],
+        answer: 1,
+        explain: '仲裁或投票。',
+        concept: 'conflict-consistency',
+      },
+      {
+        text: '多 Agent 系统中「副作用要幂等」的原因是？',
+        options: ['性能', '防止重复执行产生额外副作用（如重复发邮件）', '好看', '省 token'],
+        answer: 1,
+        explain: '幂等是多 Agent 一致性底线。',
+        concept: 'conflict-consistency',
+      },
+    ],
+    [
+      ['意见冲突', '多 Agent 结论相互矛盾'],
+      ['数据冲突', '多 Agent 读到同一数据的不同版本'],
+      ['最终一致性', '允许短暂不一致、但最终收敛'],
+      ['幂等', '重复执行不产生额外副作用'],
+    ],
+    ['无仲裁机制，意见冲突永久悬而未决。', '副作用操作不幂等，多 Agent 重复执行产生重复扣款/发信。'],
+  ),
+  'practice',
 )

@@ -156,8 +156,8 @@ ok(!hasCycle(C.CONCEPTS, (id) => C.CONCEPTS.find((c) => c.id === id)?.prereqs), 
 
 console.log('\n=== 课时内容块 ===')
 ok(
-  C.LESSONS.every((l) => (l.blocks || []).length > 0),
-  '讲解块非空',
+  C.LESSONS.every((l) => typeof l.md === 'string' && l.md.trim().length > 0),
+  '正文 md 非空（00053 起以 Markdown 正文取代 blocks）',
 )
 ok(
   C.LESSONS.every((l) => (l.goals || []).length > 0),
@@ -172,8 +172,8 @@ ok(
   '关键术语非空',
 )
 ok(
-  C.LESSONS.every((l) => Number.isFinite(l.minutes) && l.minutes > 0),
-  '课时时长有效',
+  C.LESSONS.every((l) => typeof l.md === 'string' && l.md.trim().length > 0),
+  '课时正文非空（时长由 lessonMinutes() 渲染时现算，不落数据）',
 )
 const covered = new Set(C.LESSONS.flatMap((l) => (l.quiz || []).map((q) => q.concept)))
 const uncovered = [...conceptIds].filter((c) => !covered.has(c))

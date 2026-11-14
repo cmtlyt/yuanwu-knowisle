@@ -1,17 +1,17 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
-export const L67 = L(
-  'L67',
-  11,
-  '设计 Agent 之间的「对话协议」',
-  12,
-  2,
-  ['L66'],
-  ['agent-protocol'],
-  ['理解 Agent 间「对话协议」的必要性', '掌握消息结构、路由、终止三要素', '认识协议与「消息总线」的关系'],
-  `
+export const L67 = withKind(
+  L(
+    'L67',
+    11,
+    '设计 Agent 之间的「对话协议」',
+    2,
+    ['L66'],
+    ['agent-protocol'],
+    ['理解 Agent 间「对话协议」的必要性', '掌握消息结构、路由、终止三要素', '认识协议与「消息总线」的关系'],
+    `
 ### Agent 之间怎么「说话」
 
 多 Agent 协作需要一套「对话协议」：消息长什么样（结构）、发给谁（路由）、什么时候结束（终止）。协议定得清楚，协作才可控。
@@ -56,34 +56,36 @@ if (msg.type === "done") endConversation()
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'Agent 对话协议的三要素是？',
-      options: ['结构、路由、终止', '快、稳、省', '增、删、改', '读、写、执行'],
-      answer: 0,
-      explain: '消息结构、路由、终止。',
-      concept: 'agent-protocol',
-    },
-    {
-      text: '协议消息要带唯一 id 和 replyTo 的原因是？',
-      options: ['好看', '让协作「谁对谁说了什么」可追踪', '更快', '省 token'],
-      answer: 1,
-      explain: '可追踪，呼应链路追踪。',
-      concept: 'agent-protocol',
-    },
-    {
-      text: '「自由聊天」式协议的问题？',
-      options: ['太正式', '无类型无路由无终止，协作变不可控聊天室', '太快', '太省 token'],
-      answer: 1,
-      explain: '自由聊天不可控、难调试。',
-      concept: 'agent-protocol',
-    },
-  ],
-  [
-    ['对话协议', 'Agent 间消息的结构、路由、终止约定'],
-    ['消息总线', '负责按 to 分发消息的组件'],
-    ['可追踪协议', '带 id / replyTo 的消息约定'],
-  ],
-  ['Agent 间自由聊天，无类型无终止，协作失控。', '协议不带 id，出问题无法还原「谁对谁说了什么」。'],
+    null,
+    [
+      {
+        text: 'Agent 对话协议的三要素是？',
+        options: ['结构、路由、终止', '快、稳、省', '增、删、改', '读、写、执行'],
+        answer: 0,
+        explain: '消息结构、路由、终止。',
+        concept: 'agent-protocol',
+      },
+      {
+        text: '协议消息要带唯一 id 和 replyTo 的原因是？',
+        options: ['好看', '让协作「谁对谁说了什么」可追踪', '更快', '省 token'],
+        answer: 1,
+        explain: '可追踪，呼应链路追踪。',
+        concept: 'agent-protocol',
+      },
+      {
+        text: '「自由聊天」式协议的问题？',
+        options: ['太正式', '无类型无路由无终止，协作变不可控聊天室', '太快', '太省 token'],
+        answer: 1,
+        explain: '自由聊天不可控、难调试。',
+        concept: 'agent-protocol',
+      },
+    ],
+    [
+      ['对话协议', 'Agent 间消息的结构、路由、终止约定'],
+      ['消息总线', '负责按 to 分发消息的组件'],
+      ['可追踪协议', '带 id / replyTo 的消息约定'],
+    ],
+    ['Agent 间自由聊天，无类型无终止，协作失控。', '协议不带 id，出问题无法还原「谁对谁说了什么」。'],
+  ),
+  'practice',
 )

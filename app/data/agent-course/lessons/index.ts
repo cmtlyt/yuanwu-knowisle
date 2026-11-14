@@ -145,6 +145,10 @@ import { L142 } from './l142.ts'
 /** 阶段 2「范式全景」拆 3 个子阶段（3.1 基线 / 3.2 反思与搜索树 / 3.3 谱系与分解）；在聚合时补齐 Lesson.subStage。 */
 const withSubStage = (lesson: Lesson, subStage: string): Lesson => ({ ...lesson, subStage })
 
+/**
+ * 本文件只做**聚合**：课型（`kind`）是每节课自己的元数据，写在各 `lNN.ts` 里
+ * （用 `withKind()` 标注），这里不再对课型做任何覆盖或继承。
+ */
 export const LESSONS: Lesson[] = [
   L01,
   L02,

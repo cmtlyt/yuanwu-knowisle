@@ -4,7 +4,6 @@ export const L19 = L(
   'L19',
   4,
   '连接共享：publish / multicast / share 与 refCount',
-  30,
   3,
   ['L17'],
   ['c-share'],

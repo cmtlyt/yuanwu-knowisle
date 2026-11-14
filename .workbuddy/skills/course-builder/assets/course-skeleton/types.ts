@@ -4,6 +4,12 @@
  * 其余各文件改用 `import type { ... } from '~/types/course'`（type-only，运行时擦除）。
  */
 
+/**
+ * 课时课型。决定体量闸门（`scripts/content-gate.mjs`）用哪一档正文/代码下限、是否允许 0 题。
+ * 课型是**课时自己的元数据**：每节课在自己的 `lNN.ts` 里用 `withKind()` 标注，不从阶段继承。
+ */
+export type LessonKind = 'theory' | 'practice' | 'framework' | 'scenario' | 'capstone' | 'overview'
+
 export interface Stage {
   id: number
   name: string
@@ -36,12 +42,6 @@ export interface CourseMeta {
   notes: string[]
 }
 
-export type LessonBlock =
-  | { type: 'prose'; title?: string; text: string }
-  | { type: 'code'; title?: string; code: string; note: string }
-  | { type: 'callout'; tone: string; title: string; text: string }
-  | { type: 'list'; title?: string; items: string[] }
-
 export interface QuizQuestion {
   text: string
   options: string[]
@@ -54,12 +54,13 @@ export interface Lesson {
   id: string
   stage: number
   title: string
-  minutes: number
+  // 刻意不含 minutes：时长由 lessonMinutes(lesson) 按 md 体量现算，不落数据。
   difficulty: number
   prereqs: string[]
   concepts: string[]
   goals: string[]
-  blocks: LessonBlock[]
+  /** 课程正文 Markdown 源（00053 起取代 blocks：markdown-in-TS，见 markdown-article.vue）。 */
+  md: string
   widget: string | null
   quiz: QuizQuestion[]
   terms: string[][]
@@ -67,6 +68,10 @@ export interface Lesson {
   /** 复杂模式专属：所属子阶段 id（如 '3.1'）；simple 模式或不属于任何子阶段时为空。
    *  注意：共享构造器 L() 不含该形参，complex 课在 lessons/index.ts 用 withSubStage(l, id) 补齐。 */
   subStage?: string | null
+  /** 课时课型，用 `withKind()` 标注。complex 课程每节课都必须标（漏标闸门直接失败）；simple 课程可不填。 */
+  kind?: LessonKind
+  /** kind: 'overview' 时必填：说明为什么这节课不需要实现代码。 */
+  kindReason?: string
 }
 
 export type DesignBlock =

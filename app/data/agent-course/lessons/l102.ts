@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 18 ========== */
 
-export const L102 = L(
-  'L102',
-  18,
-  '对照：用 @openai/guardrails 做输入 / 输出护栏（对比 L84 手写版）',
-  18,
-  3,
-  ['L100', 'L84'],
-  ['oa-guardrails'],
-  [
-    '用 @openai/guardrails 实现输入/输出护栏，对比 L84 手写版',
-    '理解可声明护栏规则与「tripwire」机制',
-    '认识框架护栏与手写护栏的取舍',
-  ],
-  `
+export const L102 = withKind(
+  L(
+    'L102',
+    18,
+    '对照：用 @openai/guardrails 做输入 / 输出护栏（对比 L84 手写版）',
+    3,
+    ['L100', 'L84'],
+    ['oa-guardrails'],
+    [
+      '用 @openai/guardrails 实现输入/输出护栏，对比 L84 手写版',
+      '理解可声明护栏规则与「tripwire」机制',
+      '认识框架护栏与手写护栏的取舍',
+    ],
+    `
 ### 把 L84 的手写护栏声明化
 
 L84 手写的「正则 + 白名单 + 输出校验」，@openai/guardrails 用**可声明规则**表达：定义一个 guardrail（匹配即触发），Agent 运行时自动检查。
@@ -64,34 +64,36 @@ guardrails 的 \\\`triggers\\\` 是「tripwire」（绊线）语义：规则返�
 :::
 
 `,
-  null,
-  [
-    {
-      text: 'guardrails 的 `triggers` 语义是？',
-      options: ['计数器', 'tripwire 绊线：返回 true 即触发拦截', '日志', '配置'],
-      answer: 1,
-      explain: 'tripwire 语义。',
-      concept: 'oa-guardrails',
-    },
-    {
-      text: 'guardrails 相比手写护栏的核心优势是？',
-      options: ['更快', '声明式、框架自动在正确位置触发，不易漏', '更便宜', '更强'],
-      answer: 1,
-      explain: '自动触发、不易漏。',
-      concept: 'oa-guardrails',
-    },
-    {
-      text: '正则护栏的盲区是？',
-      options: ['太慢', '挡不住变着法绕过的注入（拆词/同义词）', '太贵', '太复杂'],
-      answer: 1,
-      explain: '正则挡不住变体注入。',
-      concept: 'oa-guardrails',
-    },
-  ],
-  [
-    ['guardrail', '可声明的输入/输出护栏规则'],
-    ['tripwire', '规则返回 true 即触发的绊线语义'],
-    ['inputGuardrail', '输入阶段的护栏'],
-  ],
-  ['依赖纯正则护栏，挡不住变体注入。', '手写护栏散落各处，漏掉某个调用点的校验。'],
+    null,
+    [
+      {
+        text: 'guardrails 的 `triggers` 语义是？',
+        options: ['计数器', 'tripwire 绊线：返回 true 即触发拦截', '日志', '配置'],
+        answer: 1,
+        explain: 'tripwire 语义。',
+        concept: 'oa-guardrails',
+      },
+      {
+        text: 'guardrails 相比手写护栏的核心优势是？',
+        options: ['更快', '声明式、框架自动在正确位置触发，不易漏', '更便宜', '更强'],
+        answer: 1,
+        explain: '自动触发、不易漏。',
+        concept: 'oa-guardrails',
+      },
+      {
+        text: '正则护栏的盲区是？',
+        options: ['太慢', '挡不住变着法绕过的注入（拆词/同义词）', '太贵', '太复杂'],
+        answer: 1,
+        explain: '正则挡不住变体注入。',
+        concept: 'oa-guardrails',
+      },
+    ],
+    [
+      ['guardrail', '可声明的输入/输出护栏规则'],
+      ['tripwire', '规则返回 true 即触发的绊线语义'],
+      ['inputGuardrail', '输入阶段的护栏'],
+    ],
+    ['依赖纯正则护栏，挡不住变体注入。', '手写护栏散落各处，漏掉某个调用点的校验。'],
+  ),
+  'framework',
 )

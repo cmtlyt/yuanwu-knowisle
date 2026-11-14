@@ -37,7 +37,7 @@ agent_created: true
 
 1. **先核实版本，再规划**。技术类课程若基于旧版 API 写正文，整门课会教错。锁定 `META.version` / `verifiedAt` / `docs` 并集中在数据层，正文严禁混用跨版本 API。
 2. **内容、引擎、视图必须解耦**。引擎不得引用 DOM；内容不得 import 视图；视图不得硬编码课时列表。**课程设计说明书（版本基线 / 路径 / 依赖图 / 学情公式 / 扩展机制）必须作为绑定到课程的数据（`DESIGN` 字段）写在内容层，由「教学设计」视图渲染，不写成独立 Markdown / Nuxt Content 文件**——否则内容与渲染会分叉、删除内容模块后说明书会悬空。
-3. **内容层目录化布局**：一门课 = 一个同名目录（`<topic>-course/`），`index.ts` 为唯一对外导出面，章节按 `stages.ts` / `concepts.ts` / `meta.ts` / `design.ts` / `lessons/lNN.ts`（一课一文件）拆分；`prose/code/call/list/q/L` 构造器抽到课程数据层的**共享文件**（如 `course-builders.ts`）跨课程复用、不与单课耦合。**导入规范**（保证 Nuxt 与 Node 校验脚本两侧都能加载）：目录内兄弟**值**导入一律**显式 `.ts`**（`./stages.ts`）；类型走 `~/types/course` 的 type-only 导入（运行时擦除）；外部消费方（如 `courses.ts`）用**省略扩展名**的相对导入指向目录（`./<topic>-course`，Nuxt 自动解析到 `index.ts`，该语句不用改），Node 校验脚本则按 `.../index.ts` 显式路径 import。详见 `references/data-model.md` 的「文件组织」小节。
+3. **内容层目录化布局**：一门课 = 一个同名目录（`<topic>-course/`），`index.ts` 为唯一对外导出面，章节按 `stages.ts` / `concepts.ts` / `meta.ts` / `design.ts` / `lessons/lNN.ts`（一课一文件）拆分；`L` 构造器抽到课程数据层的**共享文件**（如 `course-builders.ts`）跨课程复用、不与单课耦合（正文是 `md` 模板串，`quiz` 内联）。**导入规范**（保证 Nuxt 与 Node 校验脚本两侧都能加载）：目录内兄弟**值**导入一律**显式 `.ts`**（`./stages.ts`）；类型走 `~/types/course` 的 type-only 导入（运行时擦除）；外部消费方（如 `courses.ts`）用**省略扩展名**的相对导入指向目录（`./<topic>-course`，Nuxt 自动解析到 `index.ts`，该语句不用改），Node 校验脚本则按 `.../index.ts` 显式路径 import。详见 `references/data-model.md` 的「文件组织」小节。
 4. **每课时结构统一**：目标、讲解块、代码块、提示/误区、关键术语、交互演练标识、随堂测验（**题目数由知识点要讲透的各面向决定**——列出每个知识点的定义/陷阱/选型/边界/易混淆等面向逐一定题，单知识点面向多就多出题、面向少就少出题；换角度补题是常态手段，与难度/weight 无关；**不按难度定死题数、不预设课程级题数**，详见 `references/data-model.md` 数量动态化原则）。
 5. **引用完整性必须自动校验**：阶段/概念/前置/题目概念/widget 标识/答案索引，任何悬空引用都要让自检脚本失败。
 6. **学情数据只存本机且可导出**；按课程隔离 storage key；导入时校验版本字段并拒绝非法备份。

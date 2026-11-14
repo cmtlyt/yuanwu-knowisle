@@ -4,7 +4,6 @@ export const L12 = L(
   'L12',
   2,
   '并发限制与竞争：mergeMap 并发度 / race / startWith',
-  30,
   3,
   ['L11'],
   ['c-concurrency-limit'],

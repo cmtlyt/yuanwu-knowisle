@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 3 ========== */
 
-export const L29 = L(
-  'L29',
-  3,
-  '反模式：把 Agent 用成昂贵的 if-else',
-  12,
-  2,
-  ['L27'],
-  ['anti-pattern'],
-  [
-    '识别「把 Agent 用成昂贵 if-else」的反模式',
-    '理解判断逻辑写死 vs 判断逻辑交模型的边界',
-    '掌握几种常见 Agent 误用与修正方法',
-  ],
-  `
+export const L29 = withKind(
+  L(
+    'L29',
+    3,
+    '反模式：把 Agent 用成昂贵的 if-else',
+    2,
+    ['L27'],
+    ['anti-pattern'],
+    [
+      '识别「把 Agent 用成昂贵 if-else」的反模式',
+      '理解判断逻辑写死 vs 判断逻辑交模型的边界',
+      '掌握几种常见 Agent 误用与修正方法',
+    ],
+    `
 ### 最贵的 if-else
 
 如果每个分支的判断本来就能用代码写清楚，你却让模型去判断，那你只是把一个 \\\`if (x > 1000)\\\` 变成了「花几美分、几百毫秒的一次模型调用」。这是最常见的 Agent 反模式。
@@ -56,47 +56,54 @@ const action = await llm("理解用户这句话的意图：帮我看看能不能
 :::
 
 `,
-  null,
-  [
-    {
-      text: '「把 Agent 用成昂贵 if-else」指什么？',
-      options: [
-        '用代码写判断',
-        '把本可用代码写清的确定判断交给模型',
-        '用模型做语义理解',
-        '用 if-else 替代 Agent',
-      ],
-      answer: 1,
-      explain: '确定规则可用代码解决，却花 token 让模型判断。',
-      concept: 'anti-pattern',
-    },
-    {
-      text: '判断「模型该不该介入」的准则是？',
-      options: [
-        '模型能做的都交给模型',
-        '确定规则用代码，只有模糊语义判断才用模型',
-        '全部用模型',
-        '全部用代码',
-      ],
-      answer: 1,
-      explain: '模型价值在模糊/语义判断，规则明确处用代码。',
-      concept: 'anti-pattern',
-    },
-    {
-      text: '以下哪项是 Agent 反模式？',
-      options: ['让模型做开放式调研', '用 LLM 存数据、当数据库用', '让模型做语言理解', '用 ReAct 做多步任务'],
-      answer: 1,
-      explain: '把模型当数据库是典型误用。',
-      concept: 'anti-pattern',
-    },
-  ],
-  [
-    ['反模式', '看似合理、实则低效或有害的常见做法'],
-    ['确定性规则', '可用 if-else / 查表精确表达的判断'],
-    ['语义理解', '需要理解含义的模糊判断，模型的强项'],
-  ],
-  [
-    '把确定规则交给模型，花 token 且引入不确定性。',
-    '把「用了 LLM」等同于「用了 Agent」，忽视简单的 API 直连。',
-  ],
+    null,
+    [
+      {
+        text: '「把 Agent 用成昂贵 if-else」指什么？',
+        options: [
+          '用代码写判断',
+          '把本可用代码写清的确定判断交给模型',
+          '用模型做语义理解',
+          '用 if-else 替代 Agent',
+        ],
+        answer: 1,
+        explain: '确定规则可用代码解决，却花 token 让模型判断。',
+        concept: 'anti-pattern',
+      },
+      {
+        text: '判断「模型该不该介入」的准则是？',
+        options: [
+          '模型能做的都交给模型',
+          '确定规则用代码，只有模糊语义判断才用模型',
+          '全部用模型',
+          '全部用代码',
+        ],
+        answer: 1,
+        explain: '模型价值在模糊/语义判断，规则明确处用代码。',
+        concept: 'anti-pattern',
+      },
+      {
+        text: '以下哪项是 Agent 反模式？',
+        options: [
+          '让模型做开放式调研',
+          '用 LLM 存数据、当数据库用',
+          '让模型做语言理解',
+          '用 ReAct 做多步任务',
+        ],
+        answer: 1,
+        explain: '把模型当数据库是典型误用。',
+        concept: 'anti-pattern',
+      },
+    ],
+    [
+      ['反模式', '看似合理、实则低效或有害的常见做法'],
+      ['确定性规则', '可用 if-else / 查表精确表达的判断'],
+      ['语义理解', '需要理解含义的模糊判断，模型的强项'],
+    ],
+    [
+      '把确定规则交给模型，花 token 且引入不确定性。',
+      '把「用了 LLM」等同于「用了 Agent」，忽视简单的 API 直连。',
+    ],
+  ),
+  'theory',
 )

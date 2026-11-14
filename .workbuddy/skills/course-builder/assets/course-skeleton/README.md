@@ -23,7 +23,7 @@
 import type { Stage } from '~/types/course'
 
 // 课时文件（lessons/lNN.ts）
-import { L, prose, code, call, list, q } from '../../course-builders.ts'
+import { L } from '../../course-builders.ts'   // 正文为 md 模板串；quiz 内联
 ```
 
 ### 第二步：建课程级文件（每门课都做）
@@ -33,7 +33,7 @@ import { L, prose, code, call, list, q } from '../../course-builders.ts'
 
 ## 两种场景
 
-- **本仓库（已有 `~/types/course` + `app/data/course-builders.ts`）新建第三门课**：跳过第一步（共享层已存在），只做第二步，课程文件直接 `import type … from '~/types/course'`、`import { L, … } from '../../course-builders.ts'`。
+- **本仓库（已有 `~/types/course` + `app/data/course-builders.ts`）新建第三门课**：跳过第一步（共享层已存在），只做第二步，课程文件直接 `import type … from '~/types/course'`、`import { L } from '../../course-builders.ts'`。
 - **全新项目（还没有共享层）**：先做第一步把种子落成共享层，再做第二步；之后该项目再建第二、三门课就回到「只第二步」。
 
 ## 导入规范（与 `references/data-model.md` 一致）

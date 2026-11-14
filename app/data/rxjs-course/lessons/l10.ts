@@ -4,7 +4,6 @@ export const L10 = L(
   'L10',
   2,
   'switchMap 与 exhaustMap：取最新 vs 排空',
-  30,
   3,
   ['L09'],
   ['c-switch', 'c-exhaust'],

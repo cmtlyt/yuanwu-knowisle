@@ -1,21 +1,21 @@
-import { L } from '../../course-builders.ts'
+import { L, withKind } from '../../course-builders.ts'
 
 /* ========== Stage 0 ========== */
 
-export const L03 = L(
-  'L03',
-  0,
-  '版本锁定表与依赖安装',
-  12,
-  1,
-  ['L02'],
-  ['version-lock'],
-  [
-    '理解为什么要集中锁定版本、而不是随手 `npm i` 最新版',
-    '掌握本课框架版本锁定表（附录 B 落地口径）',
-    '了解「估算」版本与「已核实」版本的区别',
-  ],
-  `
+export const L03 = withKind(
+  L(
+    'L03',
+    0,
+    '版本锁定表与依赖安装',
+    1,
+    ['L02'],
+    ['version-lock'],
+    [
+      '理解为什么要集中锁定版本、而不是随手 `npm i` 最新版',
+      '掌握本课框架版本锁定表（附录 B 落地口径）',
+      '了解「估算」版本与「已核实」版本的区别',
+    ],
+    `
 ### 版本不锁定，课程会教错
 
 Agent 生态迭代极快：一个框架几个月就能从 0.x 跳到 1.x。如果课程正文按旧版 API 写，学习者照着做会直接报错。所以本课把版本锁定视为第一道工程纪律。
@@ -60,47 +60,49 @@ Agent 生态迭代极快：一个框架几个月就能从 0.x 跳到 1.x。如�
 :::
 
 `,
-  null,
-  [
-    {
-      text: '为什么必须锁定版本而不是随手装最新版？',
-      options: [
-        '最新版功能更多',
-        '避免正文按旧版 API 写导致学习者照着做报错',
-        '锁定版本可以少写代码',
-        'npm 不支持最新版',
-      ],
-      answer: 1,
-      explain: 'Agent 生态迭代快，版本不锁定正文会教错；锁定保证照着做能跑。',
-      concept: 'version-lock',
-    },
-    {
-      text: 'LangSmith 的 TS 客户端正确包名是？',
-      options: ['@langchain/langsmith', 'langsmith', '@langsmith/sdk', 'langchain-smith'],
-      answer: 1,
-      explain: 'TS 客户端包名是 `langsmith`（Python 侧同名）。',
-      concept: 'version-lock',
-    },
-    {
-      text: '正文中版本号应该怎么放？',
-      options: [
-        '每个代码块里都写死小版本号',
-        '版本统一集中在 META，正文只引用 API 名与宽泛 major',
-        '不写版本号',
-        '只写在 README',
-      ],
-      answer: 1,
-      explain: '版本集中在 META（唯一版本源），正文不散落硬编码版本号。',
-      concept: 'version-lock',
-    },
-  ],
-  [
-    ['版本锁定', '把语言、运行时、框架各锁一个确定版本，作为教学基线'],
-    ['major 版本', '语义化版本中破坏性变更的一级，如 0.x → 1.x'],
-    ['META', '课程数据中唯一记录版本基线的字段'],
-  ],
-  [
-    '以为装了更新的 major 版本「差不多」——跨 major 的 API 断裂会让人照着正文报错。',
-    '在正文代码里随手写死小版本号，升级后正文与 META 分叉。',
-  ],
+    null,
+    [
+      {
+        text: '为什么必须锁定版本而不是随手装最新版？',
+        options: [
+          '最新版功能更多',
+          '避免正文按旧版 API 写导致学习者照着做报错',
+          '锁定版本可以少写代码',
+          'npm 不支持最新版',
+        ],
+        answer: 1,
+        explain: 'Agent 生态迭代快，版本不锁定正文会教错；锁定保证照着做能跑。',
+        concept: 'version-lock',
+      },
+      {
+        text: 'LangSmith 的 TS 客户端正确包名是？',
+        options: ['@langchain/langsmith', 'langsmith', '@langsmith/sdk', 'langchain-smith'],
+        answer: 1,
+        explain: 'TS 客户端包名是 `langsmith`（Python 侧同名）。',
+        concept: 'version-lock',
+      },
+      {
+        text: '正文中版本号应该怎么放？',
+        options: [
+          '每个代码块里都写死小版本号',
+          '版本统一集中在 META，正文只引用 API 名与宽泛 major',
+          '不写版本号',
+          '只写在 README',
+        ],
+        answer: 1,
+        explain: '版本集中在 META（唯一版本源），正文不散落硬编码版本号。',
+        concept: 'version-lock',
+      },
+    ],
+    [
+      ['版本锁定', '把语言、运行时、框架各锁一个确定版本，作为教学基线'],
+      ['major 版本', '语义化版本中破坏性变更的一级，如 0.x → 1.x'],
+      ['META', '课程数据中唯一记录版本基线的字段'],
+    ],
+    [
+      '以为装了更新的 major 版本「差不多」——跨 major 的 API 断裂会让人照着正文报错。',
+      '在正文代码里随手写死小版本号，升级后正文与 META 分叉。',
+    ],
+  ),
+  'practice',
 )

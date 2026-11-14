@@ -6,7 +6,6 @@ export const L01 = L(
   'L01',
   0,
   '动机与创建源：异步组合的缺口与源操作符全景',
-  30,
   1,
   [],
   ['c-callbacks', 'c-sources'],

@@ -4,7 +4,6 @@ export const L19 = L(
   'L19',
   4,
   '★ 指令解释器：Effect 蓝图与 runLoop',
-  45,
   5,
   ['L18'],
   ['runloop', 'laziness'],
