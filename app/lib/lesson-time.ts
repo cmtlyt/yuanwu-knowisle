@@ -15,11 +15,20 @@ import type { Lesson } from '~/types/course'
 
 /** 每类指标的单位用时。改这里就等于改全站时长口径。 */
 export const TIME_RATES = {
-  /** 中文技术叙述：约 320 字/分钟（需停下来理解，慢于日常阅读）。 */
+  /**
+   * 中文技术叙述：1/320 分钟/**字符**（`proseChars`，含标点、英文按字母）。
+   * 注：字符与字数之比约 1.58（标点 + 英文标识符），折合实际阅读速度约 200 汉字/分钟——
+   * 对需要停下来理解的技术叙述是合理值，所以这里刻意按字符算，不改成按字（`proseWords`）算。
+   * 体量闸门则反过来用 `proseWords`：那里要的是「写了多少字」，不能靠标点和长标识符刷量。
+   */
   prosePerChar: 1 / 320,
   /** 读代码：约 200 字符/分钟（≈5 行/分钟，逐行对照语义）。 */
   codePerChar: 1 / 200,
-  /** 每个提示框（:::deep / :::tip / :::warn）：停下消化 0.6 分钟。 */
+  /**
+   * 每个提示框（:::deep / :::tip / :::warn）：0.6 分钟。
+   * 注意这**不是**读框内文字的时间——那部分已按 prosePerChar 计入 `prose`；
+   * 这里的 0.6 是「注意到并切换到深读/警示模式」的额外停顿，随框的数量增长。
+   */
   perCallout: 0.6,
   /** 每道题：读题 + 思考 + 看解析 1.2 分钟。 */
   perQuiz: 1.2,
@@ -57,7 +66,7 @@ export interface TimeBreakdown {
 export interface LessonTime {
   /** 推导出的工时（分钟，四舍五入，下限 3）。 */
   minutes: number
-  /** 未取整的原始总和，便于闸门做容差比较。 */
+  /** 未取整的原始总和（占比按它算，闸门也用它打印分项解释）。 */
   raw: number
   breakdown: TimeBreakdown
   /** 各指标占总时长的比例（0–1），键与 breakdown 一致。 */

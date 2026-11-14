@@ -23,6 +23,8 @@ pnpm lint                    # oxlint 快速规则
 pnpm lint:fix                # 自动修复
 pnpm typecheck               # oxlint --type-aware --type-check
 pnpm verify                  # 课程内容/学情全轨迹 + 助学 Agent 纯计算自检（两段串行）
+                             # 现行四段：verify-course → verify-tutor → verify-content-stats → content-gate
+                             # （后两段为 00052/00054 追加：正文体量闸门 + contentStats 口径自检）
 pnpm build                   # 先构建产出 .output
 pnpm exec wrangler --cwd .output dev --port 3199 &   # 本地 Worker 预览（.output 已由 build 产出）
 python scripts/smoke.py --base http://127.0.0.1:3199

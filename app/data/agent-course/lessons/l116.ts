@@ -162,6 +162,55 @@ const SYSTEM = [
 const result = await runWithTools(client, tools, task, { system: SYSTEM, maxSteps: 12 })
 \`\`\`
 
+### 收敛：模型原地打转时怎么打断
+
+编码 Agent 最贵的浪费不是「改错」，而是「反复改同一个错」。典型现象是连续三轮补丁内容几乎相同、失败栈也相同，模型在「再试一次」与「换个写法」之间徘徊，token 与时间按轮数线性烧掉，最后还是没修好。三种手段要配合使用：
+
+1. **补丁指纹去重**：把 diff 规范化（去首尾空白、去行号偏移）后取哈希，连续两次相同即判定「无进展」，不再跑验证，直接回填上一轮的失败原因，并要求模型换一种修改方式或明确说明为什么无法修复。
+2. **失败签名比对**：不能只看「是否失败」，要看**失败的是不是同一个断言**。签名取自 \`parseFailures\` 的结果（测试名 + 断言消息），同一签名连续出现两次，说明修改没有触及根因，继续硬改只是换措辞。
+3. **策略升级**：无进展两次后，把流程切成强制序列——模型必须先调用 \`read_file\` 读失败栈指向的区间，才允许提交下一个补丁。这一步把「猜」换成「看」，是三者里收益最高的一个。
+
+三条规则都写在运行时而不是提示词里，因为模型对自己的重复没有可靠感知：它真诚地认为每次都在改新东西。
+
+### 多文件补丁：预检与冲突定位
+
+一次真实改动往往跨 3–8 个文件：改接口、改实现、改调用方、改测试。补丁应用支持多文件，但有两个细节决定成败。
+
+第一是**原子性**。同一份补丁里的多个文件是整体应用的，任一文件冲突，整份补丁都不落盘。这既是保护也是陷阱：一份八文件的补丁因为第七个文件的一行上下文不匹配而整体失败时，模型只看到一行 stderr，很容易误判成「补丁写错了」，实际是「基线漂移了」。
+
+第二是**回填粒度**。解法是在沙箱里做分文件预检：按 diff 头切段，逐段 \`git apply --check\`，返回每个文件的可应用性。这样回填给模型的是「a.ts 可应用、b.ts 第 42 行上下文不匹配」，而不是一句笼统的失败——模型只重写冲突的那一段，不必推翻整份补丁重来。
+
+\`\`\`ts title="⑥ 分文件预检：把「整份失败」拆成「哪个文件失败」" note="按 diff --git 头切段；单文件失败不影响其余文件的检查结论。"
+export async function precheckByFile(diff: string, dir: string) {
+  const chunks = diff.split(/^(?=diff --git )/m).filter((c) => c.trim())
+  const out = []
+  for (const chunk of chunks) {
+    const file = chunk.match(new RegExp('^diff --git a/(.+?) b/'))?.[1] ?? '?'
+    await fs.writeFile(path.join(dir, 'p.patch'), chunk)
+    const r = await exec('git', ['apply', '--check', 'p.patch'], { cwd: dir })
+    out.push({ file, ok: r.code === 0, stderr: r.stderr.trim() })
+  }
+  return out
+}
+\`\`\`
+
+### 把一次失败会话变成回归用例
+
+失败的会话最有价值的产出不是「后来修好了」，而是**一条可重复的用例**：初始 commit、任务描述、验收命令，三样就够复现。把它从会话里裁出来（丢掉无关的工具调用与中间补丁），就是评测集的一条；同类失败攒到五条以上，能看出问题出在提示词、工具集还是沙箱本身。
+
+\`\`\`ts title="⑦ 会话 → 用例：只留输入与判定" note="不保存完整 trace：体积大、含敏感路径，而且没法直接判定通过与否。"
+type Fixture = { id: string; baseCommit: string; task: string; expect: string }
+
+export function toFixture(session: Session): Fixture {
+  return {
+    id: hash(session.task + session.baseCommit).slice(0, 8),
+    baseCommit: session.baseCommit, // 沙箱起始点，保证可复现
+    task: session.task,
+    expect: 'npm test -- e2e', // 判定只有一条：这条命令是否绿
+  }
+}
+\`\`\`
+
 ### 评测切面：三个指标就够起步
 
 编码 Agent 的评测不需要一上来就做大而全的 benchmark。三个指标能在半天内搭出来，且能立刻暴露问题：**任务通过率**（测试从红变绿的比例）、**补丁规模分布**（中位行数；远超预期说明在做大重写）、**越界率**（触碰禁止路径 / 新增依赖的比例，应为 0）。前两个反映能力，第三个反映安全性——安全性指标必须是硬零，不能「平均下来还凑合」。指标还要按任务类型分桶统计：重构类任务的通过率天然低于改错别字，混在一起看会掩盖真实退化。

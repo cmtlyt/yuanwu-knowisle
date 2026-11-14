@@ -7,7 +7,7 @@
     "dev": "nuxt dev",
     "postinstall": "nuxt prepare",
     "prepare": "husky",
-    "verify": "node --experimental-strip-types scripts/verify-course.mjs && node --experimental-strip-types scripts/verify-tutor.mjs && node --experimental-strip-types scripts/content-gate.mjs",
+    "verify": "node --experimental-strip-types scripts/verify-course.mjs && node --experimental-strip-types scripts/verify-tutor.mjs && node --experimental-strip-types scripts/verify-content-stats.mjs && node --experimental-strip-types scripts/content-gate.mjs",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "typecheck": "oxlint --type-aware --type-check",

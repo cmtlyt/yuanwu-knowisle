@@ -1,8 +1,12 @@
 /**
- * 课程正文体量闸门（00052）：pnpm verify 的第三段。
+ * 课程正文体量闸门（00052）：pnpm verify 的第四段。
  *
  * 做三件事：
- *  ① 用 contentStats(md) 统计每课「叙述正文量 / 代码量」，与课型**下限**阈值比对（只设 min，不设 max）；
+ *  ① 用 contentStats(md) 统计每课「正文字数 / 代码字符数」，与课型**下限**阈值比对（只设 min，不设 max）；
+ *     正文量取 `proseWords`（汉字 1 字 = 1 词、英文按整词算，不含标点），不是 `proseChars`：
+ *     字符数含标点、段间空格与英文单词的每个字母，比实际字数虚高约 1.58 倍，而且能靠
+ *     堆标点 / 拉长标识符刷量。正文量含 `:::deep/warn/tip` 容器内的正文（只排除代码），
+ *     口径由 scripts/verify-content-stats.mjs 钉住；
  *  ② 用与页面同一个入口（`lessonTime(lesson)`）算出课时用时，供人工核对体量是否撑得起时长；
  *  ③ 用 baseline（scripts/content-gate-baseline.json）做棘轮：**未重构的课进豁免名单**，
  *     重构完成后自动不再豁免；若某课已达标却仍在名单里，提示删除（防名单腐化）。
@@ -40,12 +44,17 @@ const ONLY = onlyArg
 const VERBOSE = args.includes('--verbose')
 const UPDATE_BASELINE = args.includes('--update-baseline')
 
-/* ---------- 课型阈值（00052 §2）----------
+/* ---------- 课型阈值（00052 §2，00055 上调）----------
  * 只设下限，不设上限：课时写得多、代码给得全是好事，卡 max 只会逼人为了「不超」而砍掉
  * 有价值的实现细节与真实踩坑。上限本身也判不准——同一课型的深浅差异可达数倍。
  *
- * overview（导览 / 收束）两项都放宽（正文 400 / 代码 0）：导览课的交付物是「地图与路径」而不是
- * 实现，正文 400 字足够铺开要点与依赖关系；低于 400 说明连要讲哪几件事都没列全。
+ * **`wordsMin` 是绝对量级，不是按「字数 vs 字符数」折算来的。** 00054 曾按比值 1.58 把旧字符阈值
+ * 折成 500/750/650/750/1250，数学上等价、管理上却把门槛悄悄降了 37%：读到的数字小了，Wave 重写的
+ * 目标就跟着放低。00055 撤销折算，改回旧字符口径的量级（800/1200/1000/1200/2000）再上浮 1.5×。
+ * 要换度量口径时只换 `proseChars` / `proseWords` 的实现，**不要回到这张表里"顺手折算"**。
+ *
+ * overview（导览 / 收束）是唯一例外：正文 400 字（沿用旧值，不上浮）、代码 0。导览课的交付物是
+ * 「地图与路径」而不是实现，400 字足够铺开要点与依赖关系；再往上抬只会逼出注水的地图。
  * 放宽阈值不靠自我声明兜底——想占这个口子，仍要过 overview 的四道护栏（理由必填、每模块 ≤1 节、
  * 总量 ≤8%、Capstone 禁用），避免把「写不动」伪装成「这节是导览」。
  *
@@ -53,12 +62,12 @@ const UPDATE_BASELINE = args.includes('--update-baseline')
  * A/B/C/D 代号，读报错和读课程数据都不需要查映射表。
  */
 const THRESHOLDS = {
-  theory: { proseMin: 800, codeMin: 400, label: '理论 / 范式' },
-  practice: { proseMin: 1200, codeMin: 1500, label: '实战 / 实现' },
-  framework: { proseMin: 1000, codeMin: 1000, label: '框架对照' },
-  scenario: { proseMin: 1200, codeMin: 1500, label: '专项 Agent 场景' },
-  capstone: { proseMin: 2000, codeMin: 2500, label: 'Capstone 综合交付' },
-  overview: { proseMin: 400, codeMin: 0, label: '导览 / 收束' },
+  theory: { wordsMin: 1200, codeMin: 400, label: '理论 / 范式' },
+  practice: { wordsMin: 1800, codeMin: 1500, label: '实战 / 实现' },
+  framework: { wordsMin: 1500, codeMin: 1000, label: '框架对照' },
+  scenario: { wordsMin: 1800, codeMin: 1500, label: '专项 Agent 场景' },
+  capstone: { wordsMin: 3000, codeMin: 2500, label: 'Capstone 综合交付' },
+  overview: { wordsMin: 400, codeMin: 0, label: '导览 / 收束' },
 }
 
 /* ---------- overview 课型护栏 ----------
@@ -213,7 +222,7 @@ for (const dir of dirs) {
     // 与页面共用同一个入口函数（lessonTime 内部也会算一次 stats），保证「闸门看到的时长」
     // 就是「用户看到的时长」，不会出现两条推导路径漂移。
     const time = lessonTime(l)
-    const belowProse = stats.proseChars < th.proseMin
+    const belowProse = stats.proseWords < th.wordsMin
     const belowCode = stats.codeChars < th.codeMin
     const below = belowProse || belowCode
     const isExempt = exempt.has(l.id)
@@ -221,7 +230,7 @@ for (const dir of dirs) {
     rows.push({
       id: l.id,
       type,
-      prose: stats.proseChars,
+      words: stats.proseWords,
       code: stats.codeChars,
       below,
       isExempt,
@@ -238,9 +247,10 @@ for (const dir of dirs) {
           '（' +
           th.label +
           '）体量未达标：正文 ' +
-          stats.proseChars +
+          stats.proseWords +
           '/' +
-          th.proseMin +
+          th.wordsMin +
+          ' 字' +
           ' · 代码 ' +
           stats.codeChars +
           '/' +
@@ -258,7 +268,7 @@ for (const dir of dirs) {
 
 /* ---------- 输出 ---------- */
 if (VERBOSE || ONLY) {
-  console.log('\n课型  课次   正文/下限   代码/下限   推导用时   用时占比')
+  console.log('\n课型  课次   正文字数/下限   代码/下限   推导用时   用时占比')
   for (const r of rows) {
     const th = THRESHOLDS[r.type]
     const mark = r.below && !r.isExempt ? '✗' : r.isExempt ? '·' : '✓'
@@ -269,9 +279,9 @@ if (VERBOSE || ONLY) {
         ' ' +
         r.id.padEnd(5) +
         ' ' +
-        String(r.prose).padStart(5) +
+        String(r.words).padStart(5) +
         '/' +
-        String(th.proseMin).padEnd(5) +
+        String(th.wordsMin).padEnd(5) +
         ' ' +
         String(r.code).padStart(5) +
         '/' +

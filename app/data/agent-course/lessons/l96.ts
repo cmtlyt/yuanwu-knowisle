@@ -77,6 +77,62 @@ await saver.setup() // 首次建表
 const app = graph.compile({ checkpointer: saver })
 \`\`\`
 
+### 状态设计的三种 reducer 语义
+
+reducer 不是只有「追加」和「覆盖」两种。第三种是**归并**：多个节点并行写同一个字典时，要按键合并，而不是整对象替换。三类字段各配一种语义，选错的表现完全不同：
+
+| 语义 | 写法 | 适用字段 | 选错的表现 |
+|---|---|---|---|
+| 追加 | 拼接 prev 与 next | 消息、轨迹、日志 | 写成覆盖 → 只剩最后一条，表现为失忆 |
+| 覆盖 | 直接取 next | 计步、当前阶段、最近错误 | 写成追加 → 类型漂移、下游取值拿到数组 |
+| 归并 | 按键合并两个对象 | 计划表、工具结果表、指标桶 | 写成覆盖 → 并行分支的结果凭空消失 |
+
+归并这一种最容易被漏掉：单条链跑的时候永远只有一个写者，看不出问题。一旦图里出现并行分支，两个节点在同一 super-step 里写同一张结果表，整对象覆盖会让先完成的那一支静默丢失——不报错、不留痕，只是少了一条结果。
+
+\`\`\`ts title="归并 reducer：并行分支写同一张结果表" note="键冲突的处理必须显式写出来（这里保留先到者）；靠引擎加锁是幻想，reducer 是纯函数，并发安全来自「不依赖外部状态」。"
+const State = Annotation.Root({
+  results: Annotation<Record<string, Result>>({
+    reducer: (prev, next) => {
+      const out = { ...prev }
+      for (const [k, v] of Object.entries(next)) if (!(k in out)) out[k] = v
+      return out
+    },
+    default: () => ({}),
+  }),
+})
+\`\`\`
+
+### super-step：并行分支与「同一步内的写」
+
+图的执行单位是 super-step：同一批被激活的节点并行执行，全部结束后统一合并状态，再决定下一批去哪。这与手写循环有一个关键差别——**同一 super-step 内的节点看不到彼此对本步状态的写入**，它们都基于同一份快照。
+
+两个直接后果：
+
+1. 「先算 A，再用 A 的结果算 B」必须拆成两个 super-step（两条边），不能靠节点声明顺序指望它生效；
+2. 合并顺序不保证等于节点声明顺序。业务上的先后依赖不要塞进 reducer 里推断，那等于把并发时序当契约。
+
+实际调试中，「为什么我的节点读到了旧值」十有八九不是 reducer 写错，而是它和写者处在同一个 super-step。这个区分能省掉大量在 reducer 里反复试错的时间。
+
+### 跨请求挂起：interrupt 与恢复
+
+前面反复说「人工确认要挂起」，机制就一个函数：节点里调 \`interrupt()\`，图会在该点抛出中断信号并把快照落盘；批准之后用同一个 \`thread_id\` 带 \`Command({ resume })\` 重新 invoke，节点从 \`interrupt()\` 的返回值继续往下走。
+
+\`\`\`ts title="人审：interrupt 挂起，Command 恢复" note="resume 传什么，interrupt() 就返回什么；thread_id 必须与首次调用一致，否则恢复的是另一条会话。"
+import { interrupt, Command } from '@langchain/langgraph'
+
+const approveNode = async (s: State) => {
+  const ok = interrupt({ question: '是否执行重启？', action: s.pending })
+  return { approved: Boolean(ok) }
+}
+
+// 首次：跑到 interrupt 处返回中断，进程可以退出
+const r1 = await app.invoke(input, { configurable: { thread_id: 'conv-42' } })
+// 人工批准后：同一个 thread_id 恢复
+const r2 = await app.invoke(new Command({ resume: true }), { configurable: { thread_id: 'conv-42' } })
+\`\`\`
+
+这与「在节点里 while 循环等审批」的差别不在代码长短，而在**进程生命周期**：挂起后进程可以退出、可以部署、可以换一台机器，两天后审批到达仍能从原位继续。阻塞等待则把状态压在调用栈里，进程一重启就全丢——这也是为什么挂起能力必须由 checkpointer 提供，而不是由业务代码自己攒一个标志位。
+
 ### 对照表：图与手写循环的真实差异
 
 | 维度 | 手写 while（L31） | LangGraph 图 |

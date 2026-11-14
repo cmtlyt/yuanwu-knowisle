@@ -56,9 +56,14 @@ export function blocksToMarkdown(blocks: LessonBlock[]): string {
 }
 
 export interface ContentStats {
-  /** 叙述正文字符数（去除代码 / 容器 / 标记语法后的纯文本）。 */
+  /**
+   * 叙述正文**字符数**：含提示框（`:::deep / :::warn / :::tip`）内的正文，
+   * 不含代码、不含 md 标记语法、不含表格管道与列表序号；含标点，含段间单空格，
+   * 英文按**字母**计（`useEffect` 算 9 个字符）。
+   * 想量「写了多少字」用 `proseWords`——它才是汉字数 + 英文词数。
+   */
   proseChars: number
-  /** 叙述正文词数（中文字 + 英文/数字词）。 */
+  /** 叙述正文**词数**：中文一字算一词，英文/数字按整词算（`useEffect` 算 1 个）。不含标点。 */
   proseWords: number
   /** 代码示例字符数（不含围栏行与空白）。 */
   codeChars: number
@@ -80,17 +85,27 @@ export function contentStats(md: string): ContentStats {
     codeBlocks++
     return ''
   })
-  prose = prose.replace(/:::[\w-]+\n[\s\S]*?:::/g, () => {
+  prose = prose.replace(/:::[ \t]*[\w-]+[ \t]*\n([\s\S]*?):::[ \t]*(?=\n|$)/g, (_m, body: string) => {
     callouts++
-    return ''
+    // 容器只脱壳，正文留在原处继续参与统计：`:::deep` / `:::warn` 里写的是
+    // 「框架对照」「注意事项」这类主体叙述，按旧口径整段丢弃会漏掉近一半的阅读量。
+    // 容器内的代码块已在上面剥离，不会重复计入 prose；容器内的 `### 标题` 随正文一起
+    // 落回行首，照常参与 headings 计数。
+    return body
   })
 
   const headingLines = prose.match(/^#{1,6}\s.*$/gm) || []
+  // 去标记语法：目标是「排版记号一个不剩，可见文字一个不丢」。
+  // 有序列表的 `1.` 与表格的 `|` 容易被漏掉——它们不是 md 的强调记号，
+  // 但同样不是正文，留着会让字符数虚高，也会让人靠堆表格行刷体量。
   const text = prose
-    .replace(/^#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/!?\[[^\]]*\]\([^)]*\)/g, '')
-    .replace(/[*_`>#]/g, '')
+    .replace(/^#{1,6}\s+/gm, '') // 标题记号（保留标题文字）
+    .replace(/^\s*[-*+]\s+/gm, '') // 无序列表 bullet
+    .replace(/^\s*\d+[.)]\s+/gm, '') // 有序列表序号
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接/图片：留可见文字，丢 URL
+    .replace(/^\s*\|?[\s:|-]+\|[\s:|-]*$/gm, '') // 表格分隔行（|---|:--:|）整行删
+    .replace(/\|/g, ' ') // 表格管道：当列分隔符，不占字
+    .replace(/[*_`>#]/g, '') // 残留强调记号、行内代码反引号、引用号
     .replace(/\s+/g, ' ')
     .trim()
   const proseChars = text.length
