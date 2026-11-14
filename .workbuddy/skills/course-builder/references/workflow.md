@@ -82,8 +82,10 @@
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  <topic>-course/ [widgets.ts]
+  <topic>-course/ [widgets/]
 ```
+
+两个参数都传**目录**即可（脚本自动补 `index.ts`）；演练内核目录化后第二参数是 `app/lib/widgets`，不再是 `widgets.ts`。
 
 它是通用的数据一致性校验；落地到具体项目后，还需跑项目自带的引擎全轨迹自检（本仓库为 `pnpm verify`），两者互补，缺一不可。
 

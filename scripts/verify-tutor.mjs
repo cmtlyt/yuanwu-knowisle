@@ -30,6 +30,7 @@ const { detectIntent, makeSnapshot, buildSystemPrompt, buildMessages } =
   await import('../app/lib/tutor/context.ts')
 const { resolveLessonKey } = await import('../app/lib/tutor/history.ts')
 const { createAnalytics } = await import('../app/lib/analytics.ts')
+const { networkMessage } = await import('../app/lib/tutor/llm.ts')
 
 /* ---------- ① 意图粗路由用例表 ---------- */
 console.log('\n=== 意图路由（nav = 本地零 LLM / llm = 交模型自决三姿态）===')
@@ -204,6 +205,16 @@ ok(
   probeMessages[probeMessages.length - 1].content === 'flatMap 和 map 的区别',
   '末帧仍为用户问题（00029 D1 契约）',
 )
+
+/* ---------- ⑥ 网络错误诊断映射（00038 B1）---------- */
+console.log('\n=== 网络错误诊断映射 ===')
+const diag = networkMessage('Failed to fetch')
+ok(diag.includes('无法连接模型服务'), 'Failed to fetch → 给出可读诊断')
+ok(diag.includes('CORS'), '诊断提示 CORS 预检未放行')
+ok(diag.includes('端点未启动'), '诊断提示端点未启动 / 地址错误')
+ok(diag.includes('Mixed Content'), '诊断提示 https→http 被 Mixed Content 拦截')
+ok(networkMessage('').includes('无法连接模型服务'), '空 message → 仍给可读诊断')
+ok(networkMessage('custom backend error').includes('custom backend error'), '非通用错误原样透传')
 
 console.log('')
 if (failed) {

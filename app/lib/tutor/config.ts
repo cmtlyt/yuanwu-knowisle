@@ -7,6 +7,7 @@
  * 隐私边界：key 仅存本机、随请求明文发往用户配置的端点；本模块不写进学情导出。
  */
 import { computeFingerprint } from './fingerprint.ts'
+import { isRecord } from './guards.ts'
 import type { TutorConfig, TutorConfigRead } from '~/types/tutor'
 
 const STORAGE_KEY = 'knowisle:tutor:llm:v1'
@@ -19,6 +20,33 @@ interface StoredBlob {
   iv: string
   /** 密文（base64）。 */
   ct: string
+}
+
+/** 只校验原来 `readStored` 会检查的字段，保证 stale / absent 判定与 00029 完全一致。 */
+function isStoredBlob(value: unknown): value is StoredBlob {
+  return (
+    isRecord(value) &&
+    value.v === 1 &&
+    typeof value.fp === 'string' &&
+    value.fp.length > 0 &&
+    typeof value.iv === 'string' &&
+    value.iv.length > 0 &&
+    typeof value.ct === 'string' &&
+    value.ct.length > 0
+  )
+}
+
+/** 解密明文同样只校验原 `getTutorConfig` 的三项必填，不新增会导致旧配置失效的字段检查。 */
+function isTutorConfig(value: unknown): value is TutorConfig {
+  return (
+    isRecord(value) &&
+    typeof value.baseUrl === 'string' &&
+    value.baseUrl.length > 0 &&
+    typeof value.apiKey === 'string' &&
+    value.apiKey.length > 0 &&
+    typeof value.model === 'string' &&
+    value.model.length > 0
+  )
 }
 
 function b64FromBytes(buf: ArrayBuffer | Uint8Array): string {
@@ -46,9 +74,8 @@ function readStored(): StoredBlob | null {
   try {
     const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as StoredBlob
-    if (!parsed || parsed.v !== 1 || !parsed.fp || !parsed.iv || !parsed.ct) return null
-    return parsed
+    const parsed: unknown = JSON.parse(raw)
+    return isStoredBlob(parsed) ? parsed : null
   } catch {
     return null
   }
@@ -85,8 +112,8 @@ export async function getTutorConfig(): Promise<TutorConfigRead> {
     const iv = b64ToBytes(stored.iv)
     const ct = b64ToBytes(stored.ct)
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct)
-    const cfg = JSON.parse(new TextDecoder().decode(plain)) as TutorConfig
-    if (!cfg || !cfg.baseUrl || !cfg.apiKey || !cfg.model) return { status: 'stale', config: null }
+    const cfg: unknown = JSON.parse(new TextDecoder().decode(plain))
+    if (!isTutorConfig(cfg)) return { status: 'stale', config: null }
     return { status: 'ok', config: cfg }
   } catch {
     // 指纹漂移 / WebCrypto 不可用 / 解密失败 / 明文损坏 → 一律视为已重置

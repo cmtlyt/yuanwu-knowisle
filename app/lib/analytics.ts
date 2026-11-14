@@ -65,14 +65,14 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     let raw = null
     try {
       raw = storage.getItem(KEY)
-    } catch (e) {
+    } catch {
       raw = null
     }
     if (!raw && memoryFallback) return memoryFallback
     let parsed
     try {
       parsed = raw ? JSON.parse(raw) : null
-    } catch (e) {
+    } catch {
       parsed = null
     }
     const base = defaultState()
@@ -93,7 +93,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     memoryFallback = state
     try {
       storage.setItem(KEY, JSON.stringify(state))
-    } catch (e) {
+    } catch {
       /* 隐私模式下退化为内存态 */
     }
     return state
@@ -103,7 +103,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     const s = defaultState()
     try {
       storage.removeItem(KEY)
-    } catch (e) {
+    } catch {
       /* noop */
     }
     return save(s)
@@ -357,7 +357,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     const cmap = conceptMap(state)
     return COURSE.CONCEPTS.map((c) => ({ concept: c, stat: cmap[c.id] }))
       .filter((r) => r.stat.total > 0 && r.stat.retention < 0.82)
-      .sort((a, b) => a.stat.retention - b.stat.retention)
+      .toSorted((a, b) => a.stat.retention - b.stat.retention)
       .map((r) => ({
         cid: r.concept.id,
         name: r.concept.name,
@@ -373,7 +373,7 @@ export function createAnalytics(course: EffectCourseData, storageKey: string) {
     const cmap = conceptMap(state)
     const weak = COURSE.CONCEPTS.map((c) => ({ concept: c, stat: cmap[c.id] }))
       .filter((r) => r.stat.total > 0 && r.stat.mastery < 68)
-      .sort((a, b) => a.stat.mastery - b.stat.mastery)
+      .toSorted((a, b) => a.stat.mastery - b.stat.mastery)
     return weak.slice(0, 6).map((r) => {
       const c = r.concept,
         s = r.stat

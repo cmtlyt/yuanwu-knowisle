@@ -5,6 +5,7 @@
  * - chatStream：SSE 逐帧解析增量，onDelta 回调 + 返回完整文本。
  * - 失败统一抛 LlmRequestError（实现 LlmError）：auth / quota / network / timeout / parse / http / aborted。
  */
+import { isRecord } from './guards.ts'
 import type { LlmErrorCode, LlmError, LLMMessage, TutorConfig } from '~/types/tutor'
 
 /** 默认整次请求超时（毫秒）。 */
@@ -12,6 +13,24 @@ const DEFAULT_TIMEOUT_MS = 60_000
 
 /** SSE 行分隔：\r\n / \n / 单独 \r 都兼容。 */
 const LINE_BREAK = /\r\n|\n|\r/
+
+/** 非流式响应取 content；形状不符返回 null，由调用方抛 parse 错误码。 */
+function chatContent(data: unknown): string | null {
+  if (!isRecord(data) || !Array.isArray(data.choices)) return null
+  const first: unknown = data.choices[0]
+  if (!isRecord(first) || !isRecord(first.message)) return null
+  const content: unknown = first.message.content
+  return typeof content === 'string' ? content : null
+}
+
+/** SSE 帧取 delta.content；role-only / finish_reason 等无 content 帧返回空串。 */
+function sseContent(frame: unknown): string {
+  if (!isRecord(frame) || !Array.isArray(frame.choices)) return ''
+  const first: unknown = frame.choices[0]
+  if (!isRecord(first) || !isRecord(first.delta)) return ''
+  const content: unknown = first.delta.content
+  return typeof content === 'string' ? content : ''
+}
 
 /** 结构化 LLM 错误：code 见 LlmErrorCode，status 为 HTTP 状态码（网络/超时缺失）。 */
 export class LlmRequestError extends Error implements LlmError {
@@ -56,6 +75,9 @@ interface Ctl {
   timedOut: () => boolean
 }
 
+/** 无外部 signal 时的空清理器（提到模块级，避免在工厂内重复创建闭包）。 */
+const noop = (): void => {}
+
 function makeController(timeoutMs: number, external?: AbortSignal): Ctl {
   const ctrl = new AbortController()
   let didTimeout = false
@@ -63,7 +85,7 @@ function makeController(timeoutMs: number, external?: AbortSignal): Ctl {
     didTimeout = true
     ctrl.abort(new DOMException('timeout', 'TimeoutError'))
   }, timeoutMs)
-  let externalCleanup = () => {}
+  let externalCleanup: () => void = noop
   if (external) {
     if (external.aborted) ctrl.abort(external.reason)
     else {
@@ -82,13 +104,33 @@ function makeController(timeoutMs: number, external?: AbortSignal): Ctl {
   }
 }
 
+/**
+ * 把浏览器裸网络错误翻译为可排查诊断。
+ * 浏览器在 CORS 预检失败 / Mixed Content / 端点不可达 / 离线时，fetch 通常只抛
+ * `TypeError: Failed to fetch`（不同浏览器措辞略有差异），无法从异常本身区分根因，
+ * 因此给出覆盖常见原因的排查清单；原始 message 已隐含在返回值中供开发者排查。
+ */
+export function networkMessage(raw: string): string {
+  const t = (raw || '').trim()
+  const isGeneric = t === '' || t === 'Failed to fetch' || /NetworkError|network request failed/i.test(t)
+  if (!isGeneric) return t
+  return [
+    '无法连接模型服务（Failed to fetch）。常见原因：',
+    '① 端点未启动或地址 / 端口填写错误；',
+    '② 端点未放行 CORS 预检（OPTIONS 需返回 Access-Control-Allow-Origin 等响应头）；',
+    '③ 站点为 https、端点为 http，被浏览器以 Mixed Content 拦截；',
+    '④ 本地网络断开或浏览器拦截了跨站请求。',
+  ].join('')
+}
+
 /** E2：把 fetch 的底层异常归类，区分内部超时 / 外部取消 / 网络错误。 */
 function classify(err: unknown, ctl: Ctl): LlmRequestError {
   if (err instanceof LlmRequestError) return err
   if (ctl.timedOut()) return new LlmRequestError('timeout', 'LLM 请求超时')
   if (ctl.ctrl.signal.aborted) return new LlmRequestError('aborted', '请求已取消')
-  if (err instanceof TypeError) return new LlmRequestError('network', err.message || '网络不可达')
-  return new LlmRequestError('network', err instanceof Error ? err.message : String(err))
+  if (err instanceof TypeError)
+    return new LlmRequestError('network', networkMessage(err.message || '网络不可达'))
+  return new LlmRequestError('network', err instanceof Error ? networkMessage(err.message) : String(err))
 }
 
 interface LlmOpts {
@@ -119,9 +161,9 @@ export async function chatOnce(
       const text = await res.text().catch(() => '')
       throw httpError(res, text)
     }
-    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-    const content = data.choices?.[0]?.message?.content
-    if (typeof content !== 'string') throw new LlmRequestError('parse', '响应缺少 choices[0].message.content')
+    const data: unknown = await res.json()
+    const content = chatContent(data)
+    if (content === null) throw new LlmRequestError('parse', '响应缺少 choices[0].message.content')
     return content
   } catch (err) {
     throw classify(err, ctl)
@@ -171,20 +213,22 @@ export async function chatStream(
         stopped = true
         return
       }
-      let frame: { choices?: Array<{ delta?: { content?: string } }> }
+      let frame: unknown
       try {
-        frame = JSON.parse(payload) as typeof frame
+        frame = JSON.parse(payload)
       } catch {
         throw new LlmRequestError('parse', 'SSE 帧不是合法 JSON')
       }
-      const delta = frame.choices?.[0]?.delta?.content
-      if (typeof delta !== 'string' || delta.length === 0) return
+      const delta = sseContent(frame)
+      if (delta.length === 0) return
       full += delta
       if (opts.onDelta && opts.onDelta(delta, full) === false) stopped = true
     }
 
     try {
-      while (!stopped) {
+      // 00032：stopped 由闭包 feed() 修改，显式在循环顶部检查，避免被判为死循环条件。
+      for (;;) {
+        if (stopped) break
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })

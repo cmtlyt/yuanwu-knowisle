@@ -15,6 +15,7 @@
  * OPFS 不可用时退化为内存态（本会话内有效，不跨刷新）；不抛错。
  * 清除会话按目录枚举删除（不硬编码文件名），避免新增课程分组漏删。
  */
+import { isRecord } from './guards.ts'
 import type { Conversation, ContextSnapshot, LessonGroup, LessonKey, TutorTurn } from '~/types/tutor'
 
 /** 保留最近 10 轮（user+assistant 各计一条 → 共 20 条消息）。后续可调。 */
@@ -22,6 +23,11 @@ export const TUTOR_TURN_LIMIT = 10
 
 interface CourseFile {
   groups: LessonGroup[]
+}
+
+/** OPFS 文件内容不可信（可能被手工改过），窄化失败一律回退空分组。 */
+function isCourseFile(value: unknown): value is CourseFile {
+  return isRecord(value) && Array.isArray(value.groups)
 }
 
 /** 路由信息（纯数据，不依赖 Vue Route，便于引擎层使用与测试）。 */
@@ -96,9 +102,8 @@ async function readFile(file: FileSystemFileHandle): Promise<CourseFile> {
   const text = await fh.text()
   if (!text) return { groups: [] }
   try {
-    const parsed = JSON.parse(text) as CourseFile
-    if (!parsed || !Array.isArray(parsed.groups)) return { groups: [] }
-    return parsed
+    const parsed: unknown = JSON.parse(text)
+    return isCourseFile(parsed) ? parsed : { groups: [] }
   } catch {
     return { groups: [] }
   }

@@ -1,16 +1,16 @@
 # 源悟的知识岛 · yuanwu-knowisle
 
-以「课程」为单位的交互式学习空间，基于 Nuxt 4。当前上线一门课：**Effect 4.1.4 深度课**，从「程序即值」讲到 fiber runtime 的指令解释器。
+以「课程」为单位的交互式学习空间，基于 Nuxt 4。当前上线两门课：**Effect 4.1.4 深度课**（从「程序即值」讲到 fiber runtime 的指令解释器）与 **RxJS 7.8.2 深度课**（从数据序列讲到调度器把时间注入系统）。
 
-站点由 Nuxt 欢迎页重构而来；原先独立的静态课程应用 `effect-course/` 已重构为知识岛里的**一门课程实体**。
+站点由 Nuxt 欢迎页重构而来；原先独立的静态课程应用 `effect-course/` 已重构为知识岛里的**课程实体**，随后又扩展为多课程结构。
 
 ## 特性
 
-- **结构化课程**：6 阶段 / 24 课时 / 26 概念 / 48 题 / 11 个交互演练。课时用类型化 TS 数据描述，测验、概念图谱与学情归因自动联动。
+- **结构化课程**：两门深度课各 6 阶段，课时用类型化 TS 数据描述，测验、概念图谱与学情归因自动联动；合计 **24 个交互演练**（Effect 11 + RxJS 13）。
 - **学情引擎**：掌握度 = 近期表现 30% + 历史正确率 20% + 记忆保持 25% + 练习覆盖 25%，记忆保持采用 R = e^(−Δt/S)；含遗忘复习队列、错题本、雷达诊断。
-- **原理演练**：11 个零依赖 DOM 内核（并发、Cause、Retry、Layer、Scope、Fiber、Scheduler、Stream 等），由 Vue 组件托管挂载与清理。
+- **原理演练**：24 个零依赖 DOM 演练，按课程分在 `app/lib/widgets/effect/` 与 `app/lib/widgets/rxjs/`、一演练一文件，共享 helper 收在 `dom.ts`、`index.ts` 统一导出；由 `course-widget.vue` 托管挂载与清理。
 - **多课程就绪**：新增课程只需在 `app/data/courses.ts` 追加一项，提供 `EffectCourseData` 与独立 `storageKey`，页面、侧栏与学情模型按数据自动生成，不改视图代码。
-- **纯前端**：零额外运行时依赖；学情数据只存浏览器 localStorage，不上传，支持 JSON 导入导出。
+- **纯前端**：无后端服务，学情数据只存浏览器 localStorage，不上传，支持 JSON 导入导出；运行时依赖由 Nuxt 4 / Nuxt UI / Tiptap 等提供（全量见 package.json，共 27 个 dependencies）。
 - **响应式与主题**：浅深双主题，≤780px 底部标签栏 + 抽屉导航，图表与代码块独立横滑。
 
 ## 技术栈
@@ -62,17 +62,20 @@ pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrang
 /courses/effect-ts/teacher         长期教学准备（版本基线 / 课时质量表）
 /courses/effect-ts/design          教学设计说明书（绑定课程数据的版本基线 / 路径 / 依赖图 / 学情模型）
 /courses/effect-ts/settings        设置与 JSON 导入导出
+/courses/rxjs/...                  RxJS 深度课的同构路由
+/settings/llm                      助学 Agent 的 LLM 配置
 ```
 
 ## 目录结构
 
 | 路径 | 职责 |
 |---|---|
-| `app/data/effect-course.ts` | **唯一内容源**：24 课、26 概念、48 题、6 阶段、版本基线 META |
+| `app/data/effect-course/` | Effect 课内容源：`index.ts` 聚合 + `stages/concepts/meta/design.ts` + `lessons/lNN.ts` 一课一文件（26 课） |
+| `app/data/rxjs-course/` | RxJS 课内容源，同上目录布局（26 课） |
 | `app/data/courses.ts` | 课程注册表（多课程扩展入口） |
 | `app/types/course.ts` | 内容 / 学情类型契约 |
 | `app/lib/analytics.ts` | 学情引擎：掌握度、遗忘曲线、诊断、复习、导入导出 |
-| `app/lib/widgets.ts` | 11 个零依赖原理演练内核（定时器 / SVG / DOM） |
+| `app/lib/widgets/` | 24 个零依赖原理演练：`dom.ts` 共享 helper + `effect/` 11 + `rxjs/` 13（一演练一文件）+ `index.ts` 唯一导出面 |
 | `app/lib/highlight.ts` | 代码高亮与 HTML 转义 |
 | `app/composables/use-learning.ts` | 全站学情单例，按课程隔离，SSR 安全 |
 | `app/composables/use-course.ts` | 当前课程、课时查询、404 守卫 |
@@ -89,7 +92,7 @@ pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrang
 ## 架构
 
 - **内容用类型化 TS 数据，不用 Markdown**：课时含讲解块、代码块、提示框、术语、误区、题目与演练标识，结构化数据才能联动测验、概念图谱与学情归因；项目不依赖内容型 CMS。
-- **演练内核由 Vue 托管**：35KB 的 DOM 演练逻辑机械迁移为 ESM 模块，`course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器，交互能力完整保留。
+- **演练内核由 Vue 托管**：机械迁移的 DOM 演练逻辑按课程目录化、一演练一文件（原单文件 2217 行，现最大子文件 138 行），`course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器，交互能力完整保留。
 - **学情按课程隔离**：`createAnalytics(course, storageKey)` 用闭包捕获课程与 localStorage key，多课程互不串数据；`useLearning` 用 `useState` 保证 SSR 首屏一致，真实档案在 `onMounted` 载入，避免 hydration mismatch。
 - **内容 / 引擎 / 视图三层解耦**：引擎不引用 DOM，内容不 import 视图，视图不硬编码课时列表。
 

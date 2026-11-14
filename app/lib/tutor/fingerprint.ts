@@ -8,9 +8,16 @@
  * - 所有因子采集包 try/catch，任一失败即跳过该因子，不影响其余；纯函数，由调用方在客户端守卫后执行。
  */
 
+import { isRecord } from './guards.ts'
+
 export interface Fingerprint {
   hash: string
   factors: string[]
+}
+
+/** experimental-webgl 返回的是宽泛 RenderingContext，用鸭子类型窄化而非断言。 */
+function isWebGL(value: unknown): value is WebGLRenderingContext {
+  return isRecord(value) && 'getExtension' in value && 'getParameter' in value
 }
 
 /** 浏览器 SHA-256 → hex。 */
@@ -53,8 +60,8 @@ function canvasFactor(): string {
 function webglFactor(): string {
   try {
     const c = document.createElement('canvas')
-    const gl = (c.getContext('webgl') || c.getContext('experimental-webgl')) as WebGLRenderingContext | null
-    if (!gl) return 'gl:na'
+    const gl: unknown = c.getContext('webgl') || c.getContext('experimental-webgl')
+    if (!isWebGL(gl)) return 'gl:na'
     const ext = gl.getExtension('WEBGL_debug_renderer_info')
     const renderer = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown'
     return `gl:${renderer}`

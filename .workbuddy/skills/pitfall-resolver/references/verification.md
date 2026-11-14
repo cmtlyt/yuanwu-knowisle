@@ -30,9 +30,9 @@ python scripts/smoke.py --base http://127.0.0.1:3199
 
 ```bash
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/effect-course app/lib/widgets.ts
+  app/data/effect-course app/lib/widgets
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/rxjs-course app/lib/widgets.ts
+  app/data/rxjs-course app/lib/widgets
 ```
 
 ## 全量验证清单（课程 / 站点级交付）

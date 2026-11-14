@@ -2,7 +2,8 @@
 import { Widgets } from '~/lib/widgets'
 
 /**
- * 演练宿主：11 个零依赖 DOM 演练内核由 Vue 托管挂载 / 销毁，
+ * 演练宿主：24 个零依赖 DOM 演练（app/lib/widgets/ 下按 effect/ 11 + rxjs/ 13 分目录、
+ * 一演练一文件，index.ts 统一导出）由 Vue 托管挂载 / 销毁，
  * 定时器与事件在 cleanup 中统一回收，切课时不会残留。
  */
 const props = defineProps<{ name: string }>()

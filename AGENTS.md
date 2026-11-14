@@ -51,13 +51,15 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
   app/data/effect-course.ts app/lib/widgets.ts
 ```
 
+- **现行命令（00035 目录化后；上方示例路径已失效，按约定不修订原文）**：`node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs app/data/effect-course app/lib/widgets`；两个参数都传**目录**，`load()` 自动补 `index.ts`；RxJS 同理传 `app/data/rxjs-course`。`scripts/verify-course.mjs` 内部仍按 `app/lib/widgets/index.ts` 显式路径 import。
 - `generate` / `smoke` 两个 npm script 已移除；新增 `preview` / `deploy` / `cf-typegen`（Cloudflare 部署）。生产预览与冒烟改用 Workers 运行时：先 `pnpm build` 产出 `.output`，再 `pnpm exec wrangler --cwd .output dev --port 3199`，**不再用 `node .output/server/index.mjs`**（cloudflare_module 产物是 Worker 入口，非 Node 服务）。冒烟统一直接调用 `python scripts/smoke.py --base ...`（pnpm 11 会把 `--` 原样透传给 Python，且 smoke.py 默认 base 是 3100，与实际 3199 临时服务不符）。脚本文件 `scripts/smoke.py` 保留不变。
 - 冒烟服务用 3199 等独立端口，跑完立即关闭；不要重启用户正在使用的 3100 预览服务。
 
 ## 3. 质量门禁与覆盖范围
 
 - 按「快 → 慢」执行：`fmt:check` → `lint` → `typecheck` → `verify` → `build` → `smoke`。任一失败即停，先查 `pitfall-resolver`。
-- 通过线是 **0 errors**。存量 warnings（`lint` 19、`typecheck` 21）主要来自机械迁移的演练内核（未使用变量、`Array#reverse()` 等风格项），不阻塞构建。
+- 通过线是 **0 errors**。存量 warnings（`lint` 10、`typecheck` 12；按「规则+文件+行+列」去重后 8 条，00033 清理后基线）= 5 条函数作用域风格项 + 2 条必要的内核边界类型断言 + **1 条有意保留的 `no-unused-vars`**，不阻塞构建。唯一剩余未使用项是 `app/lib/widgets.ts:114` 的 `svg()`（完整可复用 helper、当前零调用），按 00033 决策保留，**不要顺手删**。`consistent-function-scoping` 有 2 个位置各重复报 3 次，故输出数大于唯一数。
+- **现行 warnings 基线（00035 后；上方统计口径已失效，按约定不修订原文）**：`lint` 3 / `typecheck` 5，**零重复**（oxlint `labels[-1]` 才是函数位置，`labels[0]` 是父作用域）；构成为 `app/lib/analytics.ts` 3 条 `consistent-function-scoping` + `app/composables/use-learning.ts` 2 条内核边界类型断言。原「唯一 8 条 / 重复报 3 次」与 `app/lib/widgets.ts:114` 的 `svg()` warning 已随 00035 目录化消失（`svg()` 函数体保留在 `widgets/dom.ts` 并成为 export）。
 - `lint` 只跑毫秒级快速规则，`typecheck` 才启用 type-aware 与 TS 编译器诊断；不要把 type-aware 写进 `.oxlintrc.json` 的常驻配置。
 - 两份 Oxc 配置**只忽略不可追踪**目录：`.nuxt/`、`.output/`、`.data/`、`dist/`、`node_modules/`（oxlint 另含 `archive/`）；oxfmt 另忽略 `**/*.md`、`**/*.css`、`**/*.yaml`、`**/*.yml` 与 `pnpm-lock.yaml`。**可追踪目录一律纳入门禁**，包括 `.workbuddy/skills/` 下的 TS / MJS 文件——否则 lint-staged 把暂存文件传给工具、工具却因 `ignorePatterns` 排除，会报 `Expected at least one target file` 退出 2 并阻断提交。
 - 门禁不覆盖 Vue 模板表达式与模板级类型检查（见第 9 节）。
@@ -158,3 +160,5 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 每完成一次用户任务，新建下一个编号目录，写 `overview.md`（目标 / 变更 / 验证 / 注意事项）；涉及迁入或映射时另写 `migration.md`。**不要把新任务内容追加到已有目录或旧文件**。
 - 目录名用编号开头 + kebab-case 任务名（如 `00001-init`）；只在 `docs/README.md` 索引里登记，不改历史目录中的结论；已失效的历史结论在原目录内标注「以 NNNNN 为准」。
 - 拆分前的累积文件（根目录 `overview.md`、`docs/migration.md`）已废弃，内容按任务迁入上述目录；引用改用 `docs/README.md` 或具体任务目录。
+- **历史记录不可矫正（00034 起，用户永久约定，优先于本节上文与 `docs/README.md` 的旧表述）**：任何已经落盘的任务记录（`docs/NNNNN-*/` 内的全部文件，含 overview / migration / corrections / 附录）**一律不改写、不追加、不标注、不「以 NNNNN 为准」**，包括其中已失效的数字、结论与统计口径；也不要回填修改 `AGENTS.md` / `docs/README.md` 中已落盘的历史基线表述。发现旧结论失真时，**只能在新建的任务记录里明确写出「本次变更会修复 NNNNN 任务的 xx 内容」**，并给出正确口径。本节上文「已失效的历史结论在原目录内标注」与 `docs/README.md` 约定中同类表述自 00034 起不再执行。本文档如需新增规则，只能追加新行，不得修订已有行。
+- **活文档不受「历史记录不可矫正」保护（00036 起）**：保护范围仅限 `docs/NNNNN-*/` 全部文件与 `AGENTS.md` / `docs/README.md` 中已落盘的历史基线表述；根 `README.md`、`app/` 下的代码注释与课程正文、`.workbuddy/skills/` 下的 skill 文档都是**活文档**，发现事实失真应直接校正到当前实现，并在新任务 overview 中声明会修复哪些旧结论。

@@ -82,6 +82,23 @@ function initialState(): TutorState {
   }
 }
 
+/* ---------------- 模块级纯函数（不捕获 useTutor 作用域）---------------- */
+
+function nextId(): string {
+  return `f${Date.now().toString(36)}-${feedSeq++}`
+}
+
+function toLlmError(err: unknown): LlmError {
+  if (err instanceof LlmRequestError) {
+    return { code: err.code, status: err.status, message: err.message }
+  }
+  return { code: 'network', message: err instanceof Error ? err.message : String(err) }
+}
+
+function goSettings(): void {
+  void navigateTo('/settings/llm')
+}
+
 export function useTutor() {
   const state = useState<TutorState>('knowisle:tutor', initialState)
   const { route, course, lessonById, stageById, conceptName } = useCourse()
@@ -229,9 +246,6 @@ export function useTutor() {
 
   /* ---------------- feed 操作 ---------------- */
 
-  function nextId(): string {
-    return `f${Date.now().toString(36)}-${feedSeq++}`
-  }
   function pushTurn(turn: TutorTurn): string {
     const id = nextId()
     state.value.feed.push({ kind: 'turn', id, turn })
@@ -375,13 +389,6 @@ export function useTutor() {
 
   /* ---------------- 发送 / 意图路由 / 流式 ---------------- */
 
-  function toLlmError(err: unknown): LlmError {
-    if (err instanceof LlmRequestError) {
-      return { code: err.code, status: err.status, message: err.message }
-    }
-    return { code: 'network', message: err instanceof Error ? err.message : String(err) }
-  }
-
   /**
    * 从 feed 抽取对话历史作为 LLM 请求体来源。
    * 不读 conv.messages：history.ts 的 withGroup 在 OPFS 模式下每次返回新副本、
@@ -489,10 +496,6 @@ export function useTutor() {
     }
     removeItem(last.id) // 避免同题出现本地卡与 AI 答案两种结果
     await runLlm()
-  }
-
-  function goSettings(): void {
-    void navigateTo('/settings/llm')
   }
 
   return {

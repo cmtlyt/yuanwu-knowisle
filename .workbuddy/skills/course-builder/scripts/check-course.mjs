@@ -2,12 +2,13 @@
  * 通用课程内容自检：数据一致性 + 引用完整性 + 前置 DAG。
  *
  * 用法（Node 22+，加载 TS 模块需要 strip-types）：
- *   本仓库：node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs <course-data> [widgets.ts]
- *   复制到目标项目 scripts/ 后：node --experimental-strip-types scripts/check-course.mjs <course-data> [widgets.ts]
+ *   本仓库：node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs <course-dir> [widgets-dir]
+ *   复制到目标项目 scripts/ 后：node --experimental-strip-types scripts/check-course.mjs <course-dir> [widgets-dir]
  *
- * 课程数据可以是目录（目录化布局的入口目录，自动补 index.ts）或 .ts 文件：
+ * 两个参数都支持目录（自动补 index.ts）或 .ts 文件；演练内核目录化后：
  *   app/data/effect-course/            （目录 → 加载 effect-course/index.ts）
  *   app/data/rxjs-course/
+ *   app/lib/widgets                   （目录 → 加载 widgets/index.ts）
  *
  * 课程数据模块需导出 META / STAGES / CONCEPTS / LESSONS（命名导出或 default 均可）。
  * 演练模块可选，需导出 Widgets（Map / Set / 对象 / 数组均可）。
@@ -20,7 +21,7 @@ import { pathToFileURL } from 'node:url'
 const [, , dataArg, widgetsArg] = process.argv
 if (!dataArg) {
   console.error(
-    '用法: node --experimental-strip-types check-course.mjs <course-dir/ 或 course-data.ts> [widgets.ts]',
+    '用法: node --experimental-strip-types check-course.mjs <course-dir/ 或 course-data.ts> [widgets-dir/ 或 widgets.ts]',
   )
   process.exit(2)
 }

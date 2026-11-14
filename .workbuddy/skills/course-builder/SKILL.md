@@ -49,7 +49,7 @@ agent_created: true
 
 - `references/workflow.md` — 8 阶段详细流程、每阶段验收标准、交付清单模板
 - `references/data-model.md` — 内容数据契约、学情状态结构、掌握度/遗忘/诊断公式、扩展机制
-- `scripts/check-course.mjs` — 通用数据一致性与引用完整性校验，接受课程数据路径参数（可传**目录**，自动补 `index.ts`）
+- `scripts/check-course.mjs` — 通用数据一致性与引用完整性校验，接受课程数据路径与可选演练模块路径；两个参数都可传**目录**（自动补 `index.ts`，本仓库传 `app/data/<topic>-course` 与 `app/lib/widgets`）
 - `assets/course-skeleton/` — 目录化课程数据骨架（`index.ts` 入口 + `stages/concepts/meta/design.ts` 章节 + `lessons/lNN.ts` 一课一文件 + `builders.ts`/`types.ts` 共享层**种子** + `README.md` 落地说明）。复制到目标项目后改内容；**新建课程时只建课程级文件，`types.ts`/`builders.ts` 复用仓库级共享层、不逐课复制**（详见其 `README.md` 与 `references/workflow.md` 阶段 3 的「仓库级 vs 课程级」区分）。
 - 项目级 skill `pitfall-resolver`（`.workbuddy/skills/pitfall-resolver/`） — 独立的问题排查与解决方案库；**遇到任何问题先加载它查库，解决后回写**，本 skill 不再自带踩坑清单
 

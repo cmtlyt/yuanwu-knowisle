@@ -44,7 +44,7 @@ function importBackup(e: Event) {
   const f = input.files?.[0]
   if (!f) return
   const reader = new FileReader()
-  reader.onload = () => {
+  reader.addEventListener('load', () => {
     try {
       const imported = engine.value.importState(String(reader.result)) as LearningState
       learning.replace(course.value, imported)
@@ -53,7 +53,7 @@ function importBackup(e: Event) {
       window.alert(`导入失败：${(err as Error).message}`)
     }
     input.value = ''
-  }
+  })
   reader.readAsText(f)
 }
 

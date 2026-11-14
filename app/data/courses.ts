@@ -13,7 +13,7 @@ export const COURSES: CourseEntry[] = [
     subtitle: 'effect@4.1.4 · TypeScript',
     tagline: '从「程序即值」到「运行时指令解释」',
     description:
-      '从「程序即值」讲到 fiber runtime 的指令解释器：三通道类型、Cause、Layer、Scope、结构化并发与 Stream 背压。6 阶段 24 课，每课配原理演练与即时反馈测验。',
+      '从「程序即值」讲到 fiber runtime 的指令解释器：三通道类型、Cause、Layer、Scope、结构化并发与 Stream 背压。6 阶段 26 课，每课配原理演练与即时反馈测验。',
     icon: '🌀',
     color: '#4b6fe0',
     tags: ['TypeScript', '函数式', '运行时原理', '架构设计'],
@@ -27,7 +27,7 @@ export const COURSES: CourseEntry[] = [
     subtitle: 'rxjs@7.8.2 · 响应式',
     tagline: '从「一段时间里的数据序列」到「把时间注入系统」',
     description:
-      '从「一段时间里的数据序列」讲到调度器把时间注入系统：冷/热、观察者协议、map 流水线、concatMap/mergeMap/switchMap/exhaustMap 时序、catchError/retry、Subject 多播、share 引用计数、背压与虚拟时间测试。6 阶段 24 课，每课配可操作原理演练与即时反馈测验。',
+      '从「一段时间里的数据序列」讲到调度器把时间注入系统：冷/热、观察者协议、map 流水线、concatMap/mergeMap/switchMap/exhaustMap 时序、catchError/retry、Subject 多播、share 引用计数、背压与虚拟时间测试。6 阶段 26 课，每课配可操作原理演练与即时反馈测验。',
     icon: '📡',
     color: '#3fb984',
     tags: ['JavaScript', '响应式', '时间模型', '异步组合'],

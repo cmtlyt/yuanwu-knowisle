@@ -20,7 +20,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const { createAnalytics } = await import('../app/lib/analytics.ts')
-const { Widgets } = await import('../app/lib/widgets.ts')
+const { Widgets } = await import('../app/lib/widgets/index.ts')
 
 let failed = 0
 const ok = (cond, label, extra = '') => {
@@ -62,7 +62,7 @@ console.log('  ' + discovered.map((d) => d.label).join(', '))
 
 /* ---------- 静态资源 ---------- */
 console.log('\n=== 静态资源 ===')
-;['app/assets/css/main.css', 'app/lib/widgets.ts', 'app/lib/analytics.ts'].forEach((f) => {
+;['app/assets/css/main.css', 'app/lib/widgets/index.ts', 'app/lib/analytics.ts'].forEach((f) => {
   ok(fs.existsSync(path.join(ROOT, f)), f)
 })
 

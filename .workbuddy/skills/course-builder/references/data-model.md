@@ -14,7 +14,7 @@
         │
         ├── course-builders.ts   跨课程共享构造器 prose/code/call/list/q/L（不与单课耦合）
         ├── analytics.ts        纯计算，零 DOM；createAnalytics(course, storageKey) 工厂
-        ├── widgets.ts          演练注册表，(host, ctx) => cleanup
+        ├── widgets/            演练目录：index.ts 注册表 + dom.ts helper + effect/ + rxjs/，一演练一文件
         └── types/*.ts          共享类型契约
                 │
           pages / components / composables  ← 只消费，不硬编码课时列表
@@ -52,7 +52,7 @@ app/data/
 
 - 课时文件命名 `lNN.ts`（小写，对应课时 id `LNN`），符合 kebab-case。
 - 巨型单文件已难维护（近 2000 行）；**新增课程直接按目录布局生成**，不要再生成巨型单文件。
-- 校验脚本 `check-course.mjs` 支持传**目录**（自动补 `index.ts`）；`verify-course.mjs` 按 `*-course/` 目录动态发现课程。
+- 校验脚本 `check-course.mjs` 支持传**目录**（自动补 `index.ts`）；`verify-course.mjs` 按 `*-course/` 目录动态发现课程。演练内核目录化后，`check-course.mjs` 第二参数传 `app/lib/widgets`（目录），`verify-course.mjs` 内部按 `app/lib/widgets/index.ts` 显式路径 import。
 - **仓库级共享 vs 课程级**：`types`（`~/types/course`）与 `course-builders.ts`（构造器）是**仓库级、每个仓库只存一份**，所有课程共用；**新建课程只建课程级文件**（`index.ts` + 各章节 + `lessons/`），不要往课程目录里再拷 `types.ts` / `builders.ts`（各课各带一份会分叉、改签名要改 N 处）。skeleton 里自包含的 `types.ts` / `builders.ts` 只是**落地种子**：目标仓库尚无共享层时才把它们落成 `~/types/course` + `app/data/course-builders.ts`，**落一次**，之后每门课都复用这份共享层。
 
 ## 内容层契约

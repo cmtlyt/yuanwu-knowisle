@@ -14,7 +14,7 @@ const wrongAttempts = computed(() =>
   state.value.attempts
     .filter((a) => !a.correct)
     .slice(-12)
-    .reverse(),
+    .toReversed(),
 )
 
 interface Picked {

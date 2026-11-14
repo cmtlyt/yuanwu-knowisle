@@ -62,6 +62,8 @@ function pageTone(kind: PageKind): string {
       return '（此刻学生在概念页，倾向于先答疑把概念讲透，再给 1-2 个常见误区反例供反思。解释概念时以本课时核心概念与常见误区为准；遇到同名 API 先区分语境。）'
     case 'review':
     case 'dashboard':
+    default:
+      // 00032：default 与 dashboard 共享兜底文案，保证 PageKind 扩展时仍有返回值；
       // B1：措辞避开「学情摘要」字面，否则首页（档位兜底为 dashboard）的 system 提示词
       // 会凭空出现该词，与「仅学情页注入」的动态断言冲突。真正注入的摘要由 contextBlock 输出。
       return '（此刻学生关心学习进度，倾向于导航：结合下方提供的学情信息给出下一步与薄弱概念，追问深度按掌握度个性化。）'

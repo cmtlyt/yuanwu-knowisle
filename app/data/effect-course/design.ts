@@ -223,7 +223,7 @@ exposure  = min(1, total / 4)                        // 样本不足不轻易判
           type: 'list',
           items: [
             '内容层独立：所有课时、概念、题目集中在 app/data/effect-course/ 目录（index.ts 聚合 + stages/concepts/meta/design + lessons 逐课时文件）。新增课时只需新建 lessons/lNN.ts 并在 CONCEPTS 登记，地图、侧栏、雷达、复习队列、诊断全部自动接入。',
-            '引擎与视图解耦：analytics.ts（模型）、widgets.ts（演练）、pages + components（Vue 视图）、main.css（外观）互不依赖具体实现，可单独替换。',
+            '引擎与视图解耦：analytics.ts（模型）、app/lib/widgets/ 目录（24 个演练按课程分子目录）、pages + components（Vue 视图）、main.css（外观）互不依赖具体实现，可单独替换。',
             '版本更新机制：升级 Effect 时只需更新 META 的版本号、核实日期与 LTS 说明，并复核受影响的课时代码；教学准备页集中列出需要复核的 v4 事实清单。',
             '数据可迁移：学情档案为显式 v1 schema，导出/导入 JSON 可跨设备、跨浏览器迁移；未来改 schema 只需补一个 importState 迁移分支。',
             '质量闭环：某课时正确率长期 < 55%（≥3 次作答）自动标记「需修订」，提示拆细课时或重写讲解；课时表还记录访问、停留、重做次数、演练完成率，用于判断是「内容难」还是「没人看」。',
@@ -244,15 +244,15 @@ exposure  = min(1, total / 4)                        // 样本不足不轻易判
         },
         {
           type: 'prose',
-          text: '运行：pnpm dev（开发）或 pnpm build && PORT=3100 node .output/server/index.mjs（生产预览）。',
+          text: '运行：pnpm dev（开发）或 pnpm build && pnpm exec wrangler --cwd .output dev --port 3199（生产 Worker 预览）；冒烟用 python scripts/smoke.py --base http://127.0.0.1:3199。',
         },
         {
           type: 'prose',
-          text: '内容、引擎、演练、视图四层解耦：app/data/effect-course/ 目录是唯一内容源（index.ts 聚合各章节），app/data/courses.ts 是课程注册表，app/lib/analytics.ts 是学情引擎，app/lib/widgets.ts 是 11 个演练内核，app/components/course/* 与 app/pages/courses/[slug]/* 是 Vue 视图。',
+          text: '内容、引擎、演练、视图四层解耦：app/data/effect-course/ 目录是唯一内容源（index.ts 聚合各章节），app/data/courses.ts 是课程注册表，app/lib/analytics.ts 是学情引擎，app/lib/widgets/ 是演练目录（index.ts 聚合导出、dom.ts 共享 helper、effect/ 11 个 + rxjs/ 13 个共 24 个演练一演练一文件），app/components/course/* 与 app/pages/courses/[slug]/* 是 Vue 视图。',
         },
         {
           type: 'prose',
-          text: '浏览器需支持 ES2022+（Chrome / Edge / Firefox / Safari 近两年版本）。',
+          text: '浏览器需支持 ES2023+（站点使用 toReversed / toSorted 等 ES2023 数组方法；Chrome / Edge / Firefox / Safari 近两年版本）。',
         },
         {
           type: 'prose',
@@ -260,7 +260,7 @@ exposure  = min(1, total / 4)                        // 样本不足不轻易判
         },
         {
           type: 'prose',
-          text: '回归自检：pnpm verify（数据一致性 + 学情引擎全轨迹）、python scripts/smoke.py --base http://127.0.0.1:3100（SSR 路由、客户端渲染、320/390/768/1440 四种真实视口的横向溢出与导航检查）。每次改动 effect-course/ 目录、引擎或样式后都跑一遍。',
+          text: '回归自检：pnpm verify（数据一致性 + 学情引擎全轨迹）、python scripts/smoke.py --base http://127.0.0.1:3199（SSR 路由、客户端渲染、320/390/768/1440 四种真实视口的横向溢出与导航检查）。每次改动 effect-course/ 目录、引擎或样式后都跑一遍。',
         },
         {
           type: 'prose',

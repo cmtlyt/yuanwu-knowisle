@@ -42,7 +42,7 @@ const chips = [
 /** 当前正在流式输出的气泡 id（最后一个 assistant 且为空/流式态）。 */
 const streamingId = computed(() => {
   if (!streaming.value) return null
-  const last = [...feed.value].reverse().find((f) => f.kind === 'turn' && f.turn.role === 'assistant')
+  const last = feed.value.toReversed().find((f) => f.kind === 'turn' && f.turn.role === 'assistant')
   return last && last.kind === 'turn' ? last.id : null
 })
 
