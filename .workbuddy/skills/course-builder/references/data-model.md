@@ -31,11 +31,12 @@ app/data/
 ├── courses.ts            # 注册表：import { TOPIC_COURSE } from './<topic>-course'（省略扩展名，不变）
 ├── course-builders.ts    # 共享构造器 prose/code/call/list/q/L（跨课程复用，不与单课耦合）
 └── <topic>-course/
-    ├── index.ts          # export const TOPIC_COURSE = { STAGES, CONCEPTS, LESSONS, META, DESIGN }
-    ├── stages.ts         # export const STAGES: Stage[]
-    ├── concepts.ts       # export const CONCEPTS: Concept[]
-    ├── meta.ts           # export const META: CourseMeta
-    ├── design.ts         # export const DESIGN: CourseDesign
+├── index.ts          # export const TOPIC_COURSE = { STAGES, CONCEPTS, LESSONS, META, DESIGN }
+├── stages.ts         # export const STAGES: Stage[]
+├── concepts.ts       # export const CONCEPTS: Concept[]
+├── modules.ts        # [仅 complex 模式] export const MODULES: Module[]（simple 课不建此文件）
+├── meta.ts           # export const META: CourseMeta
+├── design.ts         # export const DESIGN: CourseDesign
     └── lessons/
         ├── index.ts      # export const LESSONS: Lesson[] = [L01, …]
         └── lNN.ts        # 一课时一文件：export const LNN = L('LNN', …)
@@ -58,7 +59,11 @@ app/data/
 ## 内容层契约
 
 ```ts
-interface Stage   { id: number; name: string; en: string; summary: string; color: string; goal: string }
+interface Stage   { id: number; name: string; en: string; summary: string; color: string; goal: string
+                   // 复杂模式专属（simple 课不填）：
+                   module?: number                                              // 所属模块 id
+                   subStages?: Array<{ id: string; name: string; summary?: string }> }  // 阶段内子阶段分组（可选）
+interface Module  { id: number; name: string; en: string; summary: string; color: string; goal: string }  // 复杂模式顶层分组维度，形状与 Stage 对齐
 interface Concept { id: string; name: string; stage: number; weight: number; prereqs: string[] }
 interface CourseMeta {
   version: string; verifiedAt: string; lts: string; docs: string
@@ -79,12 +84,17 @@ interface Lesson {
   prereqs: string[]; concepts: string[]; goals: string[]
   blocks: LessonBlock[]; widget: string | null
   quiz: QuizQuestion[]; terms: string[][]; pitfalls: string[]
+  subStage?: string | null     // 复杂模式专属：所属子阶段 id（如 '3.1'）；simple 或不归子阶段时缺省
 }
 interface CourseData {
   STAGES: Stage[]; CONCEPTS: Concept[]; LESSONS: Lesson[]; META: CourseMeta
   DESIGN?: CourseDesign
+  renderMode?: 'simple' | 'complex'   // 缺省 'simple'（既有课零改动）；'complex' 必须提供 MODULES 与 Stage.module
+  MODULES?: Module[]                 // 复杂模式专属：课程顶层模块列表
 }
 ```
+
+> 上面的接口块即 `app/types/course.ts` 的形状（`~/types/course` 为单一源）；`CourseData.renderMode`/`MODULES` 与 `Stage.module`/`subStages`/`Lesson.subStage` 均为**可选**，simple 课不填。
 
 ### 课程设计说明书（绑定课程的数据，非独立文件）
 
@@ -115,6 +125,49 @@ interface CourseDesign  { title: string; summary: string; sections: DesignSectio
 - `META.version` 是唯一版本源，正文不得散落硬编码版本号。
 - **数量动态化（禁止用固定个数约束生成）**：课时数、概念数、阶段数随知识复杂度浮动——铺垫阶段可少（如 3 课）、核心/难点阶段可多（如 5 课），「6 阶段 × 4 课 = 24 课」只是经验起点而非硬约束，**不得为凑整而拆碎知识点或硬塞课时**。题目数由**该课涉及知识点的完整性**驱动：先列出每个知识点要被讲透的**各个面向**（定义 / 语义、常见陷阱、选型对比、边界与例外、典型用法、易混淆点……），每个面向至少 1 题；同一知识点面向多时**可以有更多题**（哪怕一个知识点出 10 题来覆盖它的全部面向），面向少则题少——**换角度补题是常态手段，与难度高低、weight 大小无关**。禁止按 `difficulty` 一刀切定「每课 N 题」，也**不**把「题数 = 概念数」当成下限或上限，更**不**把同一个面向反复堆题。改题后必跑覆盖审计：该课每个知识点需覆盖的各面向都有题、全课程无「未被任何题覆盖」的知识点。
 
+### 复杂模式（4 层结构）
+
+simple 是 2 层（`Stage → Lesson`）；**complex 是 4 层**（`Module → Stage → SubStage → Lesson`），用于体量大的「系统课」（如 Agent 系统课：11 模块 / 28 阶段 / 部分阶段含子阶段 / 140+ 课）。complex 数据全部落在同一 `CourseData` 上，靠 `renderMode` 切换渲染分支，simple 课零改动。
+
+```
+MODULES (模块)          ← 课程顶层分组，渲染成模块手风琴 / 模块主轴雷达
+  └─ Stage (阶段) .module = <module id>
+       ├─ subStages? (子阶段，仅部分阶段用，如「范式全景」拆 3.1/3.2/3.3)
+       │    └─ Lesson.subStage = <subStage id>     ← 子阶段下的课时
+       └─ Lesson (无 subStage / subStage=null)      ← 该阶段直接挂的课时
+```
+
+**complex 专属契约（simple 课不填这些字段）**
+
+- `CourseData.renderMode: 'complex'` + `CourseData.MODULES: Module[]`（非空数组）。`Module` 形状与 `Stage` 对齐（`id/name/en/summary/color/goal`），便于复用同一套渲染。
+- 每个 `Stage` 必须有 `module?: number` 指向有效模块 id（`MODULES.some(m => m.id === stage.module)`）。
+- `Stage.subStages?` 可选；一旦某阶段定义了 `subStages`，该阶段的**每一个课时必须显式声明 `subStage`**（`'3.1'` 之类）或 `null`（表示直接挂阶段、不属子阶段）。**不允许遗漏**——子阶段课与阶段直挂课靠 `lesson.subStage` 区分，缺失会被 verify 判为「子阶段归属无效」。
+- `Lesson.subStage?: string | null`：simple 课缺省；complex 且该阶段有子阶段时必填（值 ∈ 该阶段 `subStages` 的 id，或 `null`）。
+
+**`withSubStage` 聚合模式（关键坑：`L()` 构造器没有 subStage 字段）**
+
+共享构造器 `L(id, stage, title, …)`（`course-builders.ts`）**不含 `subStage` 形参**，所以不能把子阶段写进课时文件。正确做法是在 `lessons/index.ts` 聚合时**逐个补**：
+
+```ts
+// lessons/index.ts（complex 课）
+const L01 = withSubStage(L('L01', 3, …), '3.1')   // 第 3 阶段「范式全景」的子阶段 3.1
+const L04 = withSubStage(L('L04', 3, …), '3.2')   // 同一阶段另一子阶段
+const L05 = L('L05', 4, …)                         // 第 4 阶段无子阶段 → 不补，subStage 缺省
+export const LESSONS: Lesson[] = [L01, L04, L05, …]
+```
+
+`withSubStage(l, id)` 是薄封装（返回 `{ ...l, subStage: id }`），把 `L()` 缺的字段在聚合层补齐——课时文件保持与 simple 完全相同的写法（仍 `import { L, … } from '../../course-builders.ts'`），只有 complex 课的 index.ts 多这一步。
+
+**导入深度（关键坑）**：课时文件在 `<topic>-course/lessons/` 下，引用仓库共享构造器须 `../../course-builders.ts`（**两层**回 `app/data/`），不是 `../../../`。这是目录化布局的固有层级，与 simple 课一致。
+
+**verify 的 complex 引用完整性校验**（`scripts/verify-course.mjs` 按 `renderMode === 'complex'` 分支自动执行）：
+
+- `MODULES` 非空数组；
+- 每个 `Stage.module` 落在 `MODULES` 的 id 集内；
+- 每个 `Lesson.subStage` 落在其所属 `Stage.subStages` 的 id 集内（缺省 / `null` 放行）。
+
+> verify 只校验上述**引用完整性**，**不约束每课题数**（题量是否讲透由「数量动态化」规则与覆盖审计负责）。complex 课的题量同样由知识点完整性驱动，不靠模块/子阶段数量定死。
+
 ## 数量动态化原则（贯穿各阶段）
 
 生成课程时，以下数字一律由内容复杂度决定，**不得作为生成约束或验收目标**：
@@ -141,7 +194,7 @@ interface CourseEntry {
 }
 ```
 
-路由 `/courses/[slug]/...` 由注册表驱动；`storageKey` 形如 `knowisle:effect-ts:v1`，带版本号以便未来迁移档案。
+路由 `/courses/[slug]/...` 由注册表驱动；`storageKey` 形如 `knowisle:effect-ts:v1`，带版本号以便未来迁移档案。complex 课也走同一 `CourseEntry.data`（`CourseData.renderMode: 'complex'` + `MODULES`），注册表本身无需改动，只是该课程的 `data` 多了模块字段。
 
 ## 学情状态结构
 

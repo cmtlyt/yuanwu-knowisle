@@ -11,6 +11,10 @@ export interface Stage {
   summary: string
   color: string
   goal: string
+  /** 复杂模式专属：所属模块 id；simple 模式课程不填。 */
+  module?: number
+  /** 复杂模式专属：阶段内的子阶段分组（仅部分阶段用到，如「范式全景」拆 3.1/3.2/3.3）；缺省表示无子阶段。 */
+  subStages?: Array<{ id: string; name: string; summary?: string }>
 }
 
 export interface Concept {
@@ -60,6 +64,9 @@ export interface Lesson {
   quiz: QuizQuestion[]
   terms: string[][]
   pitfalls: string[]
+  /** 复杂模式专属：所属子阶段 id（如 '3.1'）；simple 模式或不属于任何子阶段时为空。
+   *  注意：共享构造器 L() 不含该形参，complex 课在 lessons/index.ts 用 withSubStage(l, id) 补齐。 */
+  subStage?: string | null
 }
 
 export type DesignBlock =
@@ -84,11 +91,28 @@ export interface CourseDesign {
   sections: DesignSection[]
 }
 
-/** 通用课程体：STAGES / CONCEPTS / LESSONS / META + 可选 DESIGN 说明书。 */
+/** 复杂模式渲染所需的模块（课程顶层分组维度）。形状与 Stage 对齐，便于复用渲染。 */
+export interface Module {
+  id: number
+  name: string
+  en: string
+  summary: string
+  color: string
+  goal: string
+}
+
+/** 课程渲染模式。simple = 扁平的 Stage→Lesson（既有课）；complex = 含模块的 4 层结构（系统课）。缺省 simple。 */
+export type RenderMode = 'simple' | 'complex'
+
+/** 通用课程体：STAGES / CONCEPTS / LESSONS / META + 可选 DESIGN 说明书。任意课程共用。 */
 export interface CourseData {
   STAGES: Stage[]
   CONCEPTS: Concept[]
   LESSONS: Lesson[]
   META: CourseMeta
   DESIGN?: CourseDesign
+  /** 渲染模式。缺省 'simple'（既有课零改动）；'complex' 课程需提供 MODULES 与 Stage.module。 */
+  renderMode?: RenderMode
+  /** 复杂模式专属：课程顶层模块列表。simple 模式课程不填。 */
+  MODULES?: Module[]
 }

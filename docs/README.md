@@ -54,3 +54,8 @@
 | `00036-doc-sync-after-widgets-split` | 处理拆分遗留：校正 README / 课程正文 / 代码注释 / skill 文档中的路径、演练数量、命令与运行时基线失真；AGENTS.md 只追加现行命令与 warnings 基线；历史任务记录零改动 | 2026-11-14 | [总览](00036-doc-sync-after-widgets-split/overview.md) |
 | `00037-backlog-value-review` | 只读评估剩余遗留的价值：纠正 `EffectCourseData` / feed 虚拟化 / 焦点陷阱三处旧判断，按 ROI 给出 P0 三项与做/不做表；未改产品代码 | 2026-11-14 | [总览](00037-backlog-value-review/overview.md) |
 | `00038-tutor-error-diag-and-doc-fix` | 实施 00037 的 P0：B1 `llm.ts` 网络错误映射为可读诊断 + 确定性断言；A1 `courses.ts` 24→26 课；A2 README 依赖表述校正；并实核查助学 AI 可用性 | 2026-11-14 | [总览](00038-tutor-error-diag-and-doc-fix/overview.md) |
+| `00039-multimode-course-rendering` | 多模式课程渲染重构：`renderMode` 分派 simple/complex 4 层渲染（模块手风琴 / 模块主轴雷达 / 子阶段三级头），组件按模式分组目录（`course/simple|complex/`），simple 课零行为变化 | 2026-11-15 | [总览](00039-multimode-course-rendering/overview.md) |
+| `00040-gitattributes-line-ending` | 用 `.gitattributes` + `git add --renormalize .` 消除 CRLF/LF 幽灵 diff（53 条 → 0） | 2026-11-15 | [总览](00040-gitattributes-line-ending/overview.md) |
+| `00041-complex-render-test-course` | 创建 complex 渲染测试课程 `agent-test-course`（3 模块 / 3 阶段含子阶段 / 5 课 / 4 概念 / 15 题），端到端验证 4 层渲染 | 2026-11-15 | [总览](00041-complex-render-test-course/overview.md) |
+| `00049-remove-agent-test-course` | 删除 00041 的临时测试课程数据（保留 complex 渲染层），verify 回落 2 门课 | 2026-11-15 | [总览](00049-remove-agent-test-course/overview.md) |
+| `00050-complex-course-skill-conventions` | 将 complex（4 层）课程数据规范写入 course-builder skill（data-model.md 复杂模式小节 + 接口对齐 + 骨架 types.ts + SKILL.md 资源描述），不动产品代码 | 2026-11-15 | [总览](00050-complex-course-skill-conventions/overview.md) |
