@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
 import { useLearning } from '~/composables/use-learning'
-import LessonBlock from '~/components/course/lesson-block.vue'
+import MarkdownArticle from '~/components/course/markdown-article.vue'
 import QuizCard from '~/components/course/quiz-card.vue'
 import CourseWidget from '~/components/course/course-widget.vue'
 
@@ -97,7 +97,8 @@ function go(id: string) {
       <p>可以自行跳转学习，但按顺序推进会更省力；学情分析会把这类缺口归入「前置缺口」。</p>
     </div>
 
-    <LessonBlock v-for="(b, i) in lesson!.blocks" :key="i" :block="b" />
+    <!-- 正文：markdown-in-TS 渲染（见 00053） -->
+    <MarkdownArticle :md="lesson!.md" />
 
     <template v-if="lesson!.widget">
       <div class="section-title">交互演练</div>

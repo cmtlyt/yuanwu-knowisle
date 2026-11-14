@@ -122,7 +122,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 演练内核由 `course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器；改动 widget 后跑 `check-course.mjs` + `pnpm verify`。
 - 学情数据只存 localStorage 且可导出；按课程隔离 storage key，导入时校验版本字段并拒绝非法备份。
 - 移动优先：≤780px 底部标签栏 + 抽屉导航，图示 / 代码块 / 表格各自独立横滑，触控目标 ≥40px，输入框 16px，处理刘海屏安全区。
-- 课程内容全部由类型化 TS 数据驱动，项目不使用 Nuxt Content；不要把结构化课时改写成 Markdown 内容源。
+- **课程正文用 Markdown-in-TS 书写（00053）**：课时文件 `lNN.ts` 的 `L()` **第 9 个参数 `md` 为必填反引号模板字符串**，正文用 Markdown 编写；代码块用 ```` ``` title="…" note="…" ```` 传标题 / 注记，提示框用零依赖 `:::warn / :::deep / :::tip` 容器（复用全局 `.callout.*` CSS）。`quiz` / `terms` / `pitfalls` / `widget` **仍保持结构化**，不可塞进 `md`（否则破坏题型校验与学情统计）。正文仍写在 TS 文件内、由类型化数据驱动，项目不使用 Nuxt Content。
 
 ## 8. 项目级 Skill 与仓库范围
 

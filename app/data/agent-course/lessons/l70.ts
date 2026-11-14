@@ -1,4 +1,4 @@
-import { L, prose, code, call, list, q } from '../../course-builders.ts'
+import { L } from '../../course-builders.ts'
 
 /* ========== Stage 11 ========== */
 
@@ -15,55 +15,74 @@ export const L70 = L(
     '掌握冲突消解与一致性保障的基本手段',
     '认识「最终一致性」在多 Agent 场景的定位',
   ],
-  [
-    prose(
-      '多个 Agent，冲突不可避免',
-      '两个 Agent 可能给出矛盾结论（意见冲突），也可能读到同一数据的不同版本（数据冲突）。多 Agent 系统必须有**冲突消解**与**一致性保障**机制。',
-    ),
-    code(
-      '两类冲突与应对',
-      '// ① 意见冲突：两个评审结论相反\n//   reviewer A: "方案可行"  reviewer B: "方案有风险"\n//   应对：引入仲裁者（arbiter）或投票\nconst verdict = await arbiter.run("A 说可行，B 说风险。请仲裁并给出理由。")\n\n// ② 数据冲突：两个 Agent 读到不同版本\n//   应对：版本号 + 冲突检测（乐观锁 / 最后写入胜）\nconst record = await store.getWithVersion(id)\nif (record.version !== myVersion) {\n  // 检测到冲突，重新读取或合并\n}\n\n// ③ 结果一致性：汇总时对多路结果做校验\nconst merged = await mergeWithCheck([resultA, resultB, resultC])  // 去重、去矛盾',
-      '关键：意见冲突靠「仲裁/投票」，数据冲突靠「版本控制」，汇总时统一校验。',
-    ),
-    call(
-      'deep',
-      '最终一致性',
-      '多 Agent 系统很难做到「强一致」（每个 Agent 每时每刻看到同一状态）。工程上接受「最终一致」——允许短暂不一致，但最终收敛。关键是要有**收敛机制**（仲裁、版本合并），否则不一致会永久存在。',
-    ),
-    list('一致性保障三件套', [
-      '仲裁/投票：意见冲突时找裁决。',
-      '版本控制：数据冲突时检测与合并。',
-      '幂等：同一操作重复执行结果一致，避免重复副作用。',
-    ]),
-    call(
-      'warn',
-      '副作用要幂等',
-      '多 Agent 可能「重复执行」同一动作（如两次发邮件）。所有有副作用的操作必须幂等（重复执行不产生额外副作用），这是多 Agent 一致性的底线。',
-    ),
-  ],
+  `
+### 多个 Agent，冲突不可避免
+
+两个 Agent 可能给出矛盾结论（意见冲突），也可能读到同一数据的不同版本（数据冲突）。多 Agent 系统必须有**冲突消解**与**一致性保障**机制。
+
+\`\`\` title="两类冲突与应对" note="关键：意见冲突靠「仲裁/投票」，数据冲突靠「版本控制」，汇总时统一校验。"
+// ① 意见冲突：两个评审结论相反
+//   reviewer A: "方案可行"  reviewer B: "方案有风险"
+//   应对：引入仲裁者（arbiter）或投票
+const verdict = await arbiter.run("A 说可行，B 说风险。请仲裁并给出理由。")
+
+// ② 数据冲突：两个 Agent 读到不同版本
+//   应对：版本号 + 冲突检测（乐观锁 / 最后写入胜）
+const record = await store.getWithVersion(id)
+if (record.version !== myVersion) {
+  // 检测到冲突，重新读取或合并
+}
+
+// ③ 结果一致性：汇总时对多路结果做校验
+const merged = await mergeWithCheck([resultA, resultB, resultC])  // 去重、去矛盾
+\`\`\`
+
+:::deep
+
+### 最终一致性
+
+多 Agent 系统很难做到「强一致」（每个 Agent 每时每刻看到同一状态）。工程上接受「最终一致」——允许短暂不一致，但最终收敛。关键是要有**收敛机制**（仲裁、版本合并），否则不一致会永久存在。
+
+:::
+
+### 一致性保障三件套
+
+- 仲裁/投票：意见冲突时找裁决。
+- 版本控制：数据冲突时检测与合并。
+- 幂等：同一操作重复执行结果一致，避免重复副作用。
+
+:::warn
+
+### 副作用要幂等
+
+多 Agent 可能「重复执行」同一动作（如两次发邮件）。所有有副作用的操作必须幂等（重复执行不产生额外副作用），这是多 Agent 一致性的底线。
+
+:::
+
+`,
   null,
   [
-    q(
-      '多 Agent 的两类冲突是？',
-      ['语法冲突、运行冲突', '意见冲突与数据冲突', '内存冲突、磁盘冲突', '读冲突、写冲突'],
-      1,
-      '意见冲突、数据冲突。',
-      'conflict-consistency',
-    ),
-    q(
-      '意见冲突的应对是？',
-      ['忽略', '仲裁者（arbiter）或投票裁决', '重启', '删除'],
-      1,
-      '仲裁或投票。',
-      'conflict-consistency',
-    ),
-    q(
-      '多 Agent 系统中「副作用要幂等」的原因是？',
-      ['性能', '防止重复执行产生额外副作用（如重复发邮件）', '好看', '省 token'],
-      1,
-      '幂等是多 Agent 一致性底线。',
-      'conflict-consistency',
-    ),
+    {
+      text: '多 Agent 的两类冲突是？',
+      options: ['语法冲突、运行冲突', '意见冲突与数据冲突', '内存冲突、磁盘冲突', '读冲突、写冲突'],
+      answer: 1,
+      explain: '意见冲突、数据冲突。',
+      concept: 'conflict-consistency',
+    },
+    {
+      text: '意见冲突的应对是？',
+      options: ['忽略', '仲裁者（arbiter）或投票裁决', '重启', '删除'],
+      answer: 1,
+      explain: '仲裁或投票。',
+      concept: 'conflict-consistency',
+    },
+    {
+      text: '多 Agent 系统中「副作用要幂等」的原因是？',
+      options: ['性能', '防止重复执行产生额外副作用（如重复发邮件）', '好看', '省 token'],
+      answer: 1,
+      explain: '幂等是多 Agent 一致性底线。',
+      concept: 'conflict-consistency',
+    },
   ],
   [
     ['意见冲突', '多 Agent 结论相互矛盾'],

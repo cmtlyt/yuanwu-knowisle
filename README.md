@@ -91,7 +91,7 @@ pnpm deploy              # 部署到 Cloudflare Workers（需先 pnpm exec wrang
 
 ## 架构
 
-- **内容用类型化 TS 数据，不用 Markdown**：课时含讲解块、代码块、提示框、术语、误区、题目与演练标识，结构化数据才能联动测验、概念图谱与学情归因；项目不依赖内容型 CMS。
+- **内容由类型化 TS 数据驱动，正文 Markdown-in-TS（00053）**：课时正文 `md` 用 Markdown-in-TS 模板字符串承载（`course-builders.L()` 第 9 位必填），页面用 markdown-it + DOMPurify 渲染；代码块 `title=/note=` 与 `:::warn/deep/tip` 提示框在 `md` 内表达。但 `quiz` / `terms` / `pitfalls` / `widget` 仍保持结构化（含答案下标、概念关联、解析），不并入 `md`，才能联动测验、概念图谱与学情归因；项目不依赖内容型 CMS。
 - **演练内核由 Vue 托管**：机械迁移的 DOM 演练逻辑按课程目录化、一演练一文件（原单文件 2217 行，现最大子文件 138 行），`course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器，交互能力完整保留。
 - **学情按课程隔离**：`createAnalytics(course, storageKey)` 用闭包捕获课程与 localStorage key，多课程互不串数据；`useLearning` 用 `useState` 保证 SSR 首屏一致，真实档案在 `onMounted` 载入，避免 hydration mismatch。
 - **内容 / 引擎 / 视图三层解耦**：引擎不引用 DOM，内容不 import 视图，视图不硬编码课时列表。

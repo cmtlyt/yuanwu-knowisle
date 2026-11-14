@@ -119,9 +119,10 @@ for (const { label, C } of discovered) {
   )
   ok(
     C.LESSONS.every(
-      (l) => l.blocks.length > 0 && l.goals.length > 0 && l.pitfalls.length > 0 && l.terms.length > 0,
+      (l) =>
+        !!l.md && l.md.trim().length > 0 && l.goals.length > 0 && l.pitfalls.length > 0 && l.terms.length > 0,
     ),
-    '课时内容块完整',
+    '课时正文 md 非空且结构完整',
   )
   const order = new Map(C.LESSONS.map((l, i) => [l.id, i]))
   ok(

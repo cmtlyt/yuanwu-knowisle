@@ -55,7 +55,8 @@ export interface Lesson {
   prereqs: string[]
   concepts: string[]
   goals: string[]
-  blocks: LessonBlock[]
+  /** 课程正文 Markdown 源（markdown-in-TS 渲染路径，取代原 blocks 结构；见 00053）。 */
+  md: string
   widget: string | null
   quiz: QuizQuestion[]
   terms: string[][]
