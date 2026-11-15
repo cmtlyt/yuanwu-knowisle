@@ -1,27 +1,44 @@
 /**
- * Agent Harness 比较课草稿 → 课时 TS 生成器（00091）。
+ * 通用课程草稿 → 课时 TS 生成器（00092 通用化自 00091 的 gen-agent-harness-course.mjs）。
  *
- * 草稿格式（docs/00091-agent-harness-course/drafts/LNN.md）：
+ * 草稿格式（<drafts-dir>/LNN.md）：
  *   ---
  *   { JSON frontmatter：id / stage / title / difficulty / prereqs / concepts / goals / kind / quiz / terms / pitfalls }
  *   ---
  *   （markdown 正文，作为 Lesson.md）
  *
  * 用法：
- *   node --experimental-strip-types scripts/gen-agent-harness-course.mjs           # 生成全部
- *   node --experimental-strip-types scripts/gen-agent-harness-course.mjs --check   # 干跑校验，不写文件
+ *   node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir>           # 生成全部
+ *   node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir> --check   # 干跑校验，不写文件
  *
- * 设计：草稿是唯一内容源（用户要求资料与内容先落盘、防上下文压缩丢信息）；生成只做机械转换——
+ *   例（00091 agent-harness）：
+ *     node --experimental-strip-types scripts/gen-course.mjs \
+ *       docs/00091-agent-harness-course/drafts app/data/agent-harness-course/lessons
+ *
+ * 设计：草稿是唯一内容源（资料与内容先落盘、防上下文压缩丢信息）；生成只做机械转换——
  * JSON.stringify 元数据（合法 TS 表达式）、md 走模板串并转义反引号与 ${。任何手动编辑 lNN.ts 都会在下次生成时被覆盖。
+ * 生成后必须跑 `pnpm fmt`（oxfmt 会把紧凑输出展开为门禁要求的格式；gen → fmt 后与提交版本逐字节一致）。
+ * 草稿与 out-dir 需满足 <course>/lessons 布局（lessonTs 里 course-builders 的相对导入深度依赖这一点）。
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DRAFTS = path.join(ROOT, 'docs', '00091-agent-harness-course', 'drafts')
-const OUT = path.join(ROOT, 'app', 'data', 'agent-harness-course', 'lessons')
+const args = process.argv.slice(2).filter((a) => a !== '--check')
 const CHECK = process.argv.includes('--check')
+if (args.length !== 2) {
+  console.error(
+    '用法: node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir> [--check]',
+  )
+  process.exit(2)
+}
+const DRAFTS = path.resolve(ROOT, args[0])
+const OUT = path.resolve(ROOT, args[1])
+if (!fs.existsSync(DRAFTS)) {
+  console.error(`drafts 目录不存在: ${DRAFTS}`)
+  process.exit(2)
+}
 
 const KINDS = new Set(['theory', 'practice', 'framework', 'scenario', 'capstone', 'overview'])
 
