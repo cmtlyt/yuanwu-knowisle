@@ -1,0 +1,151 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L13 = withKind(
+  L(
+    'L13',
+    6,
+    'OpenCode（上）：2.0 重写——常驻服务、Code Mode 与插件热重载',
+    2,
+    [],
+    ['h-opencode-service'],
+    [
+      '解释 2.0 的架构转变：从多进程各自为政到单一常驻后台服务，以及「agent 成为自己 API 的客户」的含义',
+      '描述 Code Mode 如何用 JavaScript 解释器解决 MCP 工具的上下文膨胀问题',
+      '列出 1.x → 2.0 的破坏性变更清单与迁移决策点',
+    ],
+    `### 背景：一场「难民潮」催生的模型中立 harness
+
+OpenCode 的走红有明确的时间线（[InfoQ 报道](http://mp.weixin.qq.com/s?__biz=MjM5MDE0Mjc4MA==&mid=2651295294&idx=1)）：Anomaly 团队（SST/Serverless Stack 出身）2025 年 6 月推出 OpenCode；**2026 年 1 月 Anthropic 开始阻止第三方 agent 使用 Claude Pro/Max 订阅凭据**，受影响开发者涌入这个「自由填 API key」的工具，关注度爆发（快照时 21.4 万 star）。MIT 许可、75+ providers 的模型中立路线，让它成为「被锁定用户」的默认去处——这个背景在横向选型章（L27）会再次出现。
+
+### 2.0：一次推倒重来的架构转变
+
+2026-10-12，Anomaly 发布 [OpenCode 2.0](https://anoma.ly/notes/opencode-2-0)（官方自述 *a major overhaul*，三个月 Beta 后成为主线）。官方发布说明列出四块核心变化：
+
+**① 常驻服务（The Service）**：1.x 里 client/server 模型只有 power user 在用；2.0 里服务器自动在本地作为**单一后台进程**运行——TUI、Web 界面、桌面应用与 \`@opencode/client\` 脚本连的是同一个实例，会话可以在终端开始、在桌面续接。\`opencode pair\` 可把服务暴露给其他主机。更具隐喻性的变化是「**agent 成为自己 API 的客户**」：它能调用自家 API 做工程操作——为新任务创建 git worktree 并把会话搬进去、识别并中断另一个卡住的会话。
+
+**② 重写 API（The API）**：官方直言旧 API 是 *grew haphazardly*（野蛮生长）的产物，从头重写；新客户端包 \`@opencode/client\` 同时提供 vanilla JS 与 **Effect** 客户端。
+
+**③ Code Mode**：这是 2.0 最有行业影响力的机制。传统 agent 每调用一个工具都要与模型往返一次，工具的名称、描述、参数 schema 全部常驻上下文——接入几十个 MCP 服务器后「agent 被自己的工具手册淹没」。\`@opencode/codemode\` 用**自研极简 JavaScript 解释器**把 MCP/OpenAPI 端点转成脚本可调用的函数：
+
+\`\`\`text
+传统工具循环（N 个工具 = N 次往返 + 全部 schema 常驻）
+  model → call tool A → 等结果 → model → call tool B → 等结果 → ...
+
+Code Mode（1 次往返 + schema 不常驻）
+  model 写脚本 → 沙箱执行（调 A、map 结果、调 B…）→ 只回传需要的内容
+  所有 MCP 默认启用 Code Mode（codemode: false 可关）
+  官方口径：可接入约 1000 台 MCP 服务器，上下文膨胀极小
+\`\`\`
+
+这与 Pi 的 Codemode（L11）思路一致——「模型爱写代码，就让模型写代码组合工具」。两个独立项目在 2026 年做出同样的架构选择，本身就是趋势信号。
+
+**④ 插件热重载**：官方把 2.0 的 80+ 功能全部实现为内部插件，倒逼 Plugin API 保持健康；TUI 插件从实验转稳定；一切支持热重载。编排侧新增**后台 subagent**（\`background: true\`，默认嵌套深度 1，可指定不同模型）与无默认超时的后台 shell，前台任务可 \`Ctrl+B\` 挪到后台。
+
+### 破坏性变更清单：升级决策点
+
+| 变更 | 影响 | 官方处置 |
+|---|---|---|
+| 1.x 插件全部失效 | 旧插件必须对照新 API 重写 | 无自动迁移（代码迁移无捷径） |
+| 服务端 API 重写 | 旧脚本/集成需重写 | 新 \`@opencode/client\` |
+| \`tui.json\` → 全局 \`cli.json\` | 声明式配置 | **自动迁移**（配置与代码插件严格隔离） |
+| Bun → Node.js | 运行时更换 | 官方理由：Windows 稳定性、Electron 嵌入、对 Bun 前景不确定 |
+| Tauri → Electron | 桌面端更换 | 稳定性优先于包体积 |
+| 不再读 CLAUDE.md | 指令文件改名 | 只读 **AGENTS.md**，需手动迁移 |
+| 不启动 LSP | 诊断缺失 | 官方建议改用 lint/类型检查器/编译器 |
+
+官方给的非对称提示值得记住：**声明式财产（配置）有自动迁移，代码资产（插件）没有**。依赖 LSP 诊断的工作流被官方明确建议暂留 1.x——「工程现实主义」的重写也有代价清单。
+
+### 横向定位
+
+2.0 后的 OpenCode 在流派上有了新的归属：**平台化 harness**——常驻服务 + 自有 API + 插件生态 + 桌面/Web/TUI 三端，形态上更接近 OpenHands/Kilo 的平台路线，而不再是「一个终端工具」。它也是本课程第一个「敢于作废自己生态」的案例：与 DSH 的 developer preview 警告（L07）、Pi 的立场演变（L11）并列，构成「快速迭代期的版本策略」三案例。下一课看它的基准成绩——头部五家之外最大的落差不属于弱模型，而属于一次昂贵的重写。
+
+### 追问与辨析：Code Mode 的一次往返省了什么
+
+Code Mode 的收益可以用一次具体任务量化。任务：「从 GitHub 取 bug 报告 → 提取关键信息 → 到 Linear 建对应 issue」（官方发布说明举的例子）。传统工具循环里这是 5–8 次模型往返（每次都带全部工具 schema + 上一步结果全文）；Code Mode 里是 1 次往返（agent 写脚本 → 沙箱执行 → 只回传最终结果）：
+
+\`\`\`javascript
+// Code Mode 脚本形状（对照 anoma.ly 官方说明：@opencode/codemode 把 MCP/OpenAPI 转成函数）
+// agent 在一次推理里写出这段脚本，沙箱内执行，中间数据不出执行环境
+const issue = await github.get_issue({ repo: "acme/api", id: 4821 });
+const summary = extract(issue.body, { fields: ["title", "steps", "severity"] });
+const ticket = await linear.create_issue({
+  team: "api",
+  title: \`[bug] \${summary.title}\`,
+  description: summary.steps,
+  labels: [summary.severity],
+});
+return { ticketId: ticket.id, linkedIssue: issue.url };
+\`\`\`
+
+省下来的东西有三笔：**往返延迟**（N 次推理变 1 次）、**上下文 token**（中间结果不进模型上下文——issue 正文、API 响应全文都留在执行环境里）、**schema 占位**（工具描述不常驻上下文，官方称可挂约 1000 台 MCP 服务器）。这就是 L24 趋同点把「Codemode」列为上下文控制面方向的原因：它不是又一个工具调用协议，而是**工具调用的编译化**——把「逐次调用」变成「写一次程序」。
+
+代价也要如实记录：脚本里的一次错误会浪费整个往返（传统循环可以在中间纠偏）；调试面从「对话」变成「读 agent 写的脚本」。官方的默认化决策（所有 MCP 默认启用 Code Mode）实际上是在赌「模型写对脚本的收益 > 中间纠偏的损失」——对批量、步骤固定的任务这个赌注是赢的，对探索型任务传统循环仍占优。DSH 的 PTC 模式（L07）给了同样的判断权：官方建议「觉得步骤太多太慢时再试」。
+`,
+    null,
+    [
+      {
+        text: 'OpenCode 2.0 的常驻服务架构解决了什么问题？',
+        options: [
+          '启动更快',
+          'TUI、Web、桌面与脚本客户端（@opencode/client）连同一个本地后台进程，会话可跨界面续接；agent 还能调用自己的 API（如把会话搬进 git worktree、中断卡住的会话）',
+          '减少内存占用',
+          '兼容 1.x 插件',
+        ],
+        answer: 1,
+        explain:
+          '官方发布说明：服务器自动在本地作为单一后台进程运行，所有界面共享同一实例；opencode pair 可暴露给其他主机。1.x 插件与旧服务端 API 不兼容——这是破坏性变更不是兼容更新。',
+        concept: 'h-opencode-service',
+      },
+      {
+        text: 'Code Mode 的核心机制与收益是？',
+        options: [
+          '把模型输出转成代码',
+          '@opencode/codemode 内置极简 JS 解释器，把 MCP/OpenAPI 端点转成脚本可调用的函数；agent 写脚本一次执行组合多工具调用，只把需要的内容交回模型——官方称可接上千台 MCP 服务器而上下文膨胀极小',
+          '用 Node VM 隔离执行',
+          '把所有工具描述塞进上下文',
+        ],
+        answer: 1,
+        explain:
+          '官方：自研极简 JavaScript 解释器（不依赖 Node VM 或 QuickJS），所有 MCP 默认启用 Code Mode（codemode: false 可关）。它解决的是「每个工具的名称/描述/参数 schema 都占上下文」的行业瓶颈。',
+        concept: 'h-opencode-codemode',
+      },
+      {
+        text: '下列哪一项不属于 OpenCode 2.0 官方列出的破坏性变更？',
+        options: [
+          '1.x 插件全部失效（API 全面革新）',
+          '服务端 API 重写，旧集成需重写',
+          'tui.json 迁移为全局 cli.json（自动迁移）',
+          '运行时从 Bun 换成 Node.js 但 API 完全兼容',
+        ],
+        answer: 3,
+        explain:
+          '官方三项破坏性变更：插件 API 革新（旧插件不运行）、服务端 API 重写、tui.json→cli.json（声明式配置自动迁移）。Bun→Node 是第四项技术栈更换，且明确伴随 API 不兼容——「完全兼容」说法错误。',
+        concept: 'h-opencode-service',
+      },
+      {
+        text: 'OpenCode 2.0 的后台编排能力包括？',
+        options: [
+          '只有后台 shell',
+          '后台 subagent（background: true，默认嵌套深度 1，可用不同模型）+ 无默认超时的后台 shell；前台任务可 Ctrl+B 挪到后台',
+          '只有定时任务',
+          '不支持后台',
+        ],
+        answer: 1,
+        explain:
+          '官方 Tools 文档（aicoder 核实转述）：后台 subagent 默认嵌套深度 1；后台 shell 无默认超时；Ctrl+B 把前台工作挪后台。这回应了「最新模型很会编排，harness 要给它们表达空间」的官方立场。',
+        concept: 'h-opencode-codemode',
+      },
+    ],
+    [
+      ['常驻服务', '2.0 的单一后台进程架构：TUI/Web/桌面/脚本共享同一实例与会话'],
+      ['Code Mode', 'MCP/OpenAPI → JS 函数 → agent 写脚本单轮组合调用的工具使用范式，默认启用'],
+      ['@opencode/client', '官方客户端包（含 vanilla JS 与 Effect），脚本自动发现本地服务'],
+    ],
+    [
+      '以为升级 2.0 只是版本号变化——插件、服务端 API、配置文件三处破坏性变更，1.x 插件作者必须重写',
+      '把 CLAUDE.md 的习惯带过来——2.0 只读 AGENTS.md；也不再启动 LSP（官方建议改用 lint/类型检查器）',
+      '给基于 1.x 的分叉项目推送 2.0——小米 MiMo Code 等独立分叉面临同步重构难题（InfoQ 报道）',
+    ],
+  ),
+  'theory',
+)

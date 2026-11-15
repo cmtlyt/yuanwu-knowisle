@@ -1,0 +1,164 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L04 = withKind(
+  L(
+    'L04',
+    1,
+    'Claude Code（下）：七种指令载体与优缺点裁决',
+    2,
+    ['L03'],
+    ['h-cc-instruction-carriers'],
+    [
+      '按「加载时机 / 压缩后是否保留 / 权威性」三维度区分七种指令载体，并复述官方反模式表',
+      '说出 output styles 会替换系统提示这一风险及 keep-coding-instructions 的对策',
+      '给出 Claude Code 的适用与排除场景，每条挂官方文档或基准证据',
+    ],
+    `### 上下文控制面的代表作：七种指令载体
+
+如果说权限运行时是 Claude Code 对「安全」的答案，那么**七种指令载体**就是它对「上下文」的答案。官方博客 [Steering Claude Code: when to use CLAUDE.md, skills, hooks, and subagents](https://claude.com/blog/steering-claude-code-skills-hooks-rules-subagents-and-more)（2026-06-18，全文已存档核实）给出完整清单，并强调每种载体都在「上下文成本 vs 权威性」之间取舍，用三个维度区分：**何时加载进上下文、是否在长会话压缩（compaction）中保留、权威性多高**。
+
+| 载体 | 加载时机 | compaction 后 | 权威性 / 特点 |
+|---|---|---|---|
+| CLAUDE.md | 会话开始，全程保留 | 重读（memoized） | 每行都占 token；官方建议 ≤200 行、指定 owner、像代码一样 review |
+| rules（\`.claude/rules/\`） | unscoped 同 CLAUDE.md；**path-scoped** 只在触碰匹配文件时加载 | 重注入 | path-scoped 用 \`paths:\` frontmatter，跨切面规则不常驻 |
+| skills | 只载名称+描述，调用时载全文 | 已调用的按共享预算重注入，最旧的先丢 | 渐进披露；适合 deploy 流程、release checklist 等程序化工作流 |
+| subagents | 只载名称/描述/工具列表 | body 在隔离上下文，不占主会话 | 只回传最终消息；最多嵌套 5 层；适合并行/隔离副任务 |
+| hooks | 生命周期事件触发 | **完全绕过 compaction** | command/HTTP/mcp_tool/prompt/agent 五类；\`PreToolUse\` exit 2 阻断 |
+| output styles | 会话开始 | **永不压缩** | 权威性最高（在 system prompt 里）；⚠️ 默认**替换**默认系统提示，需 \`keep-coding-instructions: true\` 保留工程默认 |
+| append-system-prompt | 单次调用 | 不持久 | 只加法不改变角色；经 prompt caching 降本 |
+
+这张表最值得背下来的不是名词，而是**官方反模式表**——它把「什么时候用错载体」写成了对照：
+
+\`\`\`text
+官方反模式 → 正确载体（来源：官方 steering 博客）
+CLAUDE.md 写 "Every time X, always do Y"   → hooks（确定性 vs 模型自主选择）
+CLAUDE.md 写 "Never do this"               → hooks（PreToolUse + exit 2）
+                                            或 permissions / managed settings
+CLAUDE.md 写 30 行流程                     → skills（.claude/skills/）
+API 规则没加 paths（等同写进 CLAUDE.md）   → path-scoped rule
+个人偏好写进项目 CLAUDE.md                 → 用户级文件；项目文件只放团队通用约定
+\`\`\`
+
+### 一致性检查：权限课的回声
+
+把 L03 和 L04 拼起来，会发现 Claude Code 的两个控制面共享同一条设计哲学：**给「必须确定性」的事情建确定性机制**。权限层的确定性是 deny>ask>allow 固定顺序 + managed settings 不可覆盖；上下文层的确定性是 hooks 绕过 compaction + output styles 永不压缩。「每次都要发生的事」永远不交给模型的自觉——这是横向章评价其他系统上下文设计时的第一条参照。
+
+### 优缺点裁决
+
+**优点**（均有出处）：① 企业管控最完备——组织级 CLAUDE.md 可经 MDM/config management 集中部署且**不可被个人排除**，managed settings 的 deny 不可覆盖（[权限文档](https://code.claude.com/docs/en/permissions)）；② 指令载体体系最细——七种载体 × 三维度是所有系统里公开文档最完整的（[steering 博客](https://claude.com/blog/steering-claude-code-skills-hooks-rules-subagents-and-more)）；③ 可把 skills/subagents/hooks/output styles 打包为 plugin 分发，团队资产可复用；④ 榜单头部稳定——三模型均分 49.2 落在互不显著的头部组（Harness Leaderboard 公告口径，快照 2026-11-15）。
+
+**缺点**：① 专有 + 绑定——license 为 \`© Anthropic PBC. All rights reserved.\`，模型选择被锁定在 Anthropic 体系（这也是 2026-01 Anthropic 封禁第三方订阅凭据事件中 OpenCode 承接「难民潮」的背景，见 [InfoQ 报道](http://mp.weixin.qq.com/s?__biz=MjM5MDE0Mjc4MA==&mid=2651295294&idx=1)）；② 成本量级由商业绑定决定——同板 Claude Code + Sonnet 5.5 拿 51.3 分但 **$154.03/run**，对照 Codex CLI + GPT-6 Astra 的 45 分 / $33.03（Harness Leaderboard 跨模型参照，快照 2026-11-15）；③ 配置面大意味着学习面大——七种载体 × 作用域 × trust 的组合，团队没有规范时容易写出一堆 unscoped rules 互相打架。
+
+### 适用与排除
+
+**适合**：受监管团队（需要不可覆盖的强制策略与审计）；已标准化在 Claude 生态上的团队（plugin 资产 + 订阅）；把 agent 当「带权限体系的工程工具」而非「玩具」的团队。**排除**：多厂商模型成本套利（选 OpenCode/Kilo，75+ providers）；开源审计硬要求（选 MIT 的 DSH/Pi/Hermes/OpenCode 或 Apache-2.0 的 Codex/Cline）；消息平台 24/7 无人值守 bot（选 Hermes/OpenClaw，S4/S15）；预算敏感的短频任务（Composio 口径下它每任务 $1.47 是六家最贵，[C 级转述](https://code404zero.com/?p=502)，但「重试更少、成功率高」的一面也在同一数据里）。
+
+下一章换一个哲学：Codex CLI 把「权限」从「提示与人批」改造成了「**沙箱优先**」——大多数动作根本不需要人批，因为它们跑在一个操作系统强制的笼子里。
+
+### 追问与辨析：七种载体的组合与治理
+
+**组合策略：一课一载体。** 七种载体最大的实践陷阱不是「选错」，而是「全都要」：CLAUDE.md 塞流程、unscoped rules 塞偏好、output styles 改人格、hooks 再拦一遍——上下文里同时存在四层互相打架的指令，遵循度随矛盾数量递减（官方博客原话：指令越多遵循度递减，尤其互相矛盾时）。官方反模式表给出的组合原则可以再压缩一步：**确定性需求归 hooks，路径域规则归 path-scoped rules，流程资产归 skills，其余留在 CLAUDE.md 且 ≤200 行**。四句话覆盖 90% 的场景。
+
+**治理策略：企业层的四个抓手。** 把 L03 的权限治理和 L04 的指令治理合并，Claude Code 的企业面有四个抓手：managed settings（不可覆盖的强制项）、MDM 部署的组织级 CLAUDE.md（个人不可排除）、plugin 打包（skills/hooks/subagents/styles 一起分发）、\`claudeMdExcludes\`（monorepo 里排除子目录文件）。这四个抓手共同构成一个可审计的指令供应链——**指令从哪里来、谁能改、改了怎么生效**，每一环都有明确答案。这是横向对比里 Claude Code 最难被开源竞品复制的部分：不是功能，是治理闭环。
+
+**再对照一次基准。** 这些治理能力在基准里测不到——Harness Leaderboard 测的是解题，不是「组织级策略下发」。这就是本课程反复强调「榜单 + 机制」双轨的原因：Claude Code 榜单 49.2（并列组）只说明它不拖后腿；它真正的生态位证据在权限与指令文档里。选型时把两轨都读完再下结论。
+
+把七种载体压成一张「决策树」，写 hook 配置时直接照抄：
+
+\`\`\`jsonc
+// .claude/settings.json —— hooks 五类中的 command 类示例（官方 hooks 语法形状）
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/guard-dangerous.sh" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "npx prettier --write $CLAUDE_FILE_PATHS" }
+        ]
+      }
+    ],
+    "PreCompact": [
+      { "hooks": [ { "type": "command", "command": "bash .claude/hooks/backup-history.sh" } ] }
+    ]
+  }
+}
+\`\`\`
+
+三个钩子各管一件事：\`PreToolUse\` 在权限提示**之前**跑（exit code 2 阻断危险命令，但拦不住 deny/ask 已拒绝的调用——它只有加约束的权力）；\`PostToolUse\` 做**确定性**的后处理（格式化、通知——凡是「每次都要发生」的都该在这里而不是 CLAUDE.md）；\`PreCompact\` 在压缩前备份历史（官方博客给的用例）。对照反模式表自查一遍：如果这三个钩子想做的事你原来写在 CLAUDE.md 里，现在就该搬出来。
+`,
+    null,
+    [
+      {
+        text: '官方博客建议：CLAUDE.md 里写「Every time X, always do Y」应该改成什么？为什么？',
+        options: [
+          '改成 output styles，因为它永不压缩',
+          '改成 hooks——「每次都做」是确定性需求，模型自主选择 CLAUDE.md 指令不可靠；hooks 在生命周期事件上确定性触发且完全绕过 compaction',
+          '加粗强调即可',
+          '改成 subagent',
+        ],
+        answer: 1,
+        explain:
+          '官方反模式表的第一条：CLAUDE.md 写「Every time X always Y」→ 用 hooks。确定性 vs 模型自主选择是根本区别；「Never do this」类则用 PreToolUse + exit 2 或 permissions。',
+        concept: 'h-cc-instruction-carriers',
+      },
+      {
+        text: 'output styles 的指令遵循权威性在七种载体中最高，但它有一个必须警惕的副作用，是？',
+        options: [
+          '占用 token 最多',
+          '默认会替换整个默认系统提示——除非 frontmatter 设 keep-coding-instructions: true，否则软件工程相关的默认指令（变更范围、注释、安全、验证习惯）会丢失',
+          '每次工具调用都会重新加载',
+          '不能与 hooks 共存',
+        ],
+        answer: 1,
+        explain:
+          '官方博客明确：output styles 注入 system prompt、永不压缩、权威性最高，但默认替换默认系统提示，需 keep-coding-instructions: true 保留工程默认行为。',
+        concept: 'h-cc-instruction-carriers',
+      },
+      {
+        text: 'subagents 与 skills 的本质区别是？',
+        options: [
+          'subagent 更快',
+          'skill 在主线程执行、每步可观察可引导；subagent 的 body 进入独立的隔离上下文窗口，只把最终消息返回主会话，最多嵌套 5 层',
+          'skill 只能存数据库',
+          'subagent 不能用工具',
+        ],
+        answer: 1,
+        explain:
+          '官方博客：subagents 会话开始只载名称/描述/工具列表，body 在调用时进入隔离上下文，只有最终消息（摘要+元数据）回主会话；适合并行或需隔离的副任务。skill 在主线程逐步执行。',
+        concept: 'h-cc-instruction-carriers',
+      },
+      {
+        text: '下列哪个场景最适合选 Claude Code 而不是开源 harness？',
+        options: [
+          '团队要接入 5 家不同厂商的模型做成本套利',
+          '受监管团队需要组织级强制策略、不可覆盖的 deny 与集中部署的 CLAUDE.md（MDM 下发）',
+          '想白嫖所有最新开源 agent 功能',
+          '需要消息平台网关跑 24/7 无人值守 bot',
+        ],
+        answer: 1,
+        explain:
+          '企业管控是 Claude Code 的最强差异化：managed settings 不可覆盖的 deny、MDM 集中部署组织级 CLAUDE.md 且不可被个人排除。多模型接入选 OpenCode/Kilo 等（75+ providers），消息网关选 Hermes/OpenClaw。',
+        concept: 'h-cc-instruction-carriers',
+      },
+    ],
+    [
+      ['渐进披露', '会话开始只加载名称与描述，调用时才加载全文的指令加载策略——skills 用它省 token'],
+      ['path-scoped rule', '带 paths frontmatter 的规则，只在触碰匹配文件时加载，避免跨切面规则常驻上下文'],
+      ['compaction', '长会话的上下文压缩机制；七种载体在 compaction 后的命运各不相同'],
+    ],
+    [
+      '把 30 行流程写进 CLAUDE.md——官方明确该挪去 skills；CLAUDE.md 每行都常驻上下文，官方建议控制在 200 行内并指定 owner',
+      '以为 output styles 只是「换个说话风格」——它默认替换系统提示，可能丢失工程默认指令',
+      '用 star 数或安装量推断 Claude Code 的能力排名——榜单头部五家互不显著（L02 四问），商业绑定还把成本拉到另一个量级',
+    ],
+  ),
+  'theory',
+)

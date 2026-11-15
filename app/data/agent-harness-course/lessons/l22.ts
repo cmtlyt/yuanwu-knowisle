@@ -1,0 +1,144 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L22 = withKind(
+  L(
+    'L22',
+    14,
+    'OpenHands：从自主 agent 到「控制中心」的转型与 open-core 现实',
+    2,
+    ['L01'],
+    ['h-openhands-control-center'],
+    [
+      '描述 OpenHands 的定位转型（自主 agent → ACP 兼容的 agent 控制中心）与仓库拆分现状',
+      '核对其许可结构（MIT 核心 + enterprise/ 另许可）与默认安装路径的安全提示',
+      '引用 arXiv 论文说明它作为「可配置 harness」在学术基准里的角色',
+    ],
+    `### 转型叙事：「卖 agent」变成「管 agent」
+
+OpenHands（前身 OpenDevin，2024 末发布，2025 改名）是本课程规模最大的开源项目：**82.2k stars / 10.5k forks / 7,082 commits**（第三方深评快照）。但它的故事不是「最大的 coding agent」，而是一次定位转型：仓库第一行从早期的「agent 能做人类开发者的一切」变成了 *self-hosted developer control center for coding agents and automations*——**从卖自己的 agent，转型为管控所有人的 agent**。
+
+转型后的架构（第三方深评 + 官网，B/A 级）：
+
+\`\`\`text
+Agent Canvas（浏览器前端 + 控制中心）
+   ├── 内置 OpenHands agent（BYO model：litellm 任意模型 + 自定义 base URL）
+   ├── ACP 兼容 agent：Claude Code / Codex / Gemini CLI（用各自的订阅或 key）
+   └── Automation Server：定时任务 / GitHub / Slack 事件触发
+         （预置模板：Issue→PR、PR Review、Repo Monitor、Slack Monitor）
+Agent Server（REST，单端口多 agent）
+   └── 后端可混组：本地电脑 / Mac mini / VM / 云 / 企业 VPC
+\`\`\`
+
+一个会话一历史、可从任意消息分支；AGENTS.md 承接仓库指引；MCP 加外部工具。这个定位与 OpenCode 2.0 的常驻服务（L13）、Kilo 的 KiloClaw（L19）共同构成 2026 年的「平台化」趋势——harness 的终点不是终端工具，而是**可编程的 agent 基础设施层**。
+
+### 许可现实：三份材料三种说法
+
+OpenHands 是本课程「许可要逐层核验」的最佳案例。同一时间窗内的三份材料：官方对比文说 **MIT**；第三方深评指出仓库存在 **enterprise/ 目录独立许可**（open-core 结构，商用前必读 enterprise/LICENSE）；opensourcesoftware.ai 则说「MIT 且无商业目录」。三者的差异大概率来自**不同时点的仓库快照**——这正好验证了横向章的方法论：许可结论必须绑定「哪个仓库、哪个 commit、哪个目录」。本课程的口径：**核心 MIT（open-core，企业目录许可另计），以仓库 LICENSE 为准**。
+
+### 学术角色：scaffold 适配性的正面样本
+
+[arXiv 2610.00917](https://arxiv.org/abs/2610.00917) 把 OpenHands 列为四个可配置 harness 之一，而本课程最著名的翻转数字——**Claude 在 OpenHands 下领先 GPT 7.94 分**——就发生在它的 scaffold 里。论文的 matched trajectory 分析给了解释方向：模型几乎总是自己发起修复，OpenHands 的 scaffold 把失败信息以 Claude 能用的形式交回。这给选型者的启示是双向的：OpenHands + Claude 是论文验证过的强配对；换模型时别假设这个优势会延续（秩相关 0.36）。
+
+### 安全与运维的现实提示
+
+官方文档自己写明的三条（快照 2026-11-15）：默认 npm 安装路径（Option 1）与源码运行（Option 3）**无 sandbox**、agent 可达整台机器——共享服务器要求防火墙 + 强 API key + public mode 三件套；Docker 镜像（ghcr.io/openhands/agent-canvas + 挂载 projects 目录）或每会话独立容器是更稳的部署形态；企业部署走 Kubernetes/VPC/air-gapped（官方对比文里它的差异化卖点）。仓库拆分迁移中（agent / agent-canvas / automation / cloud 各自独立仓库），部署脚本要跟当前文档对齐。
+
+### 适用与排除
+
+**适合**：企业平台团队（要管控层、审计、自动化、VPC 部署——它是官方对比表里唯一把「企业治理 + 开源基础 + 多 agent」凑齐的）；多 agent 混用团队（自己的 + Claude Code/Codex/Gemini 经 ACP 统一管理）；定时/事件驱动的无人值守工程流程（Issue→PR 自动化）。**排除**：想要轻量终端工具的个人（Canvas/Web 栈偏重）；许可审查只接受单一 MIT 的法务环境（enterprise/ 目录是变量）；默认安装即用的安全假设者。
+
+下一课是反面教材专场：OpenClaw——Gateway 即控制面的个人 agent，也是本课程配置伪影与安全边界两课的最佳素材库。
+
+### 追问与辨析：ACP 多 agent 编排与 open-core 许可的核对
+
+OpenHands 的「Agent 控制中心」定位有一个可操作的验证面：ACP。官方与第三方深评（H2-1/H2-3）都指明它能把 Claude Code、Codex、Gemini CLI 等 ACP 兼容 agent 纳入统一管理——也就是说，平台的管控层（自动化触发、审计、VPC 部署）可以套在**别家的 harness** 上，这是 15 个系统里独有的组合位。自动化触发面覆盖 GitHub/Slack/Jira/Linear 与定时（H2-1），对应 Issue 到 PR 的无人值守流程。
+
+许可核对要按 H2-5 的口径写：官网宣传 MIT，但仓库存在 \`enterprise/\` 独立许可目录，第三方摘要却说「MIT licensed with no commercial folder」——两说冲突，课程统一写「核心 MIT（open-core，企业目录许可另计），以仓库 LICENSE 为准」，引用 github.com/OpenHands/OpenHands。另两个部署级提醒来自 H2-3 的弱点清单：默认 npm install 路径**无 sandbox**（默认 agent 可访问整台机器，官方文档要求防火墙 + 强 API key + 共享服务器开 public mode，H2-4）；组件拆分迁移中（software-agent-sdk / agent-canvas / automation / openhands-cloud，issue #14841）——选型前先确认你依赖的组件在迁移后的归属。
+
+\`\`\`yaml
+# 自动化触发示意（依据 H2-1/H2-2 官网口径整理；具体 schema 以官方文档为准）
+triggers:
+  github:   { events: [issue, pull_request] }
+  slack:    { mention: true }
+  jira:     { transitions: [assigned] }
+  schedule: { cron: "0 09 * * 1-5" }
+backends:            # 多后端：自家 agent + ACP 兼容 harness（H2-3）
+  - openhands
+  - claude-code      # 经 ACP 纳入统一管控
+  - codex
+  - gemini-cli
+\`\`\`
+
+双轨发布也是核对点（H2-3）：OSS 1.11.0（2026-07-09）与 Cloud 1.47.1（2026-07-21）版本号已经分叉——云版迭代明显更快，这意味着你在 VPC 自部署拿到的功能面可能落后官方演示。评估企业能力（管控层、审计、自动化）时，要区分「仓库开源代码里有的」与「Cloud 服务才有的」，前者看 commit 与 release，后者只能看官方定价页与演示。
+`,
+    null,
+    [
+      {
+        text: 'OpenHands 官方定位的转变是？',
+        options: [
+          '从 coding agent 转向游戏引擎',
+          '从「agent 能做人类开发者的一切」转型为 self-hosted developer control center——不只跑自家 agent，还经 ACP 跑 Claude Code/Codex/Gemini CLI 等别人的 agent',
+          '从开源转闭源',
+          '从 CLI 转 IDE',
+        ],
+        answer: 1,
+        explain:
+          '第三方深评（B 级）与官网一致：仓库首行已是 self-hosted developer control center；Agent Canvas 可驱动内置 OpenHands agent 与 ACP 兼容 agent，复用现有订阅。',
+        concept: 'h-openhands-control-center',
+      },
+      {
+        text: 'OpenHands 的许可现实是？',
+        options: [
+          '纯 MIT',
+          'MIT 核心 + enterprise/ 目录独立许可（open-core）；商用前必须读 enterprise/LICENSE，不能当「纯 MIT 项目」处理；官方宣传文也自称 MIT——两说并存，以仓库 LICENSE 为准',
+          '全专有',
+          'GPL',
+        ],
+        answer: 1,
+        explain:
+          'H2-3 深评与 H2-5 冲突登记：官网/官方对比文说 MIT，深评指出 enterprise/ 目录另许可且 opensourcesoftware.ai 说「无商业目录」——不同时点的快照冲突。课程口径：核心 MIT（open-core，企业目录许可另计），给仓库链接自查。',
+        concept: 'h-openhands-control-center',
+      },
+      {
+        text: 'arXiv 2610.00917 里 OpenHands 扮演什么角色？',
+        options: [
+          '被证明最差',
+          '四个可配置 harness 之一——著名的 +7.94/−30.16 翻转就是 Claude 在 OpenHands 下领先 GPT、在 Pi 下落后 GPT；OpenHands 的 scaffold 对 Claude 是有利环境',
+          '没参与',
+          '只做背景引用',
+        ],
+        answer: 1,
+        explain:
+          '论文：66 配置含 OpenHands/DSH/PI/openJiuwen × 5 模型。Claude 在 OpenHands 下 +7.94 领先 GPT——说明它的 scaffold 对 Claude 系模型有结构性适配。',
+        concept: 'h-openhands-control-center',
+      },
+      {
+        text: 'OpenHands 官方对比文给出的行业背景里，2026 年的两个变化是？',
+        options: [
+          'Go 语言衰落、Rust 兴起',
+          'Continue.dev 被 Cursor 收购、Roo Code 于 2026-05 归档——开源 agent 生态的整合加速，选型要评估「上游消失」风险',
+          'MCP 被废弃',
+          'Docker 被淘汰',
+        ],
+        answer: 1,
+        explain:
+          'OpenHands 官方博客：By mid-2026, Continue.dev was acquired by Cursor, and Roo Code was archived in May 2026。开源不消灭维护风险，但给平台团队 inspect/fork/extend/migrate 的选项。',
+        concept: 'h-openhands-control-center',
+      },
+    ],
+    [
+      ['Agent Canvas', 'OpenHands 的浏览器界面：启动/观察/自动化 agent，可连多个 Agent Server 后端'],
+      [
+        'ACP',
+        'Agent Client Protocol：编辑器/平台驱动第三方 agent 的协议——Claude Code/Codex/Gemini CLI 可经它接入',
+      ],
+      ['Agent Server', 'REST API 服务，单端口跑多个 agent；本地电脑/VM/云可混组后端'],
+    ],
+    [
+      '把官网宣传的「MIT」当完整许可结论——enterprise/ 目录另有许可（open-core），商用前读 enterprise/LICENSE',
+      '默认 npm 全局安装直接跑——官方文档自己警告默认路径无 sandbox、agent 可访问整台机器，共享服务器必须加防火墙/强 key',
+      '忽略仓库拆分迁移中——agent/agent-canvas/automation/cloud 正在拆到独立仓库（issue #14841），文档与代码位置在漂移',
+    ],
+  ),
+  'theory',
+)

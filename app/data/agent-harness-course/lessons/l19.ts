@@ -1,0 +1,146 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L19 = withKind(
+  L(
+    'L19',
+    11,
+    'Kilo Code：open-core 许可边界与平台化开放路线',
+    2,
+    ['L02'],
+    ['h-kilo-platform'],
+    [
+      '读懂 Kilo 的许可分层：扩展 Apache-2.0（不可撤销）vs 网关/云后端 source-available（留滥用防护私有）',
+      '评估其平台化能力（5 agent modes、KiloClaw、500+ 模型、多 IDE）与定价结构',
+      '把 Kilo 与 OpenHands/Cline 在「开放承诺」维度上做对比',
+    ],
+    `### 定位：「一体化 agent 工程平台」的开放版
+
+Kilo（[kilo.ai](https://kilo.ai)）自称「all-in-one agentic engineering platform」：**VS Code / JetBrains / CLI / Cloud 四端 + 5 个 agent modes**（Code / Architect / Debug / Ask / Custom）。VS Code Marketplace 显示 **1,725,485 installs**（快照 2026-11-15）；支持 **60+ provider 的 500+ 模型**（GPT-5.5、Claude Opus 4.7、Gemini 3.1 Pro Preview 等）+ Ollama / LM Studio 本地推理；MCP 有专门的市场与概述文档；定价三档：免费 + BYOK、团队 $15/人/月、企业 $150/人/月（SSO/OIDC/SCIM、审计日志、模型白名单），**推理费零加价**。
+
+### 许可分层：把「开放」做成可审计的承诺
+
+Kilo 最值得课程展开的不是功能，而是**许可治理**。三层结构（官方 [博客](https://blog.kilo.ai/p/kilo-cloud-source-available) + [开放页](http://kilo.org.cn/open)）：
+
+\`\`\`text
+Kilo 的开放三层（2026-02-06 生效）
+① Apache-2.0 · 不可撤销
+   VS Code 扩展（kilocode/src）· JetBrains 插件（kilo-jetbrains）· CLI（kilocode/cli）
+   「无论 Kilo 作为公司发生什么，这些代码永久开源」
+② source-available
+   Kilo Gateway（500+ 模型的网关）· Kilo Cloud（会话管理/Cloud Agents/
+   Code Reviewer/Kilo for Slack）
+   可读、可审计、可贡献；不能拿去做竞争性托管
+③ 保持私有
+   滥用防护系统（abuse-protection）——唯一例外
+\`\`\`
+
+三层之外还有「结构化担保」：公开路线图、无登录墙文档、贡献代码永久开源、每 PR $150 激励，以及创始人 Sid Sijbrandij 的 GitLab open-core 履历。这套设计的教学价值在于给了一个**可复制的承诺模板**：开放不是一句话，而是「哪些目录 + 哪个许可 + 哪些例外 + 什么担保」四件事的完整披露。
+
+### 平台化能力与产品借力
+
+功能面三条主线：**多模式 agent**（5 modes 覆盖规划→编码→调试→审查的端到端编排）；**多端会话连续性**（手机开始、笔记本继续、夜间移交云端 agent）；**KiloClaw**——托管版 OpenClaw（一键部署、免 SSH/Docker/yaml、Telegram/Discord/Slack 触达、500+ 模型零加价）。KiloClaw 是本课程第一处「harness 产品互相借力」的商业样本：OpenClaw 的自托管复杂度（L23）被 Kilo 包装成托管服务，两家生态形成互补而非竞争。
+
+### 与同路线系统的对比
+
+| 维度 | Kilo | Cline（L18） | OpenHands（L22） |
+|---|---|---|---|
+| 许可 | 扩展 Apache-2.0（不可撤销）+ 网关 source-available | VS Code/CLI Apache-2.0；JetBrains 闭源 | MIT 核心 + enterprise/ 另许可（open-core） |
+| 形态 | 4 端 + 云 + KiloClaw | VS Code/JetBrains/CLI/桌面/SDK | Agent Canvas 平台 + automation |
+| 模型 | 60+ provider / 500+ 模型 | 全主流 + BYOK 原价 | 100+ providers（官方对比表） |
+| 治理 | 源码可读（含网关） | agent loop 全开源 | 核心 MIT，企业层另读 |
+
+三家都在「开放」上做文章，但开放的**对象**不同：Kilo 开放的是平台全栈（含网关），Cline 开放的是 agent loop，OpenHands 开放的是核心框架。采购时按「你要审计的到底是哪一层」来选。
+
+### 适用与排除
+
+**适合**：多 IDE 团队（VS Code + JetBrains 双官方支持是稀缺项）；需要托管消息 agent（KiloClaw）但不想自建的团队；对「开放承诺」有审计需求的组织（三层披露可逐条核验）。**排除**：要把网关代码拿去做自家托管服务的团队（source-available 禁止）；需要企业级强制管控的合规场景（不如 Claude Code 的 managed settings）；榜单数据依赖者——快照时 Harness Leaderboard 未收录 Kilo 独立分数（F-B17 里 Kilo Code 7.8.12 作为接入端出现）。
+
+下一课换一个形态变量：Grok Build——xAI 用 Rust 写的全屏鼠标 TUI，本课程唯一的「全屏应用形态」样本。
+
+### 追问与辨析：双许可证的核对面与唯一的一手跑分
+
+Kilo 的「开放」要拆成三层核验（对照官方博客 blog.kilo.ai/p/kilo-cloud-source-available 与官方「开放」页 kilo.org.cn/open）：第一层是**不可撤销的 Apache-2.0**——VS Code 扩展、JetBrains 插件、CLI（CLI 为 MIT，见引官方文档的中文评测）自开源之日起官方承诺「今天开源的明天依然开源」；第二层是 **source-available**——2026-02-06 起 Gateway 与 Cloud 后端（Session 管理、Cloud Agents、Code Reviewer、Kilo for Slack）源码可读但许可受限；第三层是**唯一保持私有的滥用防护系统**。三层披露的好处是可以逐条对账，缺点是「开源编码 agent」的官方口号必须读成「核心 Apache-2.0 + 商业后端」的组合——采购文档里不能省略后两个限定。
+
+它在本课程证据库里还有一处容易被忽略的一手数据：Bug Hunt Bench（F-B9/F-B17）实际以 Kilo Code 7.8.12 跑过 high 档——31.8/105，5 次 24–35，92 分钟，$1.07/run。这组数虽是单模型单档，却说明 Kilo 的工程形态（重度 IDE 集成 + 大工具面）在「长而深」的修 bug 任务上处于中游，与 Claude Code high 档 36.4、Hermes 32.0 相邻。选型时可用它做锚点，等 Harness Leaderboard 收录后再用 L25 的交叉读法补全。
+
+\`\`\`text
+# Kilo 组件-许可证对照（引 kilo.org.cn/open 官方清单 + 官方博客）
+kilocode/src      ->  Apache-2.0（不可撤销）
+kilo-jetbrains    ->  Apache-2.0
+kilocode/cli      ->  MIT（中文评测引官方文档口径）
+gateway + cloud   ->  source-available（2026-02-06 起）
+abuse-protection  ->  私有（官方自述唯一例外）
+# 一手跑分锚点：Bug Hunt high 档（F-B9/F-B17）
+# Kilo Code 7.8.12 -> 31.8/105，runs 24-35，92 min，$1.07/run
+\`\`\`
+
+KiloClaw 是理解 Kilo 商业逻辑的关键一环（K-1）：它是**托管版 OpenClaw**——Telegram/Discord/Slack 接入、定时任务、500+ 模型经 Kilo Gateway 零加价。这个组合位意味着 Kilo 同时押注了两个方向：IDE 内的编码 agent（与 Cline/Cursor 竞争）与消息平台上的托管 agent（与 OpenClaw 自托管人群竞争），而 Gateway 零加价的定价立场与 Cline 的 Not Profiting on Inference 原则一致——推理不赚钱，钱在团队版（$15/人/月）与企业版（$150/人/月，SSO/OIDC/SCIM/审计日志，K-4）的协作与管控层。选型时如果把「推理加价」当成本项，Kilo 与 Cline 都应按供应商原价口径计算，再叠加席位费比较。
+`,
+    null,
+    [
+      {
+        text: 'Kilo 的许可结构是？',
+        options: [
+          '全部 MIT',
+          'VS Code 扩展 / JetBrains 插件 / CLI 为 Apache-2.0 且**不可撤销**（无论公司存亡保持开源）；Gateway 与 Cloud 后端 2026-02-06 起 source-available，唯一私有的是滥用防护系统',
+          '全部闭源',
+          '核心闭源 + 插件开源',
+        ],
+        answer: 1,
+        explain:
+          '官方博客（2026-02-06 开放承诺）与官网「开放」页：扩展层 Apache-2.0 不可撤销；网关/云后端 source-available（可读可审计可贡献，但不得拿去做竞争性托管）；滥用防护保持私有。',
+        concept: 'h-kilo-platform',
+      },
+      {
+        text: 'source-available 与开源许可（Apache-2.0）的关键区别是？',
+        options: [
+          '没有区别',
+          'source-available 可以读代码、审计安全、贡献改进，但一般不能拿去商用/提供竞争性托管服务；Apache-2.0 授予更广的商用再分发权',
+          'source-available 更自由',
+          'source-available 是专有软件的同义词',
+        ],
+        answer: 1,
+        explain:
+          'Kilo 官方博客原话解释了这个光谱：source-available 介于完全专有与 OSI 开源之间。采购与合规评审要按实际许可读，不能看到「开放源代码」四个字就按开源处理。',
+        concept: 'h-kilo-platform',
+      },
+      {
+        text: 'KiloClaw 是什么？',
+        options: [
+          '新的编程语言',
+          '托管版 OpenClaw：一键部署、免 SSH/Docker/yaml，经 Telegram/Discord/Slack 触达，500+ 模型经 Kilo Gateway 零加价',
+          'VS Code 的一个主题',
+          '代码审查工具',
+        ],
+        answer: 1,
+        explain:
+          '官网：KiloClaw = Everything OpenClaw can do, minus the self-hosting complexity。它把 L23 的 OpenClaw（消息平台个人 agent）做成托管服务——产品形态上的「借力」样本。',
+        concept: 'h-kilo-platform',
+      },
+      {
+        text: 'Kilo 官方宣称的开放承诺中，哪一条最能对冲「开源 bait-and-switch」风险？',
+        options: [
+          '500+ 模型',
+          '「今天开源的功能，明天依然开源。没有脚注，没有『暂时如此』」+ Apache-2.0 不可撤销 + co-founder 是 GitLab 联创 Sid Sijbrandij（open core 模式的长期实践者）',
+          '网页好看',
+          '价格便宜',
+        ],
+        answer: 1,
+        explain:
+          '官网「开放」页的可验证承诺 + 不可撤销许可 + 创始人的 GitLab open-core 履历，三者构成承诺的「结构化担保」——比口头承诺可复核。',
+        concept: 'h-kilo-platform',
+      },
+    ],
+    [
+      ['open-core', '核心开源 + 企业增值闭源/另许可的商业模式；审计时要区分哪些目录在哪个许可下'],
+      ['irrevocable license', '不可撤销许可：无论公司存亡，已开源代码永久保持开源'],
+      ['零加价定价', '推理费按供应商原价转售，平台靠订阅/席位盈利——与 Cline 的 BYOK 原则同向'],
+    ],
+    [
+      '把 Kilo 全部按 Apache-2.0 处理——网关/云后端是 source-available，商用权利受限',
+      '忽略 CLI 与扩展许可的差异——第三方评测称 CLI 为 MIT、扩展为 Apache-2.0，采用前以仓库 LICENSE 为准',
+      '把官方自述数字（300 万+ 开发者、40T+ token）当独立验证事实——那是营销口径',
+    ],
+  ),
+  'theory',
+)

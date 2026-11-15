@@ -1,6 +1,7 @@
 import { EFFECT_COURSE } from './effect-course'
 import { RXJS_COURSE } from './rxjs-course'
 import { AGENT_COURSE } from './agent-course'
+import { AGENT_HARNESS_COURSE } from './agent-harness-course'
 import type { CourseEntry } from '~/types/course'
 
 /**
@@ -49,6 +50,20 @@ export const COURSES: CourseEntry[] = [
     status: 'available',
     storageKey: 'knowisle:agent:v1',
     data: AGENT_COURSE,
+  },
+  {
+    slug: 'agent-harness',
+    title: 'Agent Harness 深度比较',
+    subtitle: '15 系统 · 证据快照 2026-11-15',
+    tagline: '每个 Agent 系统的机制、优缺点与适用领域，全部基于可证实资料',
+    description:
+      '17 阶段 27 课：方法论与基准读法 2 课，Claude Code / Codex CLI / DeepSeek Harness / Hermes / Pi / OpenCode 等主流系统各 2 课，mini-swe-agent / Kimi Code / Qwen Code / Cline / Kilo / Grok Build / Letta / OpenHands / OpenClaw 各 1 课，末章横向对比与场景化选型。每课夹带官方文档与基准原文链接，数字全部标注快照日期。',
+    icon: '🔬',
+    color: '#8b6cef',
+    tags: ['AI Agent', 'Harness 对比', '证据方法论', '选型'],
+    status: 'available',
+    storageKey: 'knowisle:agent-harness:v1',
+    data: AGENT_HARNESS_COURSE,
   },
   {
     slug: 'more',

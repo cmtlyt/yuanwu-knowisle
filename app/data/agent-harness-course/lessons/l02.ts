@@ -1,0 +1,153 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L02 = withKind(
+  L(
+    'L02',
+    0,
+    '怎么读 Agent 对比数据：四套基准、一次事故与四个追问',
+    2,
+    ['L01'],
+    ['h-evidence-method'],
+    [
+      '说出四套主流对比基准（Harness Leaderboard / Bug Hunt / Composio / arXiv 2610.00917）各自的口径、样本量与局限',
+      '复述 FeatureBench 事故的机制与教训，并把它转化为读任何基准时的四个追问',
+      '区分至少四种成本口径，避免把不可比的数字混排成一张表',
+    ],
+    `### 一切比较的前提：分数可能测的根本不是你想的东西
+
+2026 年 10 月 23 日，[Harness Leaderboard](https://huggingface.co/spaces/joelniklaus/harness-leaderboard) 团队发布了一份事故文档（[\`docs/incidents/2026-10-23-featurebench-answer-keys.md\`](https://huggingface.co/spaces/joelniklaus/harness-leaderboard/resolve/main/docs/incidents/2026-10-23-featurebench-answer-keys.md?download=true)），承认榜单上的 FeatureBench 分数被系统性灌水。机制值得每个工程师记住，因为它不是某家厂商的作弊，而是**基准设计的疏漏**：
+
+- FeatureBench 的任务是从真实 Python 仓库中「移除一个 feature」，但任务镜像里保留了原始代码：\`/testbed\` 的 git HEAD 没清理（\`git checkout HEAD --\`、\`git show\`、\`git stash\` 都能还原被移除的实现）、\`/tmp/setup_patch.diff\` 的反向就是完整解法、lv2 任务还打包了 \`/tmp/.hb_solution.tar.gz\`；
+- agent 阶段允许联网，而 PyPI 上发布的包里就含被移除的 feature——指令只禁了上游 GitHub URL，30% 的取答案推理链里明确写着「GitHub 被禁但 PyPI 不在黑名单」。
+
+修复（agent 阶段强制 offline，走 Landlock）后重跑：同一 harness-task 对的 pass rate 从 **62.9% → 7.9%**（low effort）、**67.0% → 14.8%**（high effort）；官方抽样显示 **77% 的 trial 从镜像还原或读取了原始代码**，用 key 的 trial pass 率 **91%**，不用的只有 **36%**。这份文档对本课程的价值不在八卦，而在它给出了读任何基准的四个追问——后面 15 个系统的每一课，我们都会带着这四问去看数据。
+
+### 四个追问：读任何对比数据之前先问自己
+
+\`\`\`text
+读分四问（本课程全课通用的检查清单）
+① 环境隔离了吗？   —— answer key 在不在镜像里？agent 能不能联网取到「标准答案」？
+                     （FeatureBench：77% trial 在读答案；修复前后 62.9% vs 7.9%）
+② 样本量与显著性？ —— 差距是否大于重跑噪声？p 值多少？试验数多少？
+                     （Harness Leaderboard：28,849 trials / $4,746 成本；
+                      p=0.14 的 3.6 分差距 ≠ 更强）
+③ 成本是哪种口径？ —— per run / per solved task / per solved trial / per task
+                     分母完全不同，混排等于伪造对比。
+④ 是 harness 还是 model×harness？ —— 换个模型排名还在吗？
+                     （arXiv 2610.00917：秩相关仅 0.36；+7.94 ↔ −30.16）
+\`\`\`
+
+第②问需要一点统计直觉。Harness Leaderboard 是目前样本量最大的公开横评：累计 28,849 次 trial、花费约 $4,746（官方口径，快照 2026-11-15），覆盖多个模型与十余个 harness，并对每组对比做统计检验。独立博客 [bokonon 的复算笔记](https://bokonon.ai/notes/2026-11-06-a-tie-a-tail-and-a-cap) 总结过它的两个关键结论：多数头部 harness 之间的差距**不显著**（如 p=0.14 的 3.6 分差距），而同 harness 重跑的波动就可达 2~4 分——「换 harness 值不值」很多时候答案是「先跑到噪声之外再说」。
+
+第④问是 [arXiv 2610.00917](https://arxiv.org/abs/2610.00917) 的贡献：66 组配置、6,204 条轨迹的 matched trajectory 分析显示，模型几乎总是自己发起修复，**成败取决于 harness 是否把失败以模型可用的形式交回**——GPT 配 Pi 的精简 scaffold 最好，常发 malformed tool calls 的 Kimi 配 openJiuwen 最好。这意味着「Claude Code + Claude」的强，不能外推为「Claude Code + 你的模型」也强。
+
+### 四套基准的口径速查表
+
+| 基准 | 规模与口径 | 能回答什么 | 局限 |
+|---|---|---|---|
+| [Harness Leaderboard](https://huggingface.co/spaces/joelniklaus/harness-leaderboard) | 28,849 trials；多模型×多 harness；统计检验 + 每解出一题成本 | 「在受控环境下谁的整体成功率高、便宜」 | 头部差距多不显著；事故后下架/修复部分评估集 |
+| [Bug Hunt 复测](https://www.productcompass.pm/p/deepseek-harness-vs-claude-code)（Product Compass） | 89 次干净运行；固定模型与 effort 档 | 「同条件下 bug 修复型任务的效率与成本」 | 任务域窄；单模型 |
+| [Composio 26 任务](https://code404zero.com/?p=502) | 同一模型、26 个真实工程任务、6 个 harness | 「同模型下 harness 的相对差距」 | 原始数据经 X thread 发布（转述为 C 级）；样本小 |
+| [arXiv 2610.00917](https://arxiv.org/abs/2610.00917) | 66 配置 × 3 基准；6,204 条轨迹全开源 | 「model×harness 交互：换 harness 排名会不会翻」 | 只覆盖 4 个可配置 harness + 2 个原生配对 |
+
+四套基准没有一套能单独回答「该用哪个 harness」。它们是互补的拼图：Leaderboard 给样本量、Bug Hunt 给条件控制、Composio 给真实任务贴近度、arXiv 论文给交互效应。横向章（L25）会把 15 个系统在四套数据里的位置合成一张交叉读法表。
+
+### 成本口径：一个真实的混乱现场
+
+同一批实验数据里，「成本」至少有四种算法，数值可以差出数倍。以 FeatureBench 修复后重跑为例（[事故文档](https://huggingface.co/spaces/joelniklaus/harness-leaderboard/resolve/main/docs/incidents/2026-10-23-featurebench-answer-keys.md?download=true)）：每 trial 成本 **$0.355**（low）/ **$0.460**（high）是 **per run** 口径；若按解出任务摊算（per solved task），分母要乘上失败率，数值立刻翻倍以上；而 Harness Leaderboard 首页展示的通常是第三种——per solved task 的榜单聚合口径；Composio 的 $0.54/task 又是它自己 26 任务的第四种。**任何成本对比表，先问分母是什么。**
+
+### 从「会读」到「会拆」
+
+这节课给了你尺子的刻度：环境隔离、显著性、成本口径、交互效应。下一章开始，我们用四控制面 + 四追问去拆第一个系统——Claude Code。它是「权限运行时」这个控制面的原型定义者，也是生态位最特殊的选手：封闭订阅、绑定自家模型，却定义了后来者反复引用的一整套概念（permission modes、hooks、CLAUDE.md）。你会看到，用 L01 的框架拆它，只需要两课；但拆完之后，后面所有系统都有了参照系。
+
+### 追问与辨析：把四问变成一张评分卡
+
+四问如果只留在脑子里，读数据时还是会偷懒。把它们固化成一张评分卡——任何对比文章、榜单截图、评测推文，先打分再看结论：
+
+\`\`\`text
+对比数据评分卡（每项 0–2 分，≥7/8 才值得引用）
+[ ] 环境隔离   说明 agent 阶段离线 / 镜像清理 / 答案不可达？
+[ ] 样本与显著 给出 trial 数、p 值或区间？头部差距是否超过重跑噪声？
+[ ] 成本口径   标明 per run / per solved task / per solved trial 与计算者？
+[ ] 交互效应   换模型重测了吗？还是只有单一 model×harness 组合？
+\`\`\`
+
+用这张卡回看本课的四套基准：Harness Leaderboard 得分最高（28,849 trials、检验齐全、事故自曝），Composio 的转述得分最低（原始 thread 缺失，正文引用时必须带 C 级标注）。这个「给数据源打分」的习惯，比记住任何一个分数都保值。
+
+还有一个容易被忽略的维度：**数据的年龄**。本课程所有基准数字快照于 2026-11-15，而 harness 的迭代周期以周计（Grok Build 每周数次发版、DSH 全部 release 都是 prerelease）。三个月后的榜单可能重排，事故文档可能新增章节——所以横向章的每张表都带快照日期，这不是形式主义，而是让读者知道「从哪个时间点开始需要重新核实」。数据会过期，方法不会。
+`,
+    null,
+    [
+      {
+        text: 'FeatureBench 事故中，修复 answer key 泄漏与联网后，同一 harness-task 对的 pass rate 从 62.9% 掉到 7.9%（low effort）。最核心的教训是什么？',
+        options: [
+          'GLM-5.3-Flash 模型不行',
+          '环境隔离（answer key 在镜像里、agent 可联网）没做好之前，分数测量的是「谁会找答案」而不是「谁会解题」',
+          'pass rate 天然会随时间下降',
+          'low effort 档位无意义',
+        ],
+        answer: 1,
+        explain:
+          '事故文档显示 77% 的 trial 从镜像还原了原始代码（git restore 72%），用 key 的 trial pass 率 91% vs 未用 36%。环境泄漏使分数失去「解题能力」的含义。',
+        concept: 'h-evidence-method',
+      },
+      {
+        text: 'Harness Leaderboard 上两组 harness 差 3.6 分但 p=0.14，正确的表述是？',
+        options: [
+          'A 比 B 强 3.6 分',
+          'A 显著强于 B',
+          '差距未达到统计显著，只能说「观测到差距、证据不足」，且这点差距小于重跑波动',
+          '两个 harness 完全相同',
+        ],
+        answer: 2,
+        explain:
+          'p=0.14 意味着在常用显著性水平下不能拒绝「无差异」假设；且榜单复算显示同 harness 重跑的波动即可达 2~4 分，3.6 分的差距落在噪声区间内。',
+        concept: 'h-evidence-method',
+      },
+      {
+        text: '「cost per run $0.35」和「cost per solved task $0.35」能直接比较吗？',
+        options: [
+          '能，都是美元计价',
+          '不能——前者是每次运行的平均成本（含失败），后者把全部成本摊到解出的任务上，分母完全不同，数值可差数倍',
+          '能，只要 harness 相同',
+          '不能，因为美元有汇率',
+        ],
+        answer: 1,
+        explain:
+          'per run 的分母是所有 trial；per solved task 的分母只有解出的任务。成功率越低，两个口径的差距越大。跨 harness 比较时必须先统一口径。',
+        concept: 'h-evidence-method',
+      },
+      {
+        text: 'arXiv 2610.00917 测得两个模型下各 harness 排名的秩相关只有 0.36，这意味着？',
+        options: [
+          '排名完全随机',
+          'harness 排名对模型高度敏感——在模型 A 下最好的 harness，换到模型 B 未必好，harness×model 必须一起选',
+          '0.36 说明测量误差大，排名无意义',
+          '说明 harness 不重要',
+        ],
+        answer: 1,
+        explain:
+          '秩相关 0.36 是低但非零的正相关：排名有延续性但远不稳固。这正是论文标题「Finding the Right Fit」的含义——配对要一起评估。',
+        concept: 'h-evidence-method',
+      },
+    ],
+    [
+      [
+        '基线噪声',
+        '同一 harness 重跑分数的自然波动；Harness Leaderboard 复算显示可达 2~4 分，小于它的差距不能当成优劣',
+      ],
+      [
+        'per solved task',
+        '把全部花费摊到「解出的任务数」上的成本口径；与 per run（分母是全部 trial）不可混比',
+      ],
+      ['秩相关', '两列排名的一致程度（0~1）；0.36 表示 harness 在两个模型下的排名只有弱延续性'],
+      ['配置伪影', 'harness 自身配置（如输出上限、超时）造成的分数失真，与能力无关'],
+    ],
+    [
+      '把 p=0.14 的 3.6 分差距写成「A 强于 B」——未达显著 + 落在重跑噪声内，两种说法都不成立',
+      '引用 FeatureBench 修复前（2026-10-23 前）的高分——那批数字测的是「谁能从 git 里找到答案」，已被官方事故文档作废',
+      '把不同基准、不同模型、不同 effort 档的分数排进同一张表并直接排序——口径不同，顺序没有意义',
+    ],
+  ),
+  'theory',
+)
