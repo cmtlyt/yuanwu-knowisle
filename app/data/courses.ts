@@ -2,6 +2,7 @@ import { EFFECT_COURSE } from './effect-course'
 import { RXJS_COURSE } from './rxjs-course'
 import { AGENT_COURSE } from './agent-course'
 import { AGENT_HARNESS_COURSE } from './agent-harness-course'
+import { LANGCHAIN_COURSE } from './langchain-course'
 import type { CourseEntry } from '~/types/course'
 
 /**
@@ -64,6 +65,20 @@ export const COURSES: CourseEntry[] = [
     status: 'available',
     storageKey: 'knowisle:agent-harness:v1',
     data: AGENT_HARNESS_COURSE,
+  },
+  {
+    slug: 'langchain-source',
+    title: 'LangChain 源码深度课',
+    subtitle: 'langchain@1.6.6 · core@1.4.1 · langgraph@1.7.4',
+    tagline: '从仓库地形到 Pregel 内核，全部基于真实源码取证',
+    description:
+      '10 模块 34 阶段 132 课：1.x 主线（core 数据原语 / LCEL / createAgent / middleware / LangGraph 内核 / RAG / 类型系统）→ 0.x→1.x 迁移（36 行映射 + 三走查）→ 两个 Capstone。每个 API 名与行为都标注源码 文件:行 + commit，TS 线与 Python 线严格划界。',
+    icon: '🦜',
+    color: '#1c8c6e',
+    tags: ['LangChain', '源码走读', 'Agent', 'LangGraph', '迁移'],
+    status: 'available',
+    storageKey: 'knowisle:langchain-source:v1',
+    data: LANGCHAIN_COURSE,
   },
   {
     slug: 'more',

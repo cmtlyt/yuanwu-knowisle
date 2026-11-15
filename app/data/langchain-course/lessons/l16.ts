@@ -1,0 +1,309 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L16 = withKind(
+  L(
+    'L16',
+    5,
+    'BaseChatModel.invoke 全链路：消息 → PromptValue → generatePrompt → ChatGeneration',
+    3,
+    ['L10'],
+    ['lc-chat-model-invoke'],
+    [
+      '按顺序说清 invoke 的四步：输入归一、generatePrompt、取 generations[0][0]、返回 chatGeneration.message',
+      '解释 _convertInputToPromptValue 的三分支：string → StringPromptValue、数组 → ChatPromptValue、其余原样透传',
+      '说明 ChatGeneration/ChatGenerationChunk 与 LLMResult 的结构关系，以及实例级配置 outputVersion（含 LC_OUTPUT_VERSION 环境变量）与 cache 的构造期处理',
+    ],
+    `### 从消息到生成的中间表示链
+
+模块二上半的最后一站：模型调用面。前八课把消息世界拆了个底朝天，现在换视角——**一次 model.invoke(messages) 调用里，消息是怎么一步步走到 provider、结果又是怎么包回来的**。本课走读 BaseChatModel 的 invoke 全链路：四个步骤、两层中间表示（PromptValue 与 Generation）、一份实例级配置。核心结论：**invoke 并不直接调模型，它是一段「输入归一 → prompt 组装 → 生成 → 结果解包」的流水线，provider 子类只需要填 _generate 一个洞**。
+
+### 类声明与实例级配置
+
+\`\`\`ts
+export abstract class BaseChatModel<
+  CallOptions extends BaseChatModelCallOptions = BaseChatModelCallOptions,
+  // TODO: Fix the parameter order on the next minor version.
+  OutputMessageType extends BaseMessageChunk = AIMessageChunk,
+> extends BaseLanguageModel<OutputMessageType, CallOptions> {
+  lc_namespace = ["langchain", "chat_models", this._llmType()];
+
+  disableStreaming = false;
+
+  outputVersion?: MessageOutputVersion;
+
+  constructor(fields: BaseChatModelParams) {
+    super(fields);
+    this.outputVersion = iife(() => {
+      const outputVersion =
+        fields.outputVersion ?? getEnvironmentVariable("LC_OUTPUT_VERSION");
+      if (outputVersion && ["v0", "v1"].includes(outputVersion)) {
+        return outputVersion as "v0" | "v1";
+      }
+      return "v0";
+    });
+  }
+\`\`\`
+
+*— langchain-core/src/language_models/chat_models.ts:220-252（commit 7704471）*
+
+三个配置点。**泛型顺序的历史包袱**：TODO 注释承认 CallOptions/OutputMessageType 的参数顺序需要修——基类 API 的演进会留下这种化石级注释，读到时别跳过。**OutputMessageType 默认 AIMessageChunk**：invoke 的返回基线是 chunk 而非「完整消息」，这与模块三四大支柱里 stream/invoke 的类型统一有关（块即消息，L10 的 chunk 家族直接复用）。**outputVersion 三级取值链**：实例字段 → LC_OUTPUT_VERSION 环境变量 → 兜底 v0，且只接受合法字面量——环境变量注入输出协议版本的口子为灰度切换 v1 内容模型而留。disableStreaming 也在此初始化为 false，L17 的主角，先记名字。
+
+### invoke 的四步分解
+
+\`\`\`ts
+  async invoke(
+    input: BaseLanguageModelInput,
+    options?: Partial<CallOptions>
+  ): Promise<OutputMessageType> {
+    const promptValue = BaseChatModel._convertInputToPromptValue(input);
+    const result = await this.generatePrompt(
+      [promptValue],
+      options,
+      options?.callbacks
+    );
+    const chatGeneration = result.generations[0][0] as ChatGeneration;
+    // TODO: Remove cast after figuring out inheritance
+    return chatGeneration.message as OutputMessageType;
+  }
+\`\`\`
+
+*— langchain-core/src/language_models/chat_models.ts:287-300（commit 7704471）*
+
+九行代码四个步骤，逐个拆。**第一步：输入归一**。**第二步：generatePrompt**——注意输入被包成单元素数组 \`[promptValue]\`：生成层的 API 面向批量（多个 promptValue 并行生成），invoke 只是批量为 1 的特例。**第三步：解包**——generations[0][0]，第一个输入的第一个候选。**第四步：返回 .message**——注释承认 as OutputMessageType 是继承体系没理顺的权宜。整条链没有一行 provider 代码：**invoke 是纯协议层，真正的生成入口是子类实现的 _generate（chat_models.ts:1205-1209 的 abstract 声明）**，generate → _generateUncached → 逐输入调用 _generate 的委托链在 generatePrompt 之下。
+
+### 输入归一：_convertInputToPromptValue
+
+\`\`\`ts
+  protected static _convertInputToPromptValue(
+    input: BaseLanguageModelInput
+  ): BasePromptValueInterface {
+    if (typeof input === "string") {
+      return new StringPromptValue(input);
+    } else if (Array.isArray(input)) {
+      return new ChatPromptValue(input.map(coerceMessageLikeToMessage));
+    } else {
+      return input;
+    }
+  }
+\`\`\`
+
+*— langchain-core/src/language_models/base.ts:557-567（commit 7704471）*
+
+三分支对应三种输入姿势。字符串包成 StringPromptValue；数组经 coerceMessageLikeToMessage 归一成 BaseMessage[] 再包成 ChatPromptValue——coerce 正是消息宽容输入（string/[role,content]/fields 对象都行）的入口，L10 的三态构造在这里被二次调用；第三分支原样透传，意味着调用方可以自带 PromptValue 实现。为什么要有 PromptValue 这层？因为 **BaseLLM（补全式）与 BaseChatModel（对话式）共用同一个 generatePrompt 签名**（base.ts:486-490 的 abstract）：字符串输入对补全模型是正菜，对 chat 模型要转消息；中间表示让两类模型共享批量生成、缓存、回调的上层协议。消息宽容输入还带来一个跨课的呼应：BaseMessageLike 联合类型里连 {type:"remove"} 都收——那是 langgraph add_messages reducer 的约定（evidence E32），归一化的宽容度是全生态对齐的。
+
+### generatePrompt 与结果容器
+
+\`\`\`ts
+  async generatePrompt(
+    promptValues: BasePromptValueInterface[],
+    options?: string[] | Partial<CallOptions>,
+    callbacks?: Callbacks
+  ): Promise<LLMResult> {
+    const promptMessages: BaseMessage[][] = promptValues.map((promptValue) =>
+      promptValue.toChatMessages()
+    );
+    return this.generate(promptMessages, options, callbacks);
+  }
+\`\`\`
+
+*— langchain-core/src/language_models/chat_models.ts:1194-1203（commit 7704471）*
+
+generatePrompt 只做一件事：PromptValue → 消息二维数组，然后交给 generate。结果的容器在 outputs.ts：
+
+\`\`\`ts
+export class ChatGenerationChunk
+  extends GenerationChunk
+  implements ChatGeneration
+{
+  public message: BaseMessageChunk;
+
+  constructor(fields: ChatGenerationChunkFields) {
+    super(fields);
+    this.message = fields.message;
+  }
+
+  concat(chunk: ChatGenerationChunk) {
+    return new ChatGenerationChunk({
+      text: this.text + chunk.text,
+      generationInfo: {
+        ...this.generationInfo,
+        ...chunk.generationInfo,
+      },
+      message: this.message.concat(chunk.message),
+    });
+  }
+}
+\`\`\`
+
+*— langchain-core/src/outputs.ts:80-101（commit 7704471）*
+
+LLMResult 的 generations 是 Generation[][]——**输入维 × 候选维的二维结构**；ChatGeneration 在 Generation 上加 message: BaseMessage。ChatGenerationChunk 的 concat 是 L15 合并 DSL 的第二落点：文本层直接字符串拼接，消息层委托给 BaseMessageChunk.concat——**消息合并的复杂度全部收敛在消息类内部，Generation 只管自己的 text/generationInfo**。这个分层让 L15 的规则表只需实现一次，被 invoke 聚合、流式聚合两处复用。generate 之下还有缓存检查与回调装配（_generateUncached，chat_models.ts:647 起）：每个生成结果无 id 时以 run-\${runId} 补 id（:880-883），与 L17 流式路径的行为一致。
+
+### cache 的构造期处理
+
+\`\`\`ts
+  constructor({
+    callbacks,
+    callbackManager,
+    ...params
+  }: BaseLanguageModelParams) {
+    const { cache, ...rest } = params;
+    super({ callbacks: callbacks ?? callbackManager, ...rest });
+    if (typeof cache === "object") {
+      this.cache = cache;
+    } else if (cache) {
+      this.cache = InMemoryCache.global();
+    } else {
+      this.cache = undefined;
+    }
+    this.caller = new AsyncCaller(params ?? {});
+  }
+\`\`\`
+
+*— langchain-core/src/language_models/base.ts:466-484（commit 7704471）*
+
+cache 的三态：对象直接用（自定义 BaseCache 实现）、true 用全局单例（跨实例共享，进程内生效）、否则不缓存。注意全局单例的语义：**cache: true 的所有模型实例共享同一份内存缓存**——测试里两个模型实例互相「闻到」对方的缓存是真实会发生的坑。caller（AsyncCaller）也在这里装配，它是 provider 请求的重试/并发外衣，L28 会正面讲。同文件 :464 的 cache?: BaseCache 字段声明确认缓存挂在共同基类上，chat/LLM 两族通用——L20 讲 BaseLLM 时会对照。
+
+### generate 的缓存分支：批量视角下的命中与回填
+
+invoke 走到 generatePrompt 之后就是 generate（chat_models.ts:1094 起），它的缓存分支值得单独走读——这是 L16 的 cache 三态在调用链上的兑现：
+
+\`\`\`ts
+    if (!this.cache) {
+      return this._generateUncached(baseMessages, callOptions, runnableConfig);
+    }
+
+    const { cache } = this;
+    const llmStringKey = this._getSerializedCacheKeyParametersForCall(
+      callOptions as CallOptions
+    );
+
+    const { generations, missingPromptIndices, startedRunManagers } =
+      await this._generateCached({
+        messages: baseMessages,
+        cache,
+        llmStringKey,
+        parsedOptions: callOptions,
+        handledOptions: runnableConfig,
+      });
+
+    let llmOutput = {};
+    if (missingPromptIndices.length > 0) {
+      const results = await this._generateUncached(
+        missingPromptIndices.map((i) => baseMessages[i]),
+        callOptions,
+        runnableConfig,
+        startedRunManagers !== undefined
+          ? missingPromptIndices.map((i) => startedRunManagers?.[i])
+          : undefined
+      );
+      await Promise.all(
+        results.generations.map(async (generation, index) => {
+          const promptIndex = missingPromptIndices[index];
+          generations[promptIndex] = generation;
+          // Join all content into one string for the prompt index
+          const prompt = BaseChatModel._convertInputToPromptValue(
+            baseMessages[promptIndex]
+          ).toString();
+          return cache.update(prompt, llmStringKey, generation);
+        })
+      );
+      llmOutput = results.llmOutput ?? {};
+    }
+
+    return { generations, llmOutput } as LLMResult;
+\`\`\`
+
+*— langchain-core/src/language_models/chat_models.ts:1115-1163（commit 7704471，节选）*
+
+三个机制点。**无缓存直通车**：this.cache 为 undefined 时整个缓存层被跳过，直奔 _generateUncached——不缓存零开销。**批量缓存的粒度是「每个 prompt 单独命中」**：_generateCached 返回 missingPromptIndices（未命中的下标数组），generate 只对这些下标发起真实生成，再按原下标回填 generations——十个输入命中七个时，只有三个进 provider。**缓存键的构成**：llmStringKey 由 callOptions 序列化而来，缓存的字面键是 prompt 的字符串形式（\`_convertInputToPromptValue(...).toString()\`）——这意味着**两条消息序列若字符串化后相同就会命中同一缓存**，也解释了为什么 cache 默认关闭：多轮对话里哪怕差一条消息都是不同键，命中率天然不高，缓存更适合无状态的批量补全场景。另外注意生成结果回填前经 \`cache.update\` 异步写入，写入失败不阻塞返回（Promise.all 的粒度是回填不是生成）。这段还顺带演示了 \`_separateRunnableConfigFromCallOptionsCompat\`（:1112 附近）：RunnableConfig 与 provider CallOptions 的切分在 generate 层就完成了，呼应 E28/L35 的双轨传播。
+
+### 本课小结
+
+- invoke 四步：_convertInputToPromptValue 归一 → generatePrompt（批量为 1）→ 解包 generations[0][0] → 返回 .message；provider 只填 _generate 一个洞。
+- PromptValue 是字符串世界与消息世界的中间表示；LLMResult 的 generations 是输入×候选二维结构。
+- ChatGenerationChunk.concat 把消息合并委托给消息类，text 层自己拼——L15 的 DSL 在生成层的复用点。
+- outputVersion 走「实例字段 → LC_OUTPUT_VERSION 环境变量 → 默认 v0」三级链；cache 三态（对象/true 全局单例/关）。
+- 下一课：流式三件套——_streamResponseChunks 缺省抛错、_streamIterator 降级 invoke、disableStreaming 开关，看流式如何优雅降级。
+`,
+    null,
+    [
+      {
+        text: 'model.invoke("你好") 传入裸字符串时，第一步会发生什么？',
+        options: [
+          '抛错，chat 模型只接受消息数组',
+          '被 _convertInputToPromptValue 包成 StringPromptValue，随后 generatePrompt 阶段经 toChatMessages() 归一成消息数组',
+          '自动包装成 SystemMessage',
+          '直接把字符串当 content 发给 provider',
+        ],
+        answer: 1,
+        explain:
+          'language_models/base.ts:557-567：string 分支返回 new StringPromptValue(input)；chat_models.ts:1199-1201 的 generatePrompt 再对每个 promptValue 调 toChatMessages() 转成 BaseMessage[][]。A 错，裸字符串是显式支持的输入；C 错，没有角色包装逻辑；D 错，中间隔着 PromptValue 与 ChatMessages 两层归一。',
+        concept: 'lc-chat-model-invoke',
+      },
+      {
+        text: 'invoke 的返回值从 LLMResult 里怎么取？',
+        options: [
+          '直接返回 LLMResult',
+          '取 result.generations[0][0] as ChatGeneration，返回其 .message 属性（并 as 成 OutputMessageType）',
+          '取 generations 的最后一项',
+          '返回 result.llmOutput',
+        ],
+        answer: 1,
+        explain:
+          'chat_models.ts:297-299：const chatGeneration = result.generations[0][0] as ChatGeneration; return chatGeneration.message as OutputMessageType。generations 是二维数组（每个输入一组、每组可有多个候选），invoke 只取第一个输入的第一个候选。C 错，没有「最后一项」语义；D 错，llmOutput 是 provider 附加信息不是消息。',
+        concept: 'lc-chat-model-invoke',
+      },
+      {
+        text: '构造 BaseChatModel 时 cache: true 与 cache: someCacheObject 的区别是？',
+        options: [
+          '两者都创建独立的 InMemoryCache 实例',
+          'cache: true 使用 InMemoryCache.global() 的全局单例；传对象则直接使用该实例；不传则 cache 为 undefined（不缓存）',
+          'cache: true 会抛错，必须传实例',
+          'cache 只对 BaseLLM 生效',
+        ],
+        answer: 1,
+        explain:
+          'language_models/base.ts:476-482：typeof cache === "object" 时 this.cache = cache；truthy（true）时 this.cache = InMemoryCache.global()；否则 undefined。A 错，布尔 true 走全局单例而不是新建；C 错，布尔形式是公开 API；D 错，cache 字段在共同基类 BaseLanguageModel 上，chat 与 LLM 都有。',
+        concept: 'lc-chat-model-invoke',
+      },
+      {
+        text: 'outputVersion 的取值链是？',
+        options: [
+          '永远是 "v1"',
+          'fields.outputVersion 优先，否则读环境变量 LC_OUTPUT_VERSION，合法值（v0/v1）才采用，都不满足时默认 "v0"',
+          '由 provider SDK 决定',
+          '由模型名自动推断',
+        ],
+        answer: 1,
+        explain:
+          'chat_models.ts:244-251：iife 里先取 fields.outputVersion ?? getEnvironmentVariable("LC_OUTPUT_VERSION")，校验属于 ["v0","v1"] 才返回，兜底 "v0"。实例级配置 + 环境变量兜底是这套配置的标准模式。A 错，默认恰恰是 v0；C/D 无机制依据。',
+        concept: 'lc-chat-model-invoke',
+      },
+    ],
+    [
+      [
+        'PromptValue',
+        '模型输入的中间表示接口，StringPromptValue 与 ChatPromptValue 是两个实现，统一提供 toChatMessages()/toString()',
+      ],
+      [
+        'LLMResult',
+        '生成结果容器：generations: Generation[][]（输入×候选二维数组）+ llmOutput + RUN_KEY 运行元数据',
+      ],
+      [
+        'ChatGeneration',
+        'Generation 加 message: BaseMessage 字段；流式对应物 ChatGenerationChunk 的 message 是 BaseMessageChunk 且 concat 时逐层合并',
+      ],
+      [
+        'disableStreaming',
+        'BaseChatModel 实例字段（默认 false），置 true 后流式调用降级为单次 invoke（详见 L17）',
+      ],
+    ],
+    [
+      '以为 invoke 是 provider 调用的直接封装——它经由 PromptValue/generation 中间表示链，子类只实现 _generate，入口层的归一化与回调装配都在基类',
+      '把 invoke 的返回类型想成 BaseMessage——签名是 OutputMessageType（默认 AIMessageChunk），chunk 就是 invoke 的返回基线，这正是流式时代「块即消息」的设计',
+      '给 invoke 传消息数组以外的自定义对象并期待自动包装——_convertInputToPromptValue 对非 string/数组的输入原样透传，对象必须自己实现 PromptValue 接口',
+    ],
+  ),
+  'framework',
+)

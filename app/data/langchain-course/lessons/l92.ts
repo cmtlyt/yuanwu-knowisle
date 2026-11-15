@@ -1,0 +1,234 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L92 = withKind(
+  L(
+    'L92',
+    26,
+    'Tracer 家族与 langsmith 硬依赖：persistRun、RunTree 上报、streamEvents 回调——与 L36 执行树视角划界',
+    3,
+    ['L36'],
+    ['lc-tracer-family'],
+    [
+      '区分 Tracer 与普通 callback handler 的身份边界，说出 persistRun 契约与 run 树收集职责',
+      '取证 langsmith 是常规 dependencies 而非可选 peer，并解释 Run 数据模型为何由 langsmith 定义',
+      '辨析 LangChainTracer 的 RunTree 上报路径与 streamEvents 的 EventStreamCallbackHandler 机制',
+    ],
+    `### 本课划界：执行树视角已讲完，今天讲数据往哪发
+
+L36 讲回调传播时立过界碑：执行树视角（run 树如何靠 getChild 逐层生长）归回调传播课，**消费视角——数据被谁收走、发到哪、以什么格式——归本课与下一课**。本课核心结论：**Tracer 是「有上报意图的 handler」：core 定义收集契约（BaseTracer + persistRun），langsmith 定义数据模型与传输（Run extends BaseRun + RunTree）——观测层的标准不是 core 说了算，而是 langsmith 说了算**。
+
+### 走读：BaseTracer 的收集契约
+
+\`\`\`ts
+// tracers/base.ts
+import { KVMap, BaseRun } from "langsmith/schemas";        // 行 1：数据模型来自 langsmith
+
+// TODO: Remove this type and just use the base LangSmith Run type.
+export interface Run extends BaseRun {
+  id: string;
+  start_time: number;
+  end_time?: number;
+  execution_order: number;
+  child_runs: this[];
+  child_execution_order: number;
+  events: Array<{ name: string; time: string; kwargs?: Record<string, unknown> }>;
+  trace_id?: string;
+  dotted_order?: string;
+}
+
+export abstract class BaseTracer extends BaseCallbackHandler {
+  protected runMap: Map<string, Run> = new Map();          // @deprecated
+  protected runTreeMap: Map<string, RunTree> = new Map();
+  protected usesRunTreeMap = false;
+
+  protected abstract persistRun(run: Run): Promise<void>;
+
+  _addRunToRunMap(run: Run) {
+    const { dottedOrder, microsecondPrecisionDatestring } =
+      convertToDottedOrderFormat(new Date(run.start_time).getTime(), run.id, run.execution_order);
+    // ... 维护 run 树父子关系
+  }
+}
+\`\`\`
+
+*— langchain-core/src/tracers/base.ts:1-141（commit 7704471）*
+
+三个观察点。其一，**Run 的身份是 langsmith 的**：\`Run extends BaseRun\`，源码注释直接承认这是过渡态（TODO: just use the base LangSmith Run type）。trace_id 与 dotted_order 两个可选字段是 langsmith 的全局排序方案——dotted_order 把时间戳微秒化 + 执行序拼接成字符串，让分布式上报的 run 能在服务端按确定序重建树。其二，BaseTracer 持有 runMap（旧）与 runTreeMap（新）双 Map，\`usesRunTreeMap\` 开关决定用哪套——LangChainTracer 已切到 runTreeMap（见下），这是「Run 对象 → RunTree 对象」迁移期的活证据。其三，\`persistRun\` 是唯一抽象方法，签名收整棵树（整个 Run 含 child_runs）。收集契约与上报目的地被这个方法彻底解耦：**core 管「怎么收集」，子类管「发给谁」**。
+
+家族成员一览：LangChainTracer（上报 langsmith）、EventStreamCallbackHandler（streamEvents 事件流）、log_stream 的回调件（token 级流）、run_collector（把 run 树收进内存数组供程序消费）。四个成员共享同一套收集骨架，persistRun 各走各路。
+
+收集骨架内部还有两处可以看的机械。\`_addChildRun\` 把子 run 挂到父 run 时，同时用 \`Math.max\` 收敛父子两侧的 \`child_execution_order\`（tracers/base.ts:145-152）——执行序是「整棵树单调」的全局承诺，不是每个子树各自为政，服务端重建树形时靠它排序。父 run 带 dotted_order 时，子 run 的 dotted_order 就是「父序.当前序」的字符串拼接（149-152 行）——配合前文 convertToDottedOrderFormat 的微秒时间戳，分布式场景下两台机器各自收集的碎片可以在服务端按字符串序拼回一棵树。错误信息统一过 \`stringifyError\`（Error 取 message+stack、字符串原样、其余强转字符串，tracers/base.ts:114-124）——上报格式的一致性在基类就收口了。
+
+### 硬依赖取证：package.json 说话
+
+\`\`\`json
+// langchain-core/package.json（dependencies 片段）
+"dependencies": {
+  "@cfworker/json-schema": "^4.1.4",
+  "@standard-schema/spec": "^1.1.0",
+  "js-tiktoken": "^1.0.12",
+  "langsmith": ">=0.11.0 <1.0.0",
+  "mustache": "^4.2.0",
+  "p-queue": "^6.6.2",
+  "zod": "^4.6.6"
+}
+\`\`\`
+
+*— langchain-core/package.json:27-34（commit 7704471）*
+
+langsmith 列在**常规 dependencies** 里，且不是宽松的 \`*\` 而是带版本窗的 \`>=0.11.0 <1.0.0\`——上界钉死在 1.0 之前，说明 langsmith 尚未到 1.0，core 用范围锁规避其破坏性变更。「core 是零观测依赖的纯净底座」是流传很广的误解：tracer 直接 import langsmith 的类型与客户端（tracers/base.ts:1、tracer_langchain.ts:1-7、document_loaders/langsmith.ts 直接 import Client），**装 @langchain/core 就必然装 langsmith**。工程推论：要彻底脱钩 langsmith，只能换实现层（如自定义 tracer 不 import），不能靠 package 管理。
+
+### 走读：LangChainTracer 的 RunTree 上报
+
+\`\`\`ts
+// tracer_langchain.ts
+import { Client } from "langsmith";
+import { RunTree, type RunTreeConfig } from "langsmith/run_trees";
+import { getCurrentRunTree } from "langsmith/singletons/traceable";
+
+export class LangChainTracer extends BaseTracer implements LangChainTracerFields {
+  name = "langchain_tracer";
+  client: LangSmithTracingClientInterface;
+  usesRunTreeMap = true;
+
+  constructor(protected fields: LangChainTracerFields = {}) {
+    super(fields);
+    this.client = client ?? getDefaultLangChainClientSingleton();
+    const traceableTree = LangChainTracer.getTraceableRunTree();
+    if (traceableTree) { this.updateFromRunTree(traceableTree); }
+  }
+
+  protected async persistRun(_run: Run): Promise<void> { /* empty */ }
+
+  async onRunCreate(run: Run): Promise<void> {
+    const runTree = this.getRunTreeWithTracingConfig(run.id);
+    await runTree?.postRun();
+  }
+  async onRunUpdate(run: Run): Promise<void> { /* ... postRun 同理 */ }
+}
+\`\`\`
+
+*— langchain-core/src/tracers/tracer_langchain.ts:93-161（commit 7704471）*
+
+上报路径的三个事实。其一，客户端默认来自**单例** \`getDefaultLangChainClientSingleton()\`——整个进程共享一个 langsmith Client，批量与连接复用在客户端层统一。其二，persistRun 是**空实现**：LangChainTracer 不等树收完再整树上报，而是 onRunCreate/onRunUpdate 时逐 run \`postRun()\`——每个 run 创建即推、结束即更，流式上报而不是批量补交。这与 persistRun「整树上报」的契约不矛盾：契约是「你负责上报」，实现方式自选。其三，构造器里 \`getTraceableRunTree()\` 检查 @traceable 装饰器的 current run tree，命中就 \`updateFromRunTree\` 接管其父子上下文——**langchain 回调树可以嫁接进 langsmith traceable 的树里**（反之 configure 侧也会做 parent run id 交接，L93 详述）。两套观测入口互认，用户不会得到断树。
+
+### streamEvents：伪装成 handler 的 tracer
+
+\`\`\`ts
+// event_stream.ts
+export type StreamEvent = {
+  event: string;        // on_[runnable_type]_(start|stream|end)
+  name: string;
+  run_id: string;
+  tags?: string[];
+  metadata: Record<string, any>;
+  data: StreamEventData;
+};
+
+export const isStreamEventsHandler = (handler: BaseCallbackHandler): handler is EventStreamCallbackHandler =>
+  handler.name === "event_stream_tracer";
+
+export class EventStreamCallbackHandler extends BaseTracer implements CallbackHandlerPrefersStreaming {
+  name = "event_stream_tracer";
+  lc_prefer_streaming = true;
+  public receiveStream: IterableReadableStream<StreamEvent>;
+  protected async persistRun(_run: Run): Promise<void> {
+    // This is a legacy method only called once for an entire run tree and is therefore not useful here
+  }
+}
+\`\`\`
+
+*— langchain-core/src/tracers/event_stream.ts:57-216（commit 7704471）*
+
+\`streamEvents\` API 的实现本体就是一个 BaseTracer 子类：EventStreamCallbackHandler 把收集到的 run 树**展开成扁平事件流**（event/name/run_id/tags/metadata/data 六字段），写入内部 TransformStream，消费者 \`for await (const event of stream)\` 迭代 receiveStream。三个细节：\`lc_prefer_streaming = true\` 声明「我想要 token 级回调而不是等结束才拿结果」；\`persistRun\` 空实现加注释自嘲 legacy——它逐事件输出、从不整树上报；\`isStreamEventsHandler\` 按 name 字符串识别（142-145 行），存在的原因是**回调系统在配置合成时需要识别并剔除它，避免 streamEvents 的 tracer 又被当作普通 handler 重复触发**——观测体系内部也有防重复的协作细节。
+
+最后回到 handler 方法面收个尾：callbacks/base.ts 里所有 handle 方法都是**可选的**（\`handleLLMStart?\`、\`handleChainError?\`、\`handleLLMNewToken?\`、\`handleChatModelStreamEvent?\`……），基类不是 abstract 方法集合而是「钩子目录」——按需覆写。NewTokenIndices（43-46 行）的 prompt/completion 双索引是多候选补全时代的遗痕；新增的 \`handleChatModelStreamEvent\`（97-103 行）是 content-block 级事件，粒度比 token 更细，与 L18 的块级流事件协议同源。
+
+### 本课小结
+
+- Tracer = 收集契约（BaseTracer 收 run 树）+ 上报意图（persistRun 或逐 run postRun），与普通 handler 的差异在「处理整棵树」。
+- Run 数据模型 extends langsmith BaseRun；langsmith 是 core 的常规 dependencies（>=0.11.0 <1.0.0）——观测 schema 的话语权在 langsmith 手里。
+- LangChainTracer：RunTree 逐 run 上报（create/update 即 postRun）、客户端单例、与 @traceable 树互认。
+- streamEvents = EventStreamCallbackHandler（BaseTracer 子类）把 run 树展开成扁平 StreamEvent 流；isStreamEventsHandler 防重复触发。
+- 下一课下探消费端机制：configure 双层合并如何传播 handler、handler 报错为什么不中断主流程。
+`,
+    null,
+    [
+      {
+        text: 'BaseTracer 唯一的抽象方法是？',
+        options: ['handleLLMEnd', 'persistRun', 'onRunCreate', 'getChild'],
+        answer: 1,
+        explain:
+          'tracers/base.ts:128：protected abstract persistRun(run: Run): Promise<void>。Tracer 的职责是收集 run 树（_addRunToRunMap 维护 runMap/runTreeMap），收集完成后交给子类决定「往哪发」——LangChainTracer 发 langsmith、EventStreamCallbackHandler 展开成事件流、RunCollector 收进数组。persistRun 对 LangChainTracer 甚至是空实现（onRunCreate 里逐 run 上报）。',
+        concept: 'lc-tracer-family',
+      },
+      {
+        text: 'tracers/base.ts 顶部 import { KVMap, BaseRun } from "langsmith/schemas" 说明了什么？',
+        options: [
+          'langsmith 是可选增强，没有它 tracer 也能跑',
+          'Run 数据模型直接继承 langsmith 的 BaseRun——trace 的 schema 由 langsmith 定义，core 只做收集与传输',
+          '只是类型巧合，无依赖关系',
+          'langsmith 依赖 core，方向反了',
+        ],
+        answer: 1,
+        explain:
+          'tracers/base.ts:1 + 21-39：export interface Run extends BaseRun，注释 TODO: Remove this type and just use the base LangSmith Run type。且 langsmith 在 langchain-core/package.json 是常规 dependencies（"langsmith": ">=0.11.0 <1.0.0"），不是 peerDependency——「core 无观测依赖」的印象是错的。',
+        concept: 'lc-tracer-family',
+      },
+      {
+        text: 'LangChainTracer 把 run 上报给 langsmith 用的核心结构是？',
+        options: [
+          '直接 POST HTTP 请求',
+          'RunTree——嵌套 span 结构，onRunCreate/onRunUpdate 时 postRun，且与 @traceable 装饰器的 run tree 互通',
+          '写本地文件再同步',
+          'WebSocket 长连接',
+        ],
+        answer: 1,
+        explain:
+          'tracer_langchain.ts:6 import { RunTree } from "langsmith/run_trees"；onRunCreate/onRunUpdate 里 getRunTreeWithTracingConfig(run.id) 后 await runTree?.postRun()。构造器里 getTraceableRunTree() 检查 @traceable 的 current run tree 并 updateFromRunTree 互通（tracer_langchain.ts:135-138）——langchain 回调体系与 langsmith traceable 装饰器可互认父子关系。',
+        concept: 'lc-tracer-family',
+      },
+      {
+        text: 'streamEvents 的 EventStreamCallbackHandler 是什么身份？',
+        options: [
+          '独立的流式协议，与回调系统无关',
+          'extends BaseTracer 的 tracer，把 run 树展开成扁平 StreamEvent 流——伪装成 handler 的 tracer',
+          '只处理 token 的纯 handler',
+          'langsmith 专属上传器',
+        ],
+        answer: 1,
+        explain:
+          'tracers/event_stream.ts:153-155：export class EventStreamCallbackHandler extends BaseTracer，name = "event_stream_tracer"，lc_prefer_streaming = true。它把嵌套 run 树转成 [event/name/run_id/tags/metadata/data] 扁平事件流输出到 receiveStream。isStreamEventsHandler（按 name 识别）的存在说明回调系统需要专门识别/剔除它避免重复触发。',
+        concept: 'lc-tracer-family',
+      },
+      {
+        text: 'handleLLMNewToken 携带的 NewTokenIndices 记录什么？',
+        options: [
+          '全局 token 计数',
+          'idx.prompt 与 idx.completion——哪个 prompt、哪个候选 completion 产出了这个 token（多候选补全时代的遗痕）',
+          'token 在文本中的字节偏移',
+          '当前 token 的费用',
+        ],
+        answer: 1,
+        explain:
+          'callbacks/base.ts:43-46：interface NewTokenIndices { prompt: number; completion: number }，JSDoc 解释是「if there are multiple prompts / multiple completions per prompt」。n 个候选补全并行生成的 API 形态遗痕——现代单候选流式场景下 completion 恒为 0。',
+        concept: 'lc-tracer-family',
+      },
+    ],
+    [
+      ['BaseTracer', '回调 handler 的 tracer 化基类：收集 run 树 + persistRun 上报契约'],
+      ['RunTree', 'langsmith 定义的嵌套 span 结构，LangChainTracer 的上报载体'],
+      [
+        'EventStreamCallbackHandler',
+        'streamEvents 的实现本体：BaseTracer 子类，run 树 → 扁平 StreamEvent 流',
+      ],
+      ['Run', 'trace 数据模型：extends langsmith/schemas.BaseRun + child_runs/execution_order 扩展'],
+    ],
+    [
+      '以为 langsmith 可以从 core 里整个剔除——它是常规 dependencies，tracer 与 LangSmithLoader 都直接 import，除非换实现否则无法脱钩',
+      '在 tracer 的 handle* 方法里抛异常期望中断主流程——handler 报错默认只警告（L93 详述），观测不应有中断语义',
+      '把 handleLLMNewToken 当唯一的流式观测钩子——content-block 级的 handleChatModelStreamEvent（base.ts:97-103）更细粒度，v1 协议优先走它',
+    ],
+  ),
+  'theory',
+)

@@ -1,0 +1,288 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L42 = withKind(
+  L(
+    'L42',
+    12,
+    'invoke 路径追踪：从参数归一到 #graph.invoke',
+    2,
+    ['L40'],
+    ['lc-agent-invoke'],
+    [
+      '从零跑通一个不依赖真实 LLM 的最小 agent：用 FakeToolCallingModel + tool() 组装、invoke 断言最终状态里的 messages 序列',
+      '实现一个带 stateSchema 的中间件并调通 invoke，观察中间件状态的默认值填充；再故意缺省必填字段，跑出并读懂 initializeMiddlewareStates 的报错信息',
+      '写出使用 InvokeConfiguration 的调用代码：给 contextSchema 传参、验证 context 缺失时的类型/运行时行为，并从 invoke 返回中取出 structuredResponse',
+    ],
+    `### 开篇：静态图的第一次点火
+
+前三课我们把 ReactAgent 编译成了图（L41），本课点燃它。invoke 是 agent 最常用的执行入口，也是全模块口径的关键一条：**ReactAgent.invoke 最终委托 \`#graph.invoke()\`**。本课先走读 invoke 的源码三步（配置合并 → 中间件状态初始化 → 图调用），然后用两份可运行的实验代码验证：实验一从零跑通最小 agent 并断言消息序列；实验二调通带 stateSchema 的中间件，并故意踩进必填字段报错，读懂框架给的修复指引。全程用 \`FakeToolCallingModel\`——index.ts:722 导出的公共测试模型——让每次断言都确定性成立。
+
+### invoke 源码三步：薄方法，两道预处理
+
+先看 invoke 的全部实现（JSDoc 略）：
+
+\`\`\`ts
+async invoke(
+  state: InvokeStateParameter<Types>,
+  config?: InvokeConfiguration<
+    InferContextInput<
+      Types["Context"] extends AnyAnnotationRoot | InteropZodObject
+        ? Types["Context"]
+        : AnyAnnotationRoot
+    > &
+      InferMiddlewareContextInputs<Types["Middleware"]>
+  >
+) {
+  type FullState = MergedAgentState<Types>;
+  const mergedConfig = this.#getGraphConfig(config);
+  const initializedState = await this.#initializeMiddlewareStates(
+    state,
+    mergedConfig as RunnableConfig
+  );
+
+  return this.#graph.invoke(
+    initializedState,
+    mergedConfig
+  ) as Promise<FullState>;
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:1223-1245（commit 7704471）*
+
+三步读法。第一步 \`#getGraphConfig\`（ReactAgent.ts:779-784）：\`mergeConfigs({...this.#defaultConfig, callbacks: undefined}, config)\`——把构造期固化的默认配置与调用方配置合并，但先把默认里的 callbacks 挖空，让调用方的回调成为唯一权威来源（quiz 里的辨析）。第二步 \`#initializeMiddlewareStates\`（ReactAgent.ts:1142-1178 包装）：对每个带 stateSchema 的中间件 safeParse 输入状态、补默认值，同时 \`#graph.getState(config)\` 读当前线程已有值合并（catch 后退化为空对象），**只对输入中缺失的键补默认**。第三步委托 \`#graph.invoke\`，返回类型断言为 \`MergedAgentState<Types>\`——即 L39 反查族给出的「agent 自身 + 中间件」合并状态。invoke 自己没有任何执行逻辑：**参数归一做完了就撒手**。
+
+还有一个前置短路容易被漏掉：\`#initializeMiddlewareStates\` 开头有一段防御——\`if (!this.options.middleware?.length || isCommand(state) || !state) return state\`（ReactAgent.ts:1145-1150）。三个条件各挡一类调用：没挂中间件时无需任何状态解析；输入是 Command 对象（LangGraph 的高级控制流载荷，比如 \`new Command({ resume: ... })\`）时直接放行——**Command 携带的是控制流指令而不是状态数据，强行 safeParse 会把指令对象误当状态校验**；空输入同理。这条短路说明 invoke 的两条预处理并非无条件执行，而是按输入形态分派：普通对象走全量归一，Command 走直通。
+
+### 状态合并的完整序：五层输入怎么叠
+
+invoke 前真正决定「模型第一眼看到什么状态」的，是这段合并逻辑。拆开看每一层的优先级：
+
+\`\`\`ts
+const defaultStates = await initializeMiddlewareStates(
+  this.options.middleware,
+  state
+);
+const threadState = await this.#graph
+  .getState(config)
+  .catch(() => ({ values: {} }));
+const updatedState = {
+  ...threadState.values,
+  ...state,
+} as InvokeStateParameter<Types>;
+
+// Only add defaults for keys that don't exist in current state
+for (const [key, value] of Object.entries(defaultStates)) {
+  if (!(key in updatedState)) {
+    updatedState[key as keyof typeof updatedState] = value;
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:1152-1176（commit 7704471，有裁剪）*
+
+五层叠放顺序清晰可辨：**第一层**是 \`threadState.values\`——checkpointer 里本线程的历史状态，垫底；**第二层**是调用方 \`state\`——展开在历史值之上，同名键由输入覆盖历史（这是「每次 invoke 输入说了算」的实现）；**第三层**才是中间件默认值，且只走 \`if (!(key in updatedState))\` 的补缺分支——输入与历史都没有的键才填默认。这个顺序解释了实验二里一个关键现象：如果你在 invoke 输入里显式传 \`rounds: 5\`，schema 里的 \`.default(0)\` 不会生效——默认值的优先级低于一切显式值。另外 \`getState\` 的 catch 分支值得注意：没配 checkpointer 时 getState 会失败，这里静默退化成空对象，让无持久化的单次调用照常工作，而不是让默认值填充跟着报错。
+
+再看 \`initializeMiddlewareStates\` 内部对 stateSchema 的两道预处理。其一，schema 不一定是 Zod 对象——也可能是 LangGraph 的 StateSchema 实例，此时逐字段转换：\`ReducedValue\` 实例的字段取 \`inputSchema || valueSchema\`（nodes/utils.ts:45-53），普通字段直接用。这是「StateDefinitionInit 双轨」在 invoke 路径上的落点：无论中间件作者用 Zod 还是 Annotation 风格声明状态，归一逻辑都能吃下。其二，\`interopZodObjectMakeFieldsOptional(zodSchema, (key) => key.startsWith("_"))\`（68-71 行）把下划线前缀字段整体放宽为可选——私有状态从 schema 层就退出了必填校验，这就是实验二里 \`_\` 前缀字段不用传值的机制依据。
+
+### 实验一：从零跑通最小 agent 并断言消息序列
+
+不依赖真实 LLM 的最小 agent。FakeToolCallingModel 的构造参数是 \`toolCalls: ToolCall[][]\`——每轮模型调用按序吐出一组 tool_calls，吐完保持最后一条：
+
+\`\`\`ts
+import { createAgent, tool, FakeToolCallingModel } from "langchain";
+import { z } from "zod/v3";
+
+// 1. 实现一个客户端工具
+const getWeather = tool(
+  ({ location }) => \`Now in \${location}: 22°C, sunny\`,
+  {
+    name: "get_weather",
+    description: "Query current weather",
+    schema: z.object({ location: z.string() }),
+  }
+);
+
+// 2. 用假模型编排工具调用剧本：第 1 轮调工具，第 2 轮收尾
+const model = new FakeToolCallingModel({
+  toolCalls: [
+    [
+      {
+        name: "get_weather",
+        args: { location: "Paris" },
+        id: "call_1",
+        type: "tool_call",
+      },
+    ],
+    [], // 第 2 轮无 tool_calls → 模型路由器走 exit
+  ],
+});
+
+// 3. 组装 agent
+const agent = createAgent({ model, tools: [getWeather] });
+
+// 4. 跑通 invoke 并断言
+const result = await agent.invoke({
+  messages: [{ role: "user", content: "What's the weather in Paris?" }],
+});
+
+console.log(result.messages.map((m) => m.type).join(" -> "));
+// "human -> ai -> tool -> ai"
+console.log(result.messages.at(-1).text);
+// 第 2 轮 AIMessage 的文本（FakeToolCallingModel 默认吐 "Hello world!" 类文本）
+\`\`\`
+
+逐行对上 L41 的图：human 输入进 entryNode（无中间件，即 model_request）→ AgentNode 调假模型吐 tool_calls → \`#createModelRouter\`（ReactAgent.ts:847-897）看到末条 AIMessage 带 tool_calls，v2 下按调用逐个 \`new Send(TOOLS_NODE_NAME, { lg_tool_call })\` → ToolNode 执行 get_weather 写回 ToolMessage → 回环 loopEntryNode（= model_request）→ 第 2 轮无 tool_calls → 条件边路由到 exitNode（END）。把这条链在纸上画一遍，图拓扑与运行时序就对齐了。注意 tool() 的 schema 这里用 \`zod/v3\`——与仓库测试保持一致，避免 v3/v4 互操作层的变量（L101 再展开）。
+
+### 实验二：中间件状态的默认值填充与报错诊断
+
+再调通「中间件状态」这条 invoke 独有的预处理。先实现一个带 stateSchema 的中间件（createMiddleware 的完整契约在模块五，这里只用最小面）：
+
+\`\`\`ts
+import { createMiddleware } from "langchain";
+import { z } from "zod/v3";
+
+const counter = createMiddleware({
+  name: "counter",
+  stateSchema: z.object({
+    rounds: z.number().default(0),        // 必填但有 default → invoke 可不传
+    operator: z.string(),                 // 必填无 default → invoke 必须传
+  }),
+  beforeAgent: ({ state }) => {
+    console.log("rounds =", state.rounds, "operator =", state.operator);
+    return { rounds: state.rounds + 1 };
+  },
+});
+
+const agent2 = createAgent({
+  model,
+  tools: [getWeather],
+  middleware: [counter],
+});
+
+// 调通：operator 由输入提供，rounds 缺省吃 default
+const r2 = await agent2.invoke(
+  {
+    messages: [{ role: "user", content: "hi" }],
+    operator: "alice",
+  }
+);
+console.log(r2.rounds); // 1（default 0 经初始化填充后，beforeAgent 写回 +1）
+\`\`\`
+
+现在故意拆掉 \`default(0)\`，让 \`rounds\` 也变成必填，再 invoke：
+
+\`\`\`ts
+// 抛错现场（格式化自 nodes/utils.ts:68-105 的报错分支）
+// Error: Middleware "counter" has required state fields that must be initialized:
+//   - rounds: Required
+//
+// To fix this, either:
+// 1. Provide default values in your middleware's state schema using .default():
+//    stateSchema: z.object({ rounds: z.number().default(0) })
+// 2. Or make the fields optional using .optional(): ...
+// 3. Or ensure you pass these values when invoking the agent: ...
+\`\`\`
+
+这段报错本身是「自文档化设计」的范本：它列出了 safeParse 的 invalid_type issues、区分 Zod v3（message "Required"）与 v4 的差异、并给出三条修复路径。实验里我们亲手触发它一次，比背 API 文档记得牢。另外注意 \`_\` 前缀字段在 safeParse 前被放宽为可选（interopZodObjectMakeFieldsOptional），私有中间件状态不强迫用户提供——这与 L41 里「下划线字段不进 input/output schema」是同一约定在两个层面的表现。
+
+报错文本的构造也有讲究：\`requiredFields\` 只筛 \`issue.code === "invalid_type"\` 的 issues（nodes/utils.ts:82-85），把「类型不对」与「缺字段」分开呈现；第三条修复建议直接内插了 \`parseResult.error.issues[0]?.path.join(".")\`——报错消息里写的就是你真实的字段名，不是模板占位符。这种「错误消息即补丁示范」的做法与 LangChain 全线的错误设计一脉相承：L50 的 jumpTo 越界报错、L47 的重名报错，都是同一风格。还要注意校验时机在 invoke 而非构造：agent 构造只编译图、不看任何输入数据，所以「漏传必填字段」只能在数据真正流过时被发现——这也意味着同一个 agent 对不同的输入会有不同的初始化结果，状态校验天然是**逐调用**的。
+
+### config 归一：InvokeConfiguration 的三条约束线
+
+invoke 的 config 参数类型不是裸 RunnableConfig，而是 runtime.ts 的 InvokeConfiguration——它带三条类型约束线。**约束一：context 可选性由 schema 决定**。WithMaybeContext（runtime.ts:52-58）三分支：schema 含 undefined 或 InteropZodOptional/InteropZodDefault 时 \`context?\`，否则 \`context\` 必填。**约束二：Pregel 选项白名单**——CreateAgentPregelOptions 只放行 configurable、durability、store、cache、signal、recursionLimit、maxConcurrency、timeout、callbacks、subgraphs 十个键（runtime.ts:112-125），LangGraph 其余选项被类型层挡住；stream 用的 StreamConfiguration 在这之上再追加 \`encoding\`/\`streamMode\` 两个键（CreateAgentPregelStreamOptions，runtime.ts:127）。**约束三：context 与 configurable 分离**——context 经 contextSchema 校验、以只读 Runtime 供中间件消费；configurable 是 LangGraph 的自由键空间（thread_id 等）。实操建议：给 agent 定义 contextSchema 后，\`agent.invoke({...}, { context: {...} })\` 的参数拼写错误会在编译期暴露，而不是运行时静默丢失。
+
+最后补一个实验法层面的提醒：本课两条实验都用 \`agent.invoke(...)\` 的返回值做断言，但返回的是**最终全量状态**（FullState），不是模型输出——\`result.messages\` 是全消息序列，\`result.rounds\` 是中间件状态，\`result.structuredResponse\` 是结构化输出（配置了 responseFormat 时）。想断言「中间状态」（比如第一轮模型吐了什么），要么用 FakeToolCallingModel 的剧本反推，要么换 stream 的 updates 模式逐节点看写入（L43 的内容）。这个「invoke 只给终局」的约束正是 stream 与 streamEvents 两条通道存在的理由——L43 见。
+
+### 本课小结
+
+- **invoke = 两道预处理 + 一行委托**：#getGraphConfig（默认配置合并、callbacks 权威归调用方）→ #initializeMiddlewareStates（中间件状态默认值/报错）→ \`#graph.invoke(initializedState, mergedConfig)\`——全课口径在此兑现。
+- **确定性实验法**：FakeToolCallingModel 的 \`toolCalls: ToolCall[][]\` 剧本 + tool() 工具，让「human → ai → tool → ai」的消息序列可断言、可复现。
+- **中间件状态是 invoke 特有的预处理**：带 default 的字段自动填充、必填字段缺失抛带三条修复指引的格式化错误、下划线私有字段自动放宽。
+- **InvokeConfiguration 三约束**：context 可选性随 schema、Pregel 选项白名单、context 与 configurable 分离。
+- 下一课换第二条执行路径：stream 与 streamEvents 的两条流式通道，以及 v3 AgentRunStream 与 legacy 事件流的分派逻辑。
+`,
+    null,
+    [
+      {
+        text: 'ReactAgent.invoke 在调用 #graph.invoke 之前做了哪两件事？',
+        options: [
+          '重新编译图、重新注册节点',
+          '#getGraphConfig 合并默认配置（callbacks 位置置空）与 #initializeMiddlewareStates 填充中间件状态默认值',
+          '校验工具数量、初始化 checkpointer',
+          '什么都不做，直接转发',
+        ],
+        answer: 1,
+        explain:
+          'invoke（ReactAgent.ts:1223-1245）的实现是：mergedConfig = this.#getGraphConfig(config)（mergeConfigs({...this.#defaultConfig, callbacks: undefined}, config)），initializedState = await this.#initializeMiddlewareStates(state, mergedConfig)，然后 return this.#graph.invoke(initializedState, mergedConfig)。选项 A 错在图只在构造器编译一次；选项 C 的动作不属于 invoke；选项 D 忽略了参数归一的两步，这是 invoke 相对裸图调用的全部增量。',
+        concept: 'lc-agent-invoke',
+      },
+      {
+        text: '中间件的 stateSchema 定义了必填字段且没有任何 default/optional，invoke 时会怎样？',
+        options: [
+          '字段被自动置为 undefined，正常运行',
+          'initializeMiddlewareStates 的 safeParse 失败，抛出带修复指引的错误：建议加 .default()/.optional() 或在 invoke 输入里传值',
+          '整个中间件被静默跳过',
+          '编译 agent 时就报错',
+        ],
+        answer: 1,
+        explain:
+          'nodes/utils.ts:26-110 的 initializeMiddlewareStates 对每个有 stateSchema 的中间件做 safeParseAsync；解析失败时收集 invalid_type issues，抛出格式化错误并列出三条修复路径（.default() / .optional() / invoke 输入传值）。下划线前缀的私有字段被 interopZodObjectMakeFieldsOptional 放宽，不参与必填校验。选项 A 错在不会置 undefined；选项 C 错在不跳过而是抛错；选项 D 错在校验发生在 invoke 调用时而非构造时——agent 构造不看输入数据。',
+        concept: 'lc-agent-invoke',
+      },
+      {
+        text: '#getGraphConfig 里把默认配置的 callbacks 置 undefined（{...this.#defaultConfig, callbacks: undefined}），意图是什么？',
+        options: [
+          '禁用所有回调，agent 不支持可观测性',
+          '避免默认配置里的回调覆盖调用方传入的回调——调用方没传时 undefined 经 mergeConfigs 后由 LangGraph 运行时补默认回调',
+          'callbacks 是废弃字段，仅保留兼容',
+          '随机化回调以分散负载',
+        ],
+        answer: 1,
+        explain:
+          '默认配置 #defaultConfig 是构造期固化的；若它带回调而调用方也传回调，直接 merge 会产生覆盖冲突。invoke 处先把 callbacks 从默认配置里挖空，再让 mergeConfigs 把调用方的回调作为唯一权威来源；未传时运行时按 LangGraph 自己的回调机制初始化（含 tracer）。选项 A 与事实相反——L92/L93 会看到 tracer 家族就是经回调传播的；选项 C 无据；选项 D 是编造。',
+        concept: 'lc-agent-invoke',
+      },
+      {
+        text: 'contextSchema 定义了必填字段时，InvokeConfiguration 的类型如何约束 invoke 的 config 参数？',
+        options: [
+          '不做任何约束，context 随便传',
+          '经 WithMaybeContext 分支：context 必填；仅当 contextSchema 是 InteropZodDefault 或全部字段可选时，context 才变成可选',
+          'context 只接受字符串',
+          'context 与 configurable 合并成一个字段',
+        ],
+        answer: 1,
+        explain:
+          'runtime.ts:52-58 的 WithMaybeContext 用三层条件：undefined extends TContext、InteropZodOptional、InteropZodDefault 时 context 可选，否则必填；InvokeConfiguration（runtime.ts:132-157）再把 IsAllOptional 的判断加进来。选项 A 错在类型层就强制；选项 C 无此限制；选项 D 混淆了 context（类型化、只读）与 configurable（LangGraph 自由键空间）两个概念。',
+        concept: 'lc-agent-invoke',
+      },
+    ],
+    [
+      [
+        '#getGraphConfig',
+        'ReactAgent 私有方法：把 #defaultConfig（callbacks 挖空）与调用方 config 经 mergeConfigs 合并成图配置（ReactAgent.ts:779-784）',
+      ],
+      [
+        'initializeMiddlewareStates',
+        'nodes/utils.ts 的函数：逐中间件 safeParse 输入状态、填充默认值、失败时抛带修复指引的错误；invoke 前由 #initializeMiddlewareStates 包装调用',
+      ],
+      [
+        'InvokeConfiguration',
+        'runtime.ts 定义的 invoke 配置类型：BaseCallbackConfig + 白名单 Pregel 选项（configurable/durability/store/signal/recursionLimit/maxConcurrency/timeout/callbacks/subgraphs）+ 按条件可缺省的 context',
+      ],
+      [
+        'FakeToolCallingModel',
+        '公共导出的假模型（tests/utils.ts:354）：按 toolCalls 数组逐轮吐出预编排的 tool_calls，无需真实 LLM 即可跑通 agent 全链路',
+      ],
+      [
+        'WithMaybeContext',
+        'runtime.ts:52-58 的条件类型：根据 contextSchema 的可选/默认形态决定 config.context 是必填还是可选',
+      ],
+    ],
+    [
+      '给中间件 stateSchema 写必填字段却不给 default，也不在 invoke 输入里传——运行时才报错（不是构造时），报错信息里的三条修复建议值得照做',
+      '把 context 塞进 configurable 传——1.x 有独立的 config.context 通道（类型化、经 contextSchema 校验、中间件经 runtime.context 读取），与 configurable 的自由键空间是两条路',
+      '用真实模型验证 invoke 行为——FakeToolCallingModel 就是为这类断言导出的公共 API；用它才能让「工具循环第几轮吐什么」变成确定性断言',
+    ],
+  ),
+  'practice',
+)

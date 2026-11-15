@@ -1,0 +1,241 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L35 = withKind(
+  L(
+    'L35',
+    10,
+    'RunnableConfig 双轨传播：ensureConfig 默认值、runId 不继承、AsyncLocalStorage 隐式注入',
+    3,
+    ['L27'],
+    ['lc-runnable-config'],
+    [
+      '说出 ensureConfig 的默认值表（tags/metadata/recursionLimit/runId）与它对隐式 ALS config 的合并顺序：显式传参覆盖隐式上下文',
+      '解释 runId 与 runName 为何被显式禁止从隐式 config 继承，以及 patchConfig 换 callbacks 时删除 runName 的联动',
+      '追踪 timeout 的归一化路径：数值 → AbortSignal.timeout + metadata.timeoutMs → delete timeout，并说明四条理由',
+    ],
+    `### 显式参数与隐式上下文：config 的两条运河
+
+模块三最后一阶段处理「看不见的胶水」。前九课里 config 反复出现——每课都有 ensureConfig、patchConfig、getChild——但它们都只露了一角。本课把 RunnableConfig 的传播机制完整摊开：显式参数怎么一层层往下传、AsyncLocalStorage 怎么让「不传参的调用」也能拿到配置、以及 runId 为何被系统性地禁止继承。读完后你会发现 L30-L34 里那些 \`delete config.runId\` 与 \`patchConfig(...)\` 的细节全部串成一个体系。
+
+### ensureConfig：三层合并与身份剔除
+
+\`\`\`ts
+export function ensureConfig<CallOptions extends RunnableConfig>(
+  config?: CallOptions
+): CallOptions {
+  const implicitConfig = AsyncLocalStorageProviderSingleton.getRunnableConfig();
+  let empty: RunnableConfig = {
+    tags: [],
+    metadata: {},
+    recursionLimit: 25,
+    runId: undefined,
+  };
+  if (implicitConfig) {
+    // Don't allow runId and runName to be loaded implicitly, as this can cause
+    // child runs to improperly inherit their parents' run ids.
+    const { runId, runName, ...rest } = implicitConfig;
+    empty = Object.entries(rest).reduce(
+      (currentConfig, [key, value]) => {
+        if (value !== undefined) {
+          currentConfig[key] = value;
+        }
+        return currentConfig;
+      },
+      empty
+    );
+  }
+  if (config) {
+    empty = Object.entries(config).reduce(
+      (currentConfig, [key, value]) => {
+        if (value !== undefined) {
+          currentConfig[key] = value;
+        }
+        return currentConfig;
+      },
+      empty
+    );
+  }
+  ...
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/config.ts:153-189（commit 7704471）*
+
+合并顺序就是优先级：**默认值 → 隐式 ALS → 显式参数**，逐键覆盖（undefined 不覆盖）。两条运河由此得名：显式运河是 invoke(input, {tags, metadata, ...}) 一路 patchConfig 下来；隐式运河是 ALS 把 config 挂在异步执行上下文上，任何深层的 ensureConfig 都能取到。注意 \`_callWithConfig\` 在 handleChainStart 后 \`delete config.runId\`（base.ts:382）——config 对象是**可变共享**的，run id 用完即焚，防的是同一个 config 对象被传给多个子 run 时身份复用。configurable.model→metadata.model 的单向同步（config.ts:190-200）是个小特判：模型名这种高价值调试信息自动进追踪 metadata。
+
+### timeout 归一化：一条带四条理由的长注释
+
+\`\`\`ts
+if (empty.timeout !== undefined) {
+  if (empty.timeout <= 0) {
+    throw new Error("Timeout must be a positive number");
+  }
+  const originalTimeoutMs = empty.timeout;
+  const timeoutSignal = AbortSignal.timeout(originalTimeoutMs);
+  if (!empty.metadata) {
+    empty.metadata = {};
+  }
+  if (empty.metadata.timeoutMs === undefined) {
+    empty.metadata.timeoutMs = originalTimeoutMs;
+  }
+  if (empty.signal !== undefined) {
+    if ("any" in AbortSignal) {
+      empty.signal = (AbortSignal as any).any([empty.signal, timeoutSignal]);
+    }
+  } else {
+    empty.signal = timeoutSignal;
+  }
+
+  /**
+   * We are deleting the timeout key for the following reasons:
+   * - Idempotent normalization: ensureConfig may be called multiple times down the stack...
+   * - Single enforcement path: downstream code relies on signal to enforce cancellation...
+   * - Propagation to children: pickRunnableConfigKeys would keep forwarding timeout to nested runnables...
+   * - Backward compatibility: ...
+   */
+  delete empty.timeout;
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/config.ts:201-238（commit 7704471，注释有裁剪）*
+
+数值 timeout 是「 sugar 输入」，进系统后统一形态是 signal：AbortSignal.timeout 定时器信号，与已有 signal 用 AbortSignal.any 合流（老 Node 降级为直接替换）。数值备份进 metadata.timeoutMs 是给需要显式数值的下游 SDK 留档（不覆盖上游已设值）。**delete timeout 的四条理由值得整段读**：幂等（避免层层 ensureConfig 叠造新 signal）、单一取消路径（下游只认 signal）、防子级重复归一化（pickRunnableConfigKeys 会继续转发 timeout）、兼容既有行为约定。把「输入 sugar → 内部归一 → 删除原键」这个模式记住，它比任何单点 API 都更能代表 core 的配置处理哲学。
+
+### patchConfig 与身份管理的两处删除
+
+\`\`\`ts
+export function patchConfig<CallOptions extends RunnableConfig>(
+  config: Partial<CallOptions> = {},
+  { callbacks, maxConcurrency, recursionLimit, runName, configurable, runId }: RunnableConfig = {}
+): Partial<CallOptions> {
+  const newConfig = ensureConfig(config);
+  if (callbacks !== undefined) {
+    /**
+     * If we're replacing callbacks we need to unset runName
+     * since that should apply only to the same run as the original callbacks
+     */
+    delete newConfig.runName;
+    newConfig.callbacks = callbacks;
+  }
+  ...
+  if (runId !== undefined) {
+    delete newConfig.runId;
+  }
+  return newConfig;
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/config.ts:245-281（commit 7704471，有裁剪）*
+
+L30 的 \`patchConfig(config, { callbacks: runManager?.getChild("seq:step:1") })\` 现在能读全了：换 callbacks 的同时删 runName——runName 是「这次 run 叫什么」，属于产生它的那次调用；子 run 的名字由 getName() 自己算。传 runId 参数则删掉旧 runId——「给子 run 定身份」意味着不许再带父 id。加上 ensureConfig 的 ALS 层剔除，run 身份在三条路径上都被系统性地隔离：**子 run 的 id 只能由 handleChainStart 的 uuidv7 生成或显式传入，永远不继承**。
+
+### ALS 隐式轨的落点与白名单
+
+隐式运河的三个落点在本课之前的源码里都已出现过：RunnableLambda._invoke 把函数执行包进 runWithConfig（base.ts:2680-2682）；AsyncGeneratorWithSetup 构造与每次 next 都在 runWithConfig 里（utils/stream.ts:217-235,246-258）；consumeAsyncIterableInContext 每步 next() 重新包（iter.ts:76-94）。共同点是**pickRunnableConfigKeys 白名单**（config.ts:284-303）：只挑 configurable/recursionLimit/callbacks/tags/metadata/maxConcurrency/timeout/signal 八键，外加 store/context 两个 LangGraph 运行时字段（@ts-expect-error 注释自证这是越界保留）。白名单的意义：用户的杂项字段不污染子调用，而 LangGraph 的工具运行时（L23 的 ToolRuntime）又能透过 config 隐式拿到 store/context。最后看 \`_separateRunnableConfigFromCallOptions\`（base.ts:326-358）这个反向操作：把十个 config 键从用户 options 里剥出，剩余部分成为 provider 的 call options——显式运河与「模型参数」的分流阀。mergeConfigs（config.ts:49-148）则是多份 config 的合并器，L34 的 RunnableBinding._mergeConfig 用的就是它：tags 去重、timeout 取小、signal 合流、callbacks 六分支。
+
+### ALS 的第二个租户：context 变量
+
+承载 runnable config 的 ALS 单例不止一个用户。core 的 context 变量 API（\`setContextVariable\`/\`getContextVariable\`）复用同一个全局 AsyncLocalStorage 实例（context.ts:48-52 经 \`getGlobalAsyncLocalStorageInstance()\` 取用；单例的 \`getRunnableConfig\` 槽位定义在 singletons/async_local_storage/index.ts:35），但语义与 config 传播方向相反：父 run 用 setContextVariable 写下的值，子 run 能读到；子 run 自己 setContextVariable 的覆盖**不会**回流到父 run——官方文档示例里嵌套 lambda 打印 "bar"（父写的），父在子返回后打印的仍是 "bar"（context.ts:20-45）。这个「向下继承、向上隔离」的方向性与 config 恰好互补：config 是调用方主动传、逐层 patchConfig 精确控制的显式运河；context 是运行时随手写、自动跟随异步作用域的便利运河。两者载体相同、键空间独立——config 走 getRunnableConfig 槽位，context 变量走独立存储。对使用者的提醒：**不要把应当显式传递的依赖塞进 context 变量**——它会让数据流脱离本课前文所述的「默认值 → 隐式 → 显式」三层结构，退回隐式全局状态的老问题；它适合的是 trace id、租户信息这类横切数据。
+
+### 本课小结
+
+- config 传播双轨：显式参数逐层 patchConfig 下传 + ALS 隐式上下文兜底；ensureConfig 的合并优先级是默认值 < 隐式 < 显式，runId/runName 在隐式层被显式剔除。
+- run 身份的三重隔离：ALS 剔除、_callWithConfig 用后 delete、patchConfig 换 callbacks 删 runName——子 run 的 id 只能新生成或显式传。
+- timeout 是「sugar 输入」：归一化为 AbortSignal（any 合流）+ metadata.timeoutMs 留档 + delete 原键，四条理由保证幂等与单一取消路径。
+- pickRunnableConfigKeys 白名单（含 store/context 特批）控制隐式轨的传播面；_separateRunnableConfigFromCallOptions 反向剥离，构成 config 与 callOptions 的分流阀。
+- 下一课（模块三收官）看回调的执行树视角：getChild 如何逐层下发、run 树如何随 invoke 生长——本课的 config 传播正是它的载体。
+`,
+    null,
+    [
+      {
+        text: 'ensureConfig 合并三层配置的优先级顺序是？',
+        options: [
+          '隐式 ALS config > 显式参数 > 默认值',
+          '默认值打底 → 隐式 ALS config 覆盖 → 显式传参覆盖——最终显式参数最高',
+          '显式参数 > 隐式 ALS config > 默认值，但 runId 例外永远来自隐式层',
+          '三层各取不同键，互不覆盖',
+        ],
+        answer: 1,
+        explain:
+          'config.ts:153-189：先建默认值 empty（tags: [], metadata: {}, recursionLimit: 25, runId: undefined），再用隐式 config 的非 undefined 键覆盖（:163-177），最后用显式 config 的非 undefined 键覆盖（:178-189）。例外在选项 C 方向：runId/runName 是从**隐式层被剔除**而非继承（:164-166），显式层依旧可传。选项 A 把方向说反；选项 D 与逐键 reduce 覆盖的实现不符。',
+        concept: 'lc-runnable-config',
+      },
+      {
+        text: '为什么 ensureConfig 从隐式 ALS config 中剔除 runId 与 runName？',
+        options: [
+          '性能优化，减少对象大小',
+          "防止子 run 错误继承父 run 的身份——注释原文：child runs to improperly inherit their parents' run ids",
+          '因为 runId 只能由环境变量设置',
+          '兼容旧版本序列化格式',
+        ],
+        answer: 1,
+        explain:
+          "config.ts:164-166：const { runId, runName, ...rest } = implicitConfig，注释写明 Don't allow runId and runName to be loaded implicitly。每个 run 的 id 由 handleChainStart 用 uuidv7 生成（manager.ts:1000），继承父 id 会让 run 树上的节点互相混淆、追踪去重失效。选项 C 错：runId 可以显式传入（_getOptionsList 还为 batch 做了 runId 警告处理，base.ts:221-231）；选项 A/D 无出处。",
+        concept: 'lc-runnable-config',
+      },
+      {
+        text: '传入 config.timeout = 5000 后，ensureConfig 会把它变成什么形态？',
+        options: [
+          '保留数值原样下传',
+          '转成 AbortSignal.timeout(5000)（已有 signal 则 AbortSignal.any 合流），数值备份进 metadata.timeoutMs，然后 delete config.timeout',
+          '转成 Date 对象存入 metadata',
+          '抛错，timeout 必须通过 signal 传入',
+        ],
+        answer: 1,
+        explain:
+          'config.ts:201-238：timeoutSignal = AbortSignal.timeout(originalTimeoutMs)；已有 signal 时用 AbortSignal.any([signal, timeoutSignal]) 合流；metadata.timeoutMs 保留数值供需要显式 timeout 的下游 SDK 使用；最后 delete empty.timeout。删除的四条理由写成长注释（:226-236）：ensureConfig 多次调用会叠造新 signal、下游统一靠 signal 取消、pickRunnableConfigKeys 继续转发会重复归一化、组件与测试依赖旧行为。选项 A/D 与源码直接矛盾；选项 C 无此设计。',
+        concept: 'lc-runnable-config',
+      },
+      {
+        text: 'patchConfig(config, { callbacks: child }) 除了替换 callbacks 还做了什么？',
+        options: [
+          '什么也不做，只换 callbacks',
+          '删除 newConfig.runName——注释：runName should apply only to the same run as the original callbacks；若传了 runId 参数还会 delete newConfig.runId',
+          '清空 tags 与 metadata',
+          '重置 recursionLimit 为 25',
+        ],
+        answer: 1,
+        explain:
+          'config.ts:257-264 与 277-279：替换 callbacks 时 delete newConfig.runName（runName 属于产生它的那次 run，子 run 用自己的名字）；传入 runId 参数时 delete newConfig.runId（强制子 run 重新生成身份）。选项 C/D 无此逻辑——tags/metadata/recursionLimit 原样继承；选项 A 漏掉了这两处关键删除，而它们正是 run 树身份不串号的保证。',
+        concept: 'lc-runnable-config',
+      },
+      {
+        text: 'RunnableLambda 里用户函数的嵌套 Runnable 调用（不带任何参数的 model.invoke(x)）如何拿到当前回调配置？',
+        options: [
+          '拿不到，必须显式传 config',
+          'AsyncLocalStorageProviderSingleton.runWithConfig(childConfig, ...) 在执行函数前建立隐式上下文，嵌套调用经 ensureConfig 从 ALS 读取',
+          '通过全局事件广播',
+          '靠模块级单例变量轮询',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:2680-2682：_invoke 把整个函数执行包进 runWithConfig(pickRunnableConfigKeys(childConfig), ...)；嵌套调用的 ensureConfig 第一行就是 AsyncLocalStorageProviderSingleton.getRunnableConfig()（config.ts:156）。pickRunnableConfigKeys（config.ts:284-303）白名单只挑 configurable/recursionLimit/callbacks/tags/metadata/maxConcurrency/timeout/signal 外加 store/context 两个 LangGraph 运行时字段。选项 A 描述的是 ALS 不可用的环境（如部分边缘运行时）的降级现实；选项 C/D 无此机制。',
+        concept: 'lc-runnable-config',
+      },
+    ],
+    [
+      [
+        'RunnableConfig',
+        '贯穿整条链的运行时配置：callbacks/tags/metadata/runName/configurable/recursionLimit/maxConcurrency/runId/timeout/signal（base.ts:326-358 的白名单）',
+      ],
+      [
+        'ensureConfig',
+        'config 归一化入口：默认值 → 隐式 ALS 覆盖 → 显式参数覆盖，并做 timeout→signal 归一化（config.ts:153-240）',
+      ],
+      [
+        'AsyncLocalStorage',
+        'Node 的异步上下文存储；core 用单例包装它实现「不传参也能拿到 config」的隐式传播轨',
+      ],
+      [
+        'pickRunnableConfigKeys',
+        'ALS 上下文的白名单过滤器：只挑可传播键，丢弃用户自定义杂项，额外保留 store/context（config.ts:284-303）',
+      ],
+    ],
+    [
+      '以为隐式 config 能带 runId/runName 下来——ALS 层显式剔除这两键，只有显式传参才能指定 run 身份',
+      '在多层嵌套里反复传 timeout 数值——ensureConfig 每次都会重建 timeoutSignal 并删除 timeout 键，数值只在 metadata.timeoutMs 留档',
+      '以为 configurable 里的 model 会自动进 metadata——ensureConfig 有特判（config.ts:190-200）：仅当 configurable.model 是字符串且 metadata.model 未设时才同步，且是单向复制',
+    ],
+  ),
+  'theory',
+)

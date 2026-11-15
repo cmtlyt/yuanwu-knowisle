@@ -1,0 +1,294 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L67 = withKind(
+  L(
+    'L67',
+    19,
+    'addNode 的编译期准备：自动错误处理器节点 __error_handler__',
+    2,
+    ['L65'],
+    ['lc-addnode-error-handler'],
+    [
+      '从零跑通一个带 errorHandler 的 StateGraph：构造节点、触发异常、观察错误处理器节点在重试耗尽后的执行',
+      '实现一个把错误写回状态的 errorHandler，并用 Command({ goto }) 路到恢复节点',
+      '构建一个触发节点名与通道名冲突的例子，复现并读懂 StateGraph 的报错信息',
+    ],
+    `### 实操目标：把 addNode 的四层准备亲手跑一遍
+
+前两课看了类型与 schema，本课进入第一门实践课：**亲手触发 addNode 的每一条校验路径，并跑通一个「节点失败 → 错误处理器接管」的完整流程**。addNode 的实现约 180 行（graph/state.ts:1063-1243），表面是「注册节点」，实际做了四层事：多形态参数归一、五道校验、Runnable 包装、错误处理器节点的自动注册。跑完本课你应当能回答：为什么 error handler 是独立节点而不是回调？
+
+### 第一步：五道校验关卡逐个触发
+
+\`\`\`ts
+for (const [key, action, options] of nodes) {
+  if (key in this.channels) {
+    throw new Error(
+      \`\${key} is already being used as a state attribute (a.k.a. a channel), cannot also be used as a node name.\`);
+  }
+  for (const reservedChar of [
+    CHECKPOINT_NAMESPACE_SEPARATOR,
+    CHECKPOINT_NAMESPACE_END,
+  ]) {
+    if (key.includes(reservedChar)) {
+      throw new Error(\`"\${reservedChar}" is a reserved character ...\`);
+    }
+  }
+  this.warnIfCompiled(\`Adding a node to a graph that has already been compiled. ...\`);
+  if (key in this.nodes) {
+    throw new Error(\`Node \\\`\${key}\\\` already present.\`);
+  }
+  if (key === END || key === START) {
+    throw new Error(\`Node \\\`\${key}\\\` is reserved.\`);
+  }
+\`\`\`
+
+*— graph/state.ts:1124-1150（有裁剪，commit fa426b2）*
+
+动手验证（从零搭建一个最小图，逐条复现报错）：
+
+\`\`\`ts
+import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
+
+const State = Annotation.Root({
+  // 故意占用一个 key：node 名与 channel 名冲突的素材
+  step: Annotation<string>,
+});
+
+const builder = new StateGraph(State);
+
+// ① 节点名 = 通道名 → 抛 "step is already being used as a state attribute ..."
+try {
+  builder.addNode("step", async () => ({ step: "x" }));
+} catch (e) { console.log("①", (e as Error).message); }
+
+// ② 节点名含保留字符 | → 抛 "|" is a reserved character ...
+try {
+  builder.addNode("a|b", async () => ({}));
+} catch (e) { console.log("②", (e as Error).message); }
+
+// ③ 重复注册 → 抛 Node \`dup\` already present.
+builder.addNode("dup", async () => ({}));
+try {
+  builder.addNode("dup", async () => ({}));
+} catch (e) { console.log("③", (e as Error).message); }
+
+// ④ 保留节点名 → 抛 Node \`__start__\` is reserved.
+try {
+  builder.addNode("__start__", async () => ({}));
+} catch (e) { console.log("④", (e as Error).message); }
+\`\`\`
+
+保留字符的源头是 constants.ts 的 \`CHECKPOINT_NAMESPACE_SEPARATOR = "|"\` 与 \`CHECKPOINT_NAMESPACE_END = ":"\`——这两个字符用于拼接子图的 checkpoint 命名空间，节点名混入会破坏 namespace 解析，所以构建期就禁掉。注意 ② 的实际输出：\`|\` 是 separator，\`:\` 是 end，两个都要避开。
+
+### 第二步：Runnable 包装的三分支
+
+\`\`\`ts
+let runnable;
+if (Runnable.isRunnable(action)) {
+  runnable = action;
+} else if (typeof action === "function") {
+  runnable = new RunnableCallable({ func: action, name: key, trace: false });
+} else {
+  runnable = _coerceToRunnable(action);
+}
+\`\`\`
+
+*— graph/state.ts:1158-1169（commit fa426b2）*
+
+\`trace: false\` 是本段的题眼：节点函数不再自己生成回调 run，LangSmith 里看到的节点执行是 Pregel 任务这一层（L75/L92 展开）。这意味着在节点函数里手动 console 打点不会出现在 run 树里——观测要走流模式或 tracer，而不是依赖节点自身的回调。
+
+### 第三步：自动注册 __error_handler__<node>
+
+\`\`\`ts
+let errorHandlerNode: string | undefined;
+if (options?.errorHandler !== undefined) {
+  errorHandlerNode = \`__error_handler__\${key}\`;
+  if (errorHandlerNode in this.nodes) {
+    throw new Error(\`Cannot add error handler to node \\\`\${key}\\\`: the reserved name ...\`);
+  }
+  const handlerRunnable = new RunnableCallable({
+    func: (state: unknown, config: LangGraphRunnableConfig) => {
+      const nodeError = config?.configurable?.[CONFIG_KEY_NODE_ERROR] as NodeError | undefined;
+      return userHandler(state as NodeInput, nodeError as NodeError, config);
+    },
+    name: errorHandlerNode,
+    trace: false,
+  });
+  const handlerSpec: StateGraphNodeSpec<S, U> = {
+    runnable: handlerRunnable as unknown as Runnable<S, U>,
+    metadata: undefined,
+    input: inputSpec ?? this._schemaDefinition,
+    retryPolicy: undefined,
+    cachePolicy: undefined,
+    isErrorHandler: true,
+  };
+  this.nodes[errorHandlerNode as N] = handlerSpec;
+}
+\`\`\`
+
+*— graph/state.ts:1182-1220（commit fa426b2）*
+
+看 spec 的三个空字段：retryPolicy 与 cachePolicy 是 undefined，isErrorHandler 是 true。**错误处理器是一个没有重试、没有缓存、不参与常规路由的真实节点**——调度层（_prepareNodeErrorHandlerTask）在节点重试耗尽后才把它的任务放进超步，失败上下文 NodeError 经由 CONFIG_KEY_NODE_ERROR 注入。正节点这边则通过 \`errorHandlerNode\` 字段（graph/state.ts:1236）记录了指向关系。
+
+### 第四步：跑通完整流程并打通 goto 恢复
+
+\`\`\`ts
+import { StateGraph, Annotation, START, END } from "@langchain/langgraph";
+
+const State = Annotation.Root({
+  step: Annotation<string>,
+  lastError: Annotation<string>({ reducer: (_, b) => b, default: () => "" }),
+});
+
+const fragile = async () => { throw new Error("boom"); };
+
+const graph = new StateGraph(State)
+  .addNode("fragile", fragile, {
+    // 重试 0 次 → 失败立即交给错误处理器
+    errorHandler: (state, { node, error }) => ({
+      lastError: \`\${node}: \${error.message}\`,
+    }),
+  })
+  .addNode("recover", async (s) => ({ step: \`recovered from \${s.lastError}\` }))
+  .addEdge(START, "fragile")
+  .addEdge("fragile", END)
+  .addEdge("recover", END)
+  .compile();
+
+// fragile 抛错 → __error_handler__fragile 执行 → lastError 被写入
+const r1 = await graph.invoke({ step: "init" });
+console.log(r1.lastError);            // "fragile: boom"
+\`\`\`
+
+进一步，处理器可以返回 \`Command\` 把控制流接去恢复节点——handler 的返回值类型与节点一致（可返回状态更新或 \`new Command({ goto })\`，graph/state.ts:736 的注释明确支持）。对照实验：把 \`errorHandler\` 换成 \`retryPolicy: { maxAttempts: 2 }\` 再观察——重试期间看不到 lastError 写入，说明**handler 只在重试耗尽后上场**。
+
+最后做三条边界验证，把「错误处理器不是万能 catch」刻进肌肉记忆。其一，在 handler 函数里主动抛一个新错误再 invoke——整次运行直接失败，graph 不会回头再调一次 handler（\`retryPolicy: undefined\` 意味着连重试都没有），错误处理路径本身必须可靠。其二，同时配置 \`retryPolicy: { maxAttempts: 1 }\` 与 errorHandler，在 fragile 里计数抛错次数——你会观察到节点执行两次（初次 + 一次重试）之后 handler 才执行，执行顺序是「节点重试耗尽 → 调度层准备 \`__error_handler__fragile\` 任务 → 下一超步运行 handler」，这就是「独立节点」与「回调」的本质区别：它占用一个真实的任务槽，写出的 lastError 也走正常的 \`_applyWrites\` 流程。其三，把 errorHandler 挂到 \`setNodeDefaults\` 上（图级默认处理器，节点名 \`__default_error_handler__\`），再给某个节点单独传 errorHandler——节点级优先，未配置的节点落到图级，两层互不干扰。最后补一个 compile 期细节：\`setNodeDefaults({ errorHandler })\` 注册的共享处理器叫 \`__default_error_handler__\`，compile() 临时注入、finally 里删除（graph/state.ts:1442-1474），所以 builder 可以重复 compile 而不被污染。
+
+### 第五步：图级默认处理器 __default_error_handler__
+
+逐个节点传 errorHandler 很啰嗦，\`setNodeDefaults\` 提供图级共享处理器。它的 JSDoc 把几条硬规则写得非常明确（graph/state.ts:715-739），值得逐条转述：共享处理器只在**常规节点**失败且该节点**没有自己的 errorHandler** 时运行；运行时机同样是该节点的 retryPolicy 耗尽之后；错误处理器节点自身失败时它**永不接管**——handler 的失败直接让运行失败，这是防止错误处理路径无限递归的硬设计。跑一个对照实验：
+
+\`\`\`ts
+const graph = new StateGraph(State)
+  .setNodeDefaults({
+    retryPolicy: { maxAttempts: 2 },
+    errorHandler: (state, { node, error }) => ({
+      lastError: \`[default] \${node}: \${error.message}\`,
+    }),
+  })
+  .addNode("fragile", fragile, {
+    // 节点级优先：fragile 失败走自己的 handler，不走图级
+    errorHandler: (state, { node, error }) => ({
+      lastError: \`[node] \${node}: \${error.message}\`,
+    }),
+  })
+  .addNode("sloppy", fragile) // 没有节点级 handler → 落到图级
+  .addEdge(START, "fragile")
+  .addEdge("fragile", END)
+  .addEdge("sloppy", END)
+  .compile();
+
+const r = await graph.invoke({ step: "init" });
+console.log(r.lastError); // "[node] fragile: boom"（fragile 走节点级）
+\`\`\`
+
+还有一个极易踩的类型陷阱藏在 JSDoc 里：**共享处理器的 state 参数类型是 \`unknown\`，因为运行时它拿到的是失败节点的输入，而不是全量图状态**（graph/state.ts:731-735）。配合 L65 提过的 \`addNode(key, fn, { input })\` 单节点输入 schema，不同节点失败时 handler 看到的 state 形状可能完全不同——所以读字段前必须自己收窄类型。节点级 handler 则没有这个问题，它的 state 类型就是图状态（或节点自定义输入）。两条路径都支持返回状态更新 \`U\` 或 \`new Command({ goto })\` 路由到任意节点（graph/state.ts:736-738），恢复流的写法与节点级完全一致。
+
+compile 期的落地方式在 L68 也会再见到：\`setNodeDefaults({ errorHandler })\` 注册的共享处理器以 \`__default_error_handler__\` 为名，在 compile 开头临时塞进 nodes 让可达性校验把它当普通节点，\`finally\` 里删除——builder 因此可以重复 compile 而不被污染（graph/state.ts:1440-1474）。如果你恰好手动注册了一个叫 \`__default_error_handler__\` 的节点，compile 会直接抛 \`Cannot apply a default error handler: the reserved node name ... is already in use\`（graph/state.ts:1446-1451）——保留名冲突在编译期就拦下，不会静默。
+
+调试时怎么确认 handler 真的跑了？用 \`"debug"\` 或 \`"tasks"\` 流模式订阅（\`pregel/types.ts:25-35\` 定义了包括这两者在内的八种 StreamMode）：错误处理器是图里真实的独立节点，它的任务派发与完成会和普通节点一样出现在任务生命周期事件里，节点名就是 \`__error_handler__fragile\` 或 \`__default_error_handler__\`——比在 handler 里打日志可靠得多，也不用担心 trace: false 让你找不到 run。
+
+### 误用边界三条：输入形状、保留名、递归
+
+把三个边界归拢成清单。其一，**输入形状陷阱**：图级 handler 拿到的是「失败节点的输入」，若该节点用了 \`options.input\` 自定义输入 schema，handler 里的 state 就只是这个子集——在上面例子里给 sloppy 节点加 \`input: PartialState\` 再打印 state，你会看到它与图状态不同。其二，**保留名双向封锁**：addNode 拒绝手动注册 \`__error_handler__<key>\` 同名节点（errorHandlerNode 已存在即抛错，graph/state.ts:1187-1193），compile 拒绝手动注册 \`__default_error_handler__\`（1446-1451）——两套保留名从构建与编译两端同时把守，绕不过去。其三，**handler 递归被结构性阻断**：handlerSpec 的 retryPolicy 与 cachePolicy 都是 undefined（graph/state.ts:1211-1218），且 setNodeDefaults 的 JSDoc 明说 error-handler 节点自身抛错时共享处理器不被调用——「handler 的 handler」这个概念在类型与运行时两层都不存在，失败就是终局。设计动机不难猜：错误处理路径若可再失败再处理，就要为它设计第二个错误层级，递归无底洞；langgraph 选择了最朴素的终点——失败即失败。
+
+### 本课小结
+
+- addNode 五道校验：通道名冲突、保留字符 | 与 :、compile 后追加的警告、重复节点、保留节点名——前两个最容易被忽视。
+- 普通函数包成 RunnableCallable 且 trace: false，观测统一上移到 Pregel 任务层。
+- errorHandler 生成独立节点 \`__error_handler__<node>\`（isErrorHandler: true，无重试无缓存），失败上下文经 CONFIG_KEY_NODE_ERROR 注入。
+- handler 抛错直接让运行失败，没有外层兜底——错误处理路径必须自己可靠。
+- 图级 \`setNodeDefaults({ errorHandler })\` 注册 \`__default_error_handler__\`：节点级优先、仅服务无自身 handler 的常规节点，且 handler 的 state 是「失败节点的输入」而非全量状态，读字段前先收窄。
+- 下一课：compile 如何把这套节点簿记降维成 PregelNode + 通道网络。
+`,
+    null,
+    [
+      {
+        text: 'addNode 对节点名的校验里，「与通道名冲突」和「保留字符」分别检查什么？',
+        options: [
+          '节点名不能叫 START/END；不能含下划线',
+          '节点名不能与 state 属性（channel）同名；不能含 checkpoint namespace 保留字符 | 与 :',
+          '节点名必须 camelCase；不能超过 64 字符',
+          '节点名不能与已注册的 reducer 同名',
+        ],
+        answer: 1,
+        explain:
+          'graph/state.ts:1125-1129 检查 key in this.channels（state 属性即通道，占用即抛错）；1131-1140 检查 CHECKPOINT_NAMESPACE_SEPARATOR（|）与 CHECKPOINT_NAMESPACE_END（:）（constants.ts 导出值分别是 | 和 :）。A 的 START/END 检查存在但在另一处（1148-1150），下划线不受限；C 的命名风格与长度无此校验；D 是虚构项。',
+        concept: 'lc-addnode-error-handler',
+      },
+      {
+        text: '传普通函数作为节点动作时，addNode 如何包装它？',
+        options: [
+          '直接存进 nodes，不做包装',
+          '包成 RunnableCallable，且 trace: false——追踪交给外层 Pregel 任务',
+          '包成 RunnableLambda 并开启 trace',
+          '包成 RunnableSequence 以支持链式调用',
+        ],
+        answer: 1,
+        explain:
+          'graph/state.ts:1158-1169：函数走 new RunnableCallable({ func: action, name: key, trace: false })；已是 Runnable 的原样使用；其余走 _coerceToRunnable。trace: false 是刻意的——节点内部不再生成自己的 run，可观测性由 Pregel 层统一提供，避免回调树重复。A 错在不包装就无法进入 Runnable 执行协议；C 的 RunnableLambda 是 LCEL 的适配器，这里用的是 RunnableCallable；D 无此逻辑。',
+        concept: 'lc-addnode-error-handler',
+      },
+      {
+        text: '给节点传 errorHandler 选项后，构建器里会发生什么？',
+        options: [
+          'errorHandler 被塞进节点的 try/catch 里同步执行',
+          '自动注册一个名为 __error_handler__<node> 的独立节点，spec 带 isErrorHandler: true，重试耗尽后才运行',
+          'errorHandler 替换节点的 retryPolicy',
+          'errorHandler 只在 compile 时做静态检查，运行期不执行',
+        ],
+        answer: 1,
+        explain:
+          'graph/state.ts:1182-1220：errorHandlerNode = `__error_handler__${key}`，其 handlerRunnable 从 config.configurable[CONFIG_KEY_NODE_ERROR] 取出 NodeError 再调用用户处理器，handlerSpec 带 isErrorHandler: true。它是图里真实的独立节点，不是 try/catch（catch 属于 retry/timeout 层，L80）。A 错在执行时机是「重试耗尽后」由调度器准备任务；C 错在两者正交；D 错在它是运行期真实任务。',
+        concept: 'lc-addnode-error-handler',
+      },
+      {
+        text: 'errorHandler 处理器自己抛错了会怎样？',
+        options: [
+          '被外层自动捕获并写入 state',
+          '直接让本次运行失败——handler 永不捕获自己（或其他 handler）的失败',
+          '触发整图重试一轮',
+          '静默吞掉，继续执行后续节点',
+        ],
+        answer: 1,
+        explain:
+          'setNodeDefaults 的 JSDoc 明确写着 handler 必须永不捕获自身失败、handler 抛错则运行失败（graph/state.ts:724-739），且 handlerSpec 的 retryPolicy/cachePolicy 都是 undefined（graph/state.ts:1211-1218）——处理器没有重试、没有缓存。A/B/D 都是误传：没有外层兜底，失败就是失败，这是防止错误处理路径无限递归的硬设计。',
+        concept: 'lc-addnode-error-handler',
+      },
+    ],
+    [
+      [
+        'RunnableCallable',
+        'langgraph 自带的轻量 Runnable 包装器，func + name + trace 三件套；trace: false 表示不生成独立回调 run',
+      ],
+      [
+        'isErrorHandler',
+        'StateGraphNodeSpec 上的布尔标记，编译与调度层据此把节点归类为错误处理器（不参与常规路由、无重试无缓存）',
+      ],
+      [
+        'NodeError',
+        '注入处理器第二参的失败上下文：携带失败节点名与错误对象，从 config.configurable[CONFIG_KEY_NODE_ERROR] 读取',
+      ],
+      [
+        '__error_handler__<node>',
+        'addNode({ errorHandler }) 自动注册的处理器节点名；compile() 的默认处理器则叫 __default_error_handler__',
+      ],
+    ],
+    [
+      '手动注册名为 __error_handler__myNode 的节点后又给 myNode 传 errorHandler——addNode 会因保留名冲突直接抛错（graph/state.ts:1187-1193）',
+      '以为 errorHandler 等价于 try/catch——它在节点 retryPolicy 耗尽之后才运行，重试策略未耗尽前根本轮不到它',
+      '在 compile 之后 addNode 只得到 console 警告（warnIfCompiled），新节点静默失效，类型层不报错——构建期要把 addNode 全部做完再 compile',
+    ],
+  ),
+  'practice',
+)

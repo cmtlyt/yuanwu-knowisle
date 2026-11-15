@@ -1,0 +1,252 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L50 = withKind(
+  L(
+    'L50',
+    14,
+    'JumpToTarget 与节点跳转',
+    2,
+    ['L48'],
+    ['lc-jump-to-target'],
+    [
+      '实现一个带 canJumpTo 白名单的预算中间件：beforeModel 累计调用次数并在超限时 jumpTo: end 提前终止 agent',
+      '构建一个 afterModel 质量闸中间件：检查模型输出并按条件 jumpTo: model 触发重写循环，验证 jumpTo 的一次性清位语义',
+      '跑通越界跳转实验并记录运行时报错文案（Invalid jump target: ... no beforeModel.canJumpTo defined）以确认白名单契约的校验时机',
+    ],
+    `模块四收官课。前几课我们反复看到 jumpTo 的影子：L47 的白名单校验、L48 的路由器分支、L49 的 UntrackedValue 通道，本课把它们串成完整机制并动手验证。核心结论：**节点跳转是一条三段流水线——hook 用返回值写入 jumpTo 通道 → MiddlewareNode 按白名单校验 → 各路由器消费并清位；白名单 canJumpTo 是唯一的跳转许可凭据**。
+
+### 三张用户面孔与一次映射
+
+用户面向的目标只有三个，constants.ts 全文五行：
+
+\`\`\`ts
+export const JUMP_TO_TARGETS = ["model", "tools", "end"] as const;
+export type JumpToTarget = (typeof JUMP_TO_TARGETS)[number];
+\`\`\`
+
+*— libs/langchain/src/agents/constants.ts:4-5（commit 7704471）*
+
+语义名到图节点的映射发生在 \`parseJumpToTarget\`（nodes/utils.ts:201-227）：model → model_request（L45 讲过的 AgentNode 注册名）、tools → tools 节点、end → LangGraph 的 END 常量。函数同时兼容已映射的内部值（model_request/END 直接过），非法目标抛错，错误消息把三个合法值列全：\`Invalid jump target: \${target}, must be "model", "tools" or "end".\`。值得回味的是这套命名：用户说 model，图里是 model_request——中间隔了一层语义到拓扑的翻译，这正是 L45 开头强调「两套命名不要混淆」的用武之地。再看映射函数的防御顺序也有讲究：先检查「是不是已经是合法内部值」再翻译语义名，这意味着两套名字可以混着传而不炸——但类型层只认语义名（JumpToTarget），运行时的宽容不构成对拼写错误的豁免，\`model_request\` 虽然能通过运行时，类型检查照样会拦下它。
+
+### 白名单契约：声明、校验与报错
+
+跳转许可在 hook 声明处发放。MiddlewareResult 类型给每个 hook 的返回值开了 jumpTo 尾巴（types.ts:136-140：\`TState & { jumpTo?: JumpToTarget } | void\`），而 MiddlewareNode 在消费返回值时按节点显示名前缀取约束：
+
+\`\`\`ts
+if (this.name?.startsWith("BeforeAgentNode_")) {
+  jumpToConstraint = getHookConstraint(this.middleware.beforeAgent);
+  constraint = "beforeAgent.canJumpTo";
+} else if (this.name?.startsWith("BeforeModelNode_")) {
+  ...
+}
+if (
+  typeof result.jumpTo === "string" &&
+  !jumpToConstraint?.includes(result.jumpTo as JumpToTarget)
+) {
+  const suggestion =
+    jumpToConstraint && jumpToConstraint.length > 0
+      ? \`must be one of: \${jumpToConstraint?.join(", ")}.\`
+      : constraint
+        ? \`no \${constraint} defined in middleware \${this.middleware.name}\`
+        : "";
+  throw new Error(\`Invalid jump target: \${result.jumpTo}, \${suggestion}.\`);
+}
+\`\`\`
+
+*— libs/langchain/src/agents/nodes/middleware.ts:135-160（commit 7704471）*
+
+校验粒度是「hook 阶段级」而非「中间件级」：同一个中间件可以给 beforeModel 开 tools 白名单而给 afterModel 开 end，互不通用。报错文案的两个分支同样讲究：声明了白名单但目标越界时提示 must be one of [...]；完全没声明时提示 no beforeModel.canJumpTo defined——**错误消息本身就是修复指南**，告诉你在哪个 hook 上补哪个字段。
+
+### 三张路由器对 end 的不同待遇：一张易错对照
+
+jumpTo 的消费端不止 afterModel 一处——beforeAgent 与 beforeModel 的 hook 节点在声明了 canJumpTo 时也会装上各自的路由器（ReactAgent.ts:471、503 的接线点）。三张路由器长得像，但对 \`end\` 的处理有一个真实的分岔，这也是最容易被误读的地方：
+
+\`\`\`ts
+// #createBeforeAgentRouter：end → exitNode
+const destination = parseJumpToTarget(builtInState.jumpTo);
+if (destination === END) {
+  return exitNode;
+}
+...
+// #createBeforeModelRouter：end → 字面 END
+if (destination === END) {
+  return END;
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:1080-1113 与 1115-1147（commit 7704471，对照节选）*
+
+对照表如下。**beforeAgent 路由器**：end 落到 exitNode——生命周期刚开始就「跳到结尾」，也照样走完 afterAgent 收尾管道，接线处还把白名单目的地里的 END 统一替换为 exitNode（ReactAgent.ts:462-464）。**afterModel 路由器**：end 同样落 exitNode（937-941）。**beforeModel 路由器**：end 是字面 END——接边处的 destinations 集合不做事替换（ReactAgent.ts:503-516），路由器也原样返回 END。为什么独它例外？语义上讲得通：beforeModel 处于循环体内，「跳出循环」与「结束 agent」是同一件事的两种说法，这里没有收尾管道需要保全的诉求差异——但工程后果不同：**从 beforeModel 跳 end 会绕过全部 afterAgent 节点**。如果你的收尾逻辑（审计、汇总）挂在 afterAgent，预算闸这类「在 beforeModel 里数步数」的中间件触发跳转时收尾不会执行——这是设计预算闸时必须知道的取舍，要么把收尾搬到 afterModel 之前，要么接受这个盲区。
+
+三张路由器的另两处一致行为也顺带记下：无 jumpTo 一律返回 nextDefault（beforeAgent/beforeModel）或走正常模型路由（afterModel）；跳 model/tools 都是 \`new Send(目标, { ...state, jumpTo: undefined })\`——清位纪律三处统一，无一处例外。
+
+### 消费端：路由器如何执行跳转并清位
+
+真正的跳转执行在各路由器。以信息量最大的 \`#createAfterModelRouter\` 为例：
+
+\`\`\`ts
+if (allowJump && builtInState.jumpTo) {
+  const destination = parseJumpToTarget(builtInState.jumpTo);
+  if (destination === END) { return exitNode; }
+  if (destination === TOOLS_NODE_NAME) {
+    if (!hasToolsAvailable) { return exitNode; }
+    return new Send(TOOLS_NODE_NAME, { ...state, jumpTo: undefined });
+  }
+  // destination === "model_request"
+  return new Send(AGENT_NODE_NAME, { ...state, jumpTo: undefined });
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:937-952（commit 7704471，有裁剪）*
+
+四条分支各有玄机。第一，**jumpTo 优先于一切**：路由器先查 jumpTo 再看 pending tool_calls——中间件说跳就跳。第二，end 跳的是 exitNode 而非字面 END，让 afterAgent 收尾管道不被绕过。第三，跳 tools 前检查可用性，无工具降级退出。第四，两次跳转都用 \`Send({ ...state, jumpTo: undefined })\` 清位——Send 携带的新状态会覆盖 jumpTo 通道，注释点明这是防无限循环的关键：如果不清位，下一轮 afterModel 结束时旧信号还在，循环永不终止。另外注意「刚处理完结构化输出则无视 jumpTo 直达 exitNode」的前置分支（ReactAgent.ts:926-935）——终局的保护优先级高于跳转。
+
+### 实操：预算闸与质量闸两个跳转中间件
+
+下面脚本把机制跑通（依赖同 L46：\`npm i langchain @langchain/core zod\`，\`npx tsx jumpto-lab.ts\`）：
+
+\`\`\`ts
+import { createAgent, createMiddleware } from "langchain";
+import { tool } from "@langchain/core/tools";
+import { HumanMessage } from "@langchain/core/messages";
+import { z } from "zod/v3";
+
+// ① 预算闸：beforeModel 数步数，超限 jumpTo: end 提前终止
+const budget = createMiddleware({
+  name: "budget",
+  stateSchema: z.object({
+    _modelCalls: z.number().default(0), // 下划线：私有，外部不可注入
+  }),
+  beforeModel: {
+    // 白名单只放行 end：越界跳转会在运行时抛错
+    canJumpTo: ["end"],
+    hook: (state) => {
+      const calls = ((state as Record<string, unknown>)._modelCalls as number) + 1;
+      if (calls > 3) {
+        return { _modelCalls: calls, jumpTo: "end" as const };
+      }
+      return { _modelCalls: calls };
+    },
+  },
+});
+
+// ② 质量闸：afterModel 发现输出含占位符就打回重写
+const qualityGate = createMiddleware({
+  name: "qualityGate",
+  afterModel: {
+    canJumpTo: ["model"],
+    hook: (state) => {
+      const last = state.messages.at(-1);
+      const text = typeof last?.content === "string" ? last.content : "";
+      if (text.includes("TODO") && (state as any)._modelCalls as number <= 3) {
+        return { jumpTo: "model" as const }; // 清位由路由器的 Send 完成
+      }
+      return undefined; // 无操作：只发 jumpTo 哨兵
+    },
+  },
+});
+
+const echo = tool(({ text }: { text: string }) => \`ok:\${text}\`, {
+  name: "echo",
+  description: "echoes text",
+  schema: z.object({ text: z.string() }),
+});
+
+const agent = createAgent({
+  model: "openai:gpt-4o-mini",
+  tools: [echo],
+  middleware: [budget, qualityGate],
+});
+
+const result = await agent.invoke({
+  messages: [new HumanMessage("总结这个项目")],
+});
+console.log(result.messages.at(-1)?.content);
+
+// ③ 越界实验：把 qualityGate 的 afterModel 换成返回 { jumpTo: "tools" }
+// （未在 canJumpTo 里声明 tools），运行应抛：
+// Error: Invalid jump target: tools, no afterModel.canJumpTo defined in middleware qualityGate
+\`\`\`
+
+三个实验各自验证一条机制。① 里预算闸只声明 \`canJumpTo: ["end"]\`，第 4 次模型调用前 beforeModel 写入 jumpTo，路由器把 end 映射到 exitNode，agent 提前终止——注意 \`_modelCalls\` 是私有字段，跨轮循环持久但 invoke 输入无法注入（L49 的契约在实战里的样子）。② 里质量闸演示「打回重写」：jumpTo: model 让路由器 \`Send(AGENT_NODE_NAME, { ...state, jumpTo: undefined })\`，模型带着新的机会重写输出，同时通道被清位——若模型连续输出 TODO，计数闸会在第 4 轮兜底终止，两个中间件形成天然的安全网。③ 是负向实验：删掉白名单声明或写入未声明的目标，运行时立即抛错且文案直指修复点。把 echo 工具从 agent 里删掉再让 qualityGate 跳 tools，还能验证「无可用工具时降级 exitNode」的分支——三个白名单外与降级路径全部可观测。
+
+把实验再往深处推一步，还有一个值得动手验证的细节：预算闸的跳转走的是 **beforeModel 路由器**，按上一节的对照表，它的 end 是字面 END——把 afterAgent 汇总中间件挂上去后跑 ①，你会发现模型调用 4 次触发预算闸时 \`[audit]\` 汇总日志**没有打印**；而质量闸的 model 跳转不结束生命周期，循环继续，收尾正常出现。这一反一正两次实验就把「三张路由器对 end 的不同待遇」从源码对照变成了运行时可观察的事实。另外，质量闸 ② 的 \`return undefined\` 分支（无操作）也别放过：hook 返回 undefined 与返回不含 jumpTo 的部分状态，在 MiddlewareNode 的消费逻辑里都会落到「无跳转信号」，路由器自然回到 nextDefault——**跳转是信号驱动的，没写信号就没有跳转**，不存在「上次没消费掉的信号残留」这回事（消费端 Send 清位保证了这一点）。
+
+### 本课小结
+
+- 用户跳转目标只有 model/tools/end 三个语义名，parseJumpToTarget 映射到 model_request/tools/END；非法目标在映射处即抛错。
+- 白名单契约三要素：hook 对象形态声明 canJumpTo、MiddlewareNode 按阶段前缀取约束校验、报错文案直接给出修复建议；校验粒度是 hook 级不是中间件级。
+- 消费端优先级：结构化终局 > jumpTo > pending tool_calls；end 落到 exitNode 保留 afterAgent 管道；无工具时 tools 跳转降级退出；每次跳转经 Send 清位防死循环。
+- jumpTo 通道是 UntrackedValue——信号不进 checkpoint，与 L49 的「通道语义决定节点实现」呼应。
+- 模块四到此完成：从 ReactAgent 骨架到节点流水线再到状态与跳转。下一课进入模块五，正面拆解 middleware 的接口契约。
+`,
+    null,
+    [
+      {
+        text: '用户可声明的跳转目标常量 JUMP_TO_TARGETS 包含哪些？',
+        options: [
+          '["model_request", "tools", "END"]',
+          '["model", "tools", "end"]',
+          '["start", "model", "end"]',
+          '任意节点名',
+        ],
+        answer: 1,
+        explain:
+          'constants.ts 原文是 export const JUMP_TO_TARGETS = ["model", "tools", "end"] as const——用户面向的三个语义目标。选项 A 是内部节点名/常量（jumpTo 通道的 JumpToTarget 类型在 annotation.ts 里写作 model_request | tools | end | undefined），用户写 model_request 会在 parseJumpToTarget 因不在白名单里被拒或原样通过——但公开 API 面向的是语义名；选项 C 的 start 不是可跳目标；选项 D 与白名单设计矛盾。',
+        concept: 'lc-jump-to-target',
+      },
+      {
+        text: 'jumpTo 通道为什么用 UntrackedValue 实现？',
+        options: [
+          '为了支持并发写入',
+          '它是路由信号不是数据：不应进 checkpoint 版本时钟，且消费后通过 Send 携带 jumpTo: undefined 清位防止无限循环',
+          '因为 jumpTo 需要跨 invoke 持久化',
+          '为了在 LangGraph Studio 里可视化',
+        ],
+        answer: 1,
+        explain:
+          'annotation.ts 把 jumpTo 声明为 new UntrackedValue<JumpToTarget>()；消费端 #createAfterModelRouter 用 new Send(TOOLS_NODE_NAME, { ...state, jumpTo: undefined }) 在跳转的同时清位，源码注释明说 The jumpTo property is automatically cleared after use to prevent infinite loops。选项 A 与 UntrackedValue 无关；选项 C 与「信号不持久」的设计相反；选项 D 无依据。',
+        concept: 'lc-jump-to-target',
+      },
+      {
+        text: '中间件在 beforeModel 里返回 { jumpTo: "model" } 但没声明 canJumpTo，会发生什么？',
+        options: [
+          '正常跳转',
+          '运行时抛错：Invalid jump target: model, no beforeModel.canJumpTo defined in middleware X',
+          '编译期类型错误，无法通过构建',
+          '静默忽略 jumpTo 继续执行',
+        ],
+        answer: 1,
+        explain:
+          'MiddlewareNode.invokeMiddleware 按节点显示名前缀取对应 hook 的 canJumpTo 约束，jumpTo 不在白名单时抛错——没声明 canJumpTo 时 suggestion 是 no beforeModel.canJumpTo defined in middleware X，直接告诉你该补哪个配置。选项 A 忽略了校验；选项 C 错在类型层面 canJumpTo 是可选属性，编译期不会拦截运行时配置缺失；选项 D 无静默路径。',
+        concept: 'lc-jump-to-target',
+      },
+      {
+        text: 'afterModel 阶段 jumpTo: tools 但 agent 没有任何可用工具（也没有 wrapToolCall 中间件），路由器怎么做？',
+        options: ['照常跳转，ToolNode 报错', '回退到 exitNode 正常结束', '抛出异常', '自动改跳 model'],
+        answer: 1,
+        explain:
+          '#createAfterModelRouter 里 if (destination === TOOLS_NODE_NAME) { if (!hasToolsAvailable) { return exitNode; } return new Send(...) }——没有可执行工具时跳转降级为正常退出，而不是制造一次必然失败的执行。接线期也有对称防护：allowedMapped.filter(dest => dest !== TOOLS_NODE_NAME || hasToolsAvailable) 直接把 tools 目标从目的地集合剔除。选项 A、C 都与这个降级设计相反；选项 D 无改写逻辑。',
+        concept: 'lc-jump-to-target',
+      },
+    ],
+    [
+      ['JumpToTarget', '用户面向的跳转目标联合类型：model / tools / end，定义于 agents/constants.ts'],
+      [
+        'canJumpTo',
+        'hook 对象形态（{ hook, canJumpTo }）上的白名单数组；middleware.ts 运行时按节点类型取对应 hook 的白名单校验 jumpTo',
+      ],
+      ['jumpTo 通道', '图状态里的 UntrackedValue 通道，是 hook 与路由器之间传递跳转意图的信号线，消费即清位'],
+      [
+        'parseJumpToTarget',
+        'nodes/utils.ts 的映射函数：model→model_request、tools→tools、end→END，非法值抛错',
+      ],
+    ],
+    [
+      '以为 hook 返回 jumpTo 就能跳——必须同时用对象形态声明 canJumpTo 白名单，运行时校验按 hook 阶段（beforeAgent/beforeModel/afterModel/afterAgent）分别取约束',
+      '在循环里反复设置 jumpTo 却不清位——消费端用 Send({ ...state, jumpTo: undefined }) 清位是为防无限循环，自己写 wrap 型中间件时若伪造跳转也要遵守同一纪律',
+      '把 jumpTo: end 当成绕过 afterAgent 的捷径——多数路由器把 end 映射到 exitNode（最后一个 afterAgent），收尾管道仍会执行；只有第一个 afterAgent 的白名单跳转里 END 才是字面终点',
+    ],
+  ),
+  'practice',
+)

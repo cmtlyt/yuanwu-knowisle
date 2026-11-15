@@ -1,0 +1,213 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L40 = withKind(
+  L(
+    'L40',
+    12,
+    'ReactAgent 类骨架：~agentTypes 品牌与 #graph',
+    2,
+    ['L37'],
+    ['lc-react-agent-class'],
+    [
+      '能说出 ReactAgent 的字段清单：单泛型类型包 Types、declare 的 ~agentTypes 品牌私有字段、#graph、#toolBehaviorVersion、#agentNode、#defaultConfig 各自的职责',
+      '能解释构造器开头的三步初始化：defaultConfig 合并（ls_integration/ls_agent_type/lc_agent_name）、model 必填校验、validateLLMHasNoBoundTools 防双重绑定',
+      '能区分类上哪些成员是真实字段、哪些是对 #graph 的一行委托（graph/checkpointer/store 与 withConfig 的区别）',
+    ],
+    `### 开篇：从类型世界走进运行时世界
+
+前三课（L37-L39）把 createAgent 的类型层读完；从本课起镜头切进运行时——\`ReactAgent\` 类本身。这是「Agent 即编译图」世界观的第一站：类骨架里最重要的两个字段，\`~agentTypes\` 承载类型包（上承 L39），\`#graph\` 承载编译产物（下启 L41 的编译流程与 L42/L43 的执行路径）。本课结论先行：**ReactAgent 类本体其实很薄——一个构造器、一个编译图、若干一行委托；所有的「智能」都在构造器编译出的图里**。
+
+### 类声明与字段清单：一个类型包 + 四个私有字段
+
+类的头部声明只有不到二十行：
+
+\`\`\`ts
+export class ReactAgent<
+  Types extends AgentTypeConfig = AgentTypeConfig<
+    Record<string, any>,
+    undefined,
+    AnyAnnotationRoot,
+    readonly AnyAgentMiddleware[],
+    readonly (ClientTool | ServerTool)[],
+    ReadonlyArray<() => StreamTransformer<any>>
+  >,
+> {
+  declare readonly "~agentTypes": Types;
+
+  #graph: CompiledStateGraph<any, any, any, any, any, any, unknown>;
+
+  #toolBehaviorVersion: "v1" | "v2" = "v2";
+
+  #agentNode: AgentNode<any, AnyAnnotationRoot>;
+
+  #defaultConfig: RunnableConfig;
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:164-187（commit 7704471）*
+
+逐个点名。\`Types\` 是唯一泛型，默认值 \`DefaultAgentTypeConfig\` 的形状（宽泛 Response、undefined State、AnyAnnotationRoot Context）保证「无类型标注的调用」也能工作。\`~agentTypes\` 在 L39 已拆过——declare 幽灵属性，运行时不存在。\`#graph\` 是类的核心资产：私有字段（ES \`#\` 语法，外部只能经方法访问），类型是 LangGraph 的 \`CompiledStateGraph\`。\`#toolBehaviorVersion\` 是个容易被忽略的开关：默认 \`"v2"\`，构造器可经 \`options.version\` 覆盖为 \`"v1"\`；两者决定模型路由器如何分派工具调用——v1 把整条 AIMessage 交给单个 ToolNode 任务、内部 Promise.all 并发，v2 用 LangGraph 的 \`Send\` 把每个工具调用分派成独立任务（路由代码见 #createModelRouter，L41 起逐步展开）。\`#agentNode\` 保存预构建的 AgentNode 实例，\`#defaultConfig\` 存默认配置。**整个类的字段就这五个**——薄、直、无隐藏状态。
+
+### 构造器开头三步：观测标记、必填校验、防双重绑定
+
+构造器（ReactAgent.ts:189-722）有 530 余行，但开头三步与图编译无关，先看它们：
+
+\`\`\`ts
+this.#defaultConfig = mergeConfigs(defaultConfig ?? {}, {
+  metadata: { ls_integration: "langchain_create_agent" },
+  configurable: { ls_agent_type: "root" },
+});
+if (options.name) {
+  this.#defaultConfig = mergeConfigs(this.#defaultConfig, {
+    metadata: { lc_agent_name: options.name },
+  });
+}
+this.#toolBehaviorVersion = options.version ?? this.#toolBehaviorVersion;
+
+if (!options.model) {
+  throw new Error("\`model\` option is required to create an agent.");
+}
+
+if (typeof options.model !== "string") {
+  validateLLMHasNoBoundTools(options.model);
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:197-220（commit 7704471）*
+
+第一步写观测标记：\`ls_integration: "langchain_create_agent"\`（LangSmith 用来识别调用来源）、\`configurable.ls_agent_type: "root"\`（标记根 agent，子 agent 场景下嵌套 agent 会被标记为 child）、以及 \`lc_agent_name\`（命名 agent 的元数据）。这三条都是可观测性契约，不是功能开关。第二步 fail-fast 校验 model 必填。第三步最值得注意：**只对「模型实例」做已绑定工具检查**，字符串形态（"openai:gpt-4o"，走 initChatModel 延迟初始化）天然干净无需检查。\`validateLLMHasNoBoundTools\` 的存在说明了一个设计立场：1.x 里工具的唯一注册入口是 createAgent 的 tools 参数与中间件，模型自带的绑定会破坏这个单一事实源，所以在编译前直接抛错。这三步给 L42 的 invoke 铺了路——invoke 时 \`#getGraphConfig\` 会把 #defaultConfig 与调用方 config 合并，调用方优先。
+
+### #graph 的诞生与「烘焙」：编译一次，可能被替换一次
+
+\`#graph\` 在构造器末尾被赋值，随后还有一个后处理：
+
+\`\`\`ts
+this.#graph = allNodeWorkflows.compile({
+  checkpointer: this.options.checkpointer,
+  store: this.options.store,
+  name: this.options.name,
+  description: this.options.description,
+  transformers: compileTransformers,
+}) as unknown as AgentGraph<Types>;
+
+const graphDefaultConfig = toGraphDefaultConfig(this.#defaultConfig);
+if (Object.keys(graphDefaultConfig).length > 0) {
+  this.#graph = this.#graph.withConfig(graphDefaultConfig);
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:703-721（commit 7704471）*
+
+注意两点。其一，\`#graph\` 可能被赋值两次：compile 一次，\`withConfig(graphDefaultConfig)\` 非空时替换一次。源码上方注释解释了动机：LangGraph API 平台解析 agent 时会把 ReactAgent 解包到内部编译图直接调用 streamEvents，那条路径**看不到 invoke 时合并的 #defaultConfig**，所以静态默认配置必须在编译期「烘焙」进图。\`toGraphDefaultConfig\`（utils.ts）按白名单键挑选可烘焙的配置键。其二，\`as unknown as AgentGraph<Types>\` 的双重断言暴露了一个类型工程现实：编译图内部泛型与类型包推导产物之间的桥接靠人工断言，类型安全在「类边界」处有明确豁免。graph/checkpointer/store 三个属性则以 getter/setter 形式直接委托到 #graph（ReactAgent.ts:727-745），比如 \`set checkpointer(value) { this.#graph.checkpointer = value; }\`——对 checkpointer 的赋值实际穿透到图上。
+
+### 一行委托家族：类上其余的「假成员」
+
+构造器之外的方法多数是委托。\`invoke\` 与 \`stream\`（L42/L43 详讲）在合并配置与初始化状态后分别转调 \`#graph.invoke\`/\`#graph.stream\`。\`withConfig\` 是唯一「返回新实例」的方法：
+
+\`\`\`ts
+withConfig(
+  config: Omit<RunnableConfig, "store" | "writer" | "interrupt">
+): ReactAgent<Types> {
+  return new ReactAgent(
+    this.options,
+    mergeConfigs(this.#defaultConfig, config)
+  );
+}
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:770-777（commit 7704471）*
+
+签名里 \`Omit\` 掉的三个键值得注意：store/writer/interrupt 不允许经 withConfig 注入——store 是构造期绑定（进 compile），writer/interrupt 是调用期语义，都不该出现在静态默认配置里。JSDoc 里还展示了链式用法：\`agent.withConfig({...}).withConfig({...})\`，每一步都重建实例。此外类尾部有 \`drawMermaid\`/\`drawMermaidPng\` 两个可视化方法（走 #graph.getGraphAsync），以及一批 \`@internal\` 标注的图级透传方法（getState/getStateHistory/getSubgraphs/updateState/builder）——那是 L44 的完整主题。本课只需记住分层：**invoke/stream 是公开 API，图级透传是给 LangGraph Platform 的内部协议**。
+
+### 本课小结
+
+- **字段清单五件套**：~agentTypes（类型幽灵）、#graph（编译图）、#toolBehaviorVersion（v1/v2 路由开关）、#agentNode、#defaultConfig——类本体很薄，行为都在图里。
+- **构造器开头三步**：观测元数据（ls_integration/ls_agent_type/lc_agent_name）→ model 必填校验 → validateLLMHasNoBoundTools 防双重绑定；字符串模型豁免绑定检查。
+- **#graph 赋值两次**：compile 产物 + 非空 graphDefaultConfig 时的 withConfig 烘焙（为 LangGraph Platform 的解包路径服务）；checkpointer/store 属性 setter 穿透到图。
+- **withConfig 不可变**：重建 ReactAgent、合并 defaultConfig、禁注 store/writer/interrupt；链式调用会重复触发编译。
+- 下一课正面攻构造器主体：从 middlewareTools 收集到 addNode/addEdge 接线、再到 compile 收尾——「allNodeWorkflows.compile 全流程」。
+`,
+    null,
+    [
+      {
+        text: 'ReactAgent 的 #graph 字段类型是什么？它何时被赋值？',
+        options: [
+          'StateGraph 实例，构造器开头 new 出来',
+          'CompiledStateGraph，构造器末尾由 allNodeWorkflows.compile({...}) 赋值，随后可能被 withConfig 替换',
+          'Pregel 类的静态单例',
+          'RunnableLambda，惰性初始化',
+        ],
+        answer: 1,
+        explain:
+          'ReactAgent.ts:181 声明 `#graph: CompiledStateGraph<...>`；构造器末尾 ReactAgent.ts:703-709 执行 `this.#graph = allNodeWorkflows.compile({...})`，且 ReactAgent.ts:718-721 在 graphDefaultConfig 非空时用 `this.#graph.withConfig(graphDefaultConfig)` 重新赋值。选项 A 错在 StateGraph 是未编译的 builder，#graph 存的是编译产物；选项 C 无此单例机制；选项 D 与事实不符——构造是急切的，createAgent 调用完成时图已编译。',
+        concept: 'lc-react-agent-class',
+      },
+      {
+        text: '传给构造器的 model 已经 bindTools 过会怎样？',
+        options: [
+          '自动解绑后再使用',
+          'validateLLMHasNoBoundTools 直接抛错，防止工具被绑定两次',
+          '静默忽略已绑定工具',
+          '仅打印警告，不中断',
+        ],
+        answer: 1,
+        explain:
+          '构造器在 `typeof options.model !== "string"` 时调用 validateLLMHasNoBoundTools(options.model)（ReactAgent.ts:218-220，实现在 utils.ts）——绑定过工具的模型再进 agent 会导致工具集重复定义，因此选择 fail fast。选项 A 错在不自动解绑；选项 C 与 fail-fast 语义矛盾；选项 D 错在是抛错而非警告。字符串形态的 model（如 "openai:gpt-4o"）不经此检查，因为它尚未绑定任何工具。',
+        concept: 'lc-react-agent-class',
+      },
+      {
+        text: 'agent.withConfig({ recursionLimit: 1000 }) 的返回值是什么？',
+        options: [
+          '修改当前实例并返回 this',
+          '一个新的 ReactAgent 实例：以原 options 和合并后的 defaultConfig 作为构造参数重建，原实例不变',
+          '只有编译图被替换，ReactAgent 实例复用',
+          'undefined，配置写入全局',
+        ],
+        answer: 1,
+        explain:
+          'withConfig（ReactAgent.ts:770-777）实现为 `return new ReactAgent(this.options, mergeConfigs(this.#defaultConfig, config))`——不可变风格：重建实例、合并默认配置，注释明确说明调用时传入的 config 优先级更高。选项 A 错在不是可变方法；选项 C 错在重建的是整个 agent（构造器会重新编译图），不是只换图；选项 D 无此机制。',
+        concept: 'lc-react-agent-class',
+      },
+      {
+        text: '构造器里写入 #defaultConfig 的 metadata 有哪些？作用是什么？',
+        options: [
+          '仅 lc_agent_name（传了 name 时），无其他',
+          'ls_integration: "langchain_create_agent"、configurable.ls_agent_type: "root"，传 name 时追加 lc_agent_name——用于可观测性识别与父子 agent 层级标记',
+          '随机 runId，用于追踪',
+          '不写任何 metadata',
+        ],
+        answer: 1,
+        explain:
+          'ReactAgent.ts:197-205：mergeConfigs 写入 `metadata: { ls_integration: "langchain_create_agent" }` 与 `configurable: { ls_agent_type: "root" }`，`options.name` 存在时再合并 `metadata: { lc_agent_name: options.name }`。这些标记让 LangSmith 等观测端能识别「这是 createAgent 产物」并区分根 agent 与子 agent。选项 A 少了前两项；选项 C 凭空捏造；选项 D 与源码直接矛盾。',
+        concept: 'lc-react-agent-class',
+      },
+    ],
+    [
+      [
+        '#graph',
+        'ReactAgent 的私有编译图字段（ReactAgent.ts:181），类型 CompiledStateGraph；invoke/stream/图级 API 全部委托给它',
+      ],
+      [
+        '~agentTypes',
+        'declare 声明的幽灵属性（ReactAgent.ts:179），仅存在于类型层，供反查族提取 AgentTypeConfig',
+      ],
+      [
+        '#toolBehaviorVersion',
+        '工具调用行为版本开关，默认 "v2"（ReactAgent.ts:183）；v1 将全部工具调用交给单个 ToolNode 任务，v2 用 Send 按调用逐个分派',
+      ],
+      [
+        'validateLLMHasNoBoundTools',
+        'utils.ts 中的校验函数：检测传入模型是否已 bindTools，已绑定则抛错，防止工具重复注册',
+      ],
+      [
+        '#defaultConfig',
+        '构造器合并出的默认 RunnableConfig（含 ls_integration 等观测元数据），invoke/stream 时与调用方 config 合并',
+      ],
+    ],
+    [
+      '把传给 ReactAgent 的模型先 bindTools——validateLLMHasNoBoundTools 会直接抛错；1.x 的正确姿势是把裸模型交给 createAgent，工具集由 tools 参数与中间件统一管理',
+      '以为 withConfig 会复用已编译的图——它重建整个 ReactAgent，构造器重新执行编译流程；频繁调用有重复编译成本，应把稳定配置合并成一次调用',
+      '把 graph getter 当成「构建器」——返回的是已编译的 CompiledStateGraph；想拿未编译 builder 应看 agent.builder（同样委托 #graph.builder），两者勿混',
+    ],
+  ),
+  'theory',
+)

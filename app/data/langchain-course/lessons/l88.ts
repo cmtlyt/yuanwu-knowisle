@@ -1,0 +1,198 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L88 = withKind(
+  L(
+    'L88',
+    25,
+    '遗留记忆层：BaseMemory/ChatHistory 双基类为何被淘汰',
+    2,
+    ['L10'],
+    ['lc-legacy-memory'],
+    [
+      '说出 BaseMemory 的 load/saveContext 两段式生命周期及其与 Chain 的耦合关系',
+      '辨析 BaseChatMessageHistory 与 BaseListChatMessageHistory 双基类并存的成因与差异',
+      '解释为什么 langgraph state + checkpoint 取代了这套记忆抽象',
+    ],
+    `### 被淘汰之前的样子：读懂旧记忆模型的死因
+
+进入记忆与缓存阶段。本课解剖 1.x 里仍然存在、但已被新体系取代的遗留层：BaseMemory 与 ChatHistory 双基类。读它的价值不在使用而在辨析——**理解旧模型为什么活不下去，才能理解 langgraph state + checkpoint 为什么是必然归宿**（后者是 L90/L91 的主题）。核心结论：**旧记忆模型是「外部观察者」——它在 Chain 执行前后被动读写一个自由字典；新模型是「图的一部分」——记忆就是 state 本身，读写就是通道更新**。
+
+### 走读：BaseMemory 的两段式契约
+
+\`\`\`ts
+export abstract class BaseMemory {
+  abstract get memoryKeys(): string[];
+  abstract loadMemoryVariables(values: InputValues): Promise<MemoryVariables>;
+  abstract saveContext(inputValues: InputValues, outputValues: OutputValues): Promise<void>;
+}
+\`\`\`
+
+*— langchain-core/src/memory.ts:28-54（commit 7704471）*
+
+契约三件套，语义是「两段式生命周期」：\`loadMemoryVariables\` 在 Chain 执行**前**被调，返回要注入进 prompt 的变量；\`saveContext\` 在执行**后**被调，拿着这一轮的输入与输出把新内容写回记忆。注意两个签名细节：输入输出都是 \`Record<string, any>\` 自由字典——记忆模型不知道也不关心链的结构；记忆类自身**没有读写时机**，完全依赖调用方编排。这决定了它只能服务「编排式」运行时（Chain.call 里显式调 load/save），无法服务「循环式」运行时（agent 每轮工具调用之间都要滚动状态）。
+
+### 自由字典的代价：键空间互相污染
+
+\`\`\`ts
+export function getPromptInputKey(
+  inputs: Record<string, unknown>,
+  memoryVariables: string[]
+): string {
+  const promptInputKeys = Object.keys(inputs).filter(
+    (key) => !memoryVariables.includes(key) && key !== "stop"
+  );
+  if (promptInputKeys.length !== 1) {
+    throw new Error(\`One input key expected, but got \${promptInputKeys.length}\`);
+  }
+  return promptInputKeys[0];
+}
+\`\`\`
+
+*— langchain-core/src/memory.ts:107-120（commit 7704471）*
+
+这段工具函数暴露了旧模型的死穴：记忆变量与业务输入**共享同一个字典命名空间**。要找出「哪一个是真正的主输入」，只能用排除法——把 memoryKeys 和 "stop" 从 keys 里滤掉，然后**要求剩下的恰好是一个键**。同样，\`getInputValue/getOutputValue\`（memory.ts:56-100）在多键时直接抛错要求显式指定 inputKey/outputKey。整个体系建立在「单键约定 + 显式指定」的补丁上——这就是为什么旧 Chain 应用里到处是 \`memory.inputKey = "input"\` 这类配置。类型安全为零：任何键名手误都是运行时错误。
+
+对照新世界观：langgraph 里记忆就是 state 的一个通道（比如 messages），读 = 通道快照，写 = reducer 归并，**根本不存在「从自由字典里猜哪个键是主输入」的问题**——state schema 在编译期就声明了每个通道的类型与归并规则。
+
+### 走读：chat_history 双基类的历史包袱
+
+\`\`\`ts
+// TODO: Combine into one class for 0.2        ← chat_history.ts:4，历史包袱的活证据
+
+export abstract class BaseChatMessageHistory extends Serializable {
+  public abstract getMessages(): Promise<BaseMessage[]>;
+  public abstract addMessage(message: BaseMessage): Promise<void>;
+  public abstract addUserMessage(message: string): Promise<void>;   // 抽象！子类必须实现
+  public abstract addAIMessage(message: string): Promise<void>;
+  public async addMessages(messages: BaseMessage[]): Promise<void> {
+    for (const message of messages) { await this.addMessage(message); }
+  }
+  public abstract clear(): Promise<void>;
+}
+
+export abstract class BaseListChatMessageHistory extends Serializable {
+  public abstract getMessages(): Promise<BaseMessage[]>;
+  public abstract addMessage(message: BaseMessage): Promise<void>;
+  public addUserMessage(message: string): Promise<void> { return this.addMessage(new HumanMessage(message)); }
+  public addAIMessage(message: string): Promise<void> { return this.addMessage(new AIMessage(message)); }
+  public async addMessages(messages: BaseMessage[]): Promise<void> {
+    for (const message of messages) { await this.addMessage(message); }
+  }
+  public clear(): Promise<void> { throw new Error("Not implemented."); }
+}
+\`\`\`
+
+*— langchain-core/src/chat_history.ts:4-91（commit 7704471）*
+
+两个基类方法面几乎相同，差异只有两处。其一，\`addUserMessage/addAIMessage\` 在 Base 版是**抽象方法**（每个子类都得实现一遍），在 List 版是**具体便捷方法**且注释标注 *may be deprecated in a future release*——这是设计认知演进的痕迹：后来意识到这俩只是 \`addMessage(new HumanMessage(...))\` 的糖，不该强加给每个后端。其二，clear 在 Base 版抽象、在 List 版默认抛 Not implemented（删除可选，与 VectorStore.delete 同款哲学）。
+
+顶部的 \`TODO: Combine into one class for 0.2\` 注释是理解整个遗留层的钥匙：**官方自己早就认为该合并，但直到体系被 langgraph 取代也没合并**。面对一个「预期会被淘汰的层」，修修补补的收益趋近于零——资源全部流向了 checkpoint 体系。这行 TODO 因此成为「技术债务何时应该停止偿还」的绝佳课堂素材。
+
+两个值得学的细节。其一，\`addMessages\` 的默认实现是逐条 \`await\` 循环，JSDoc 明确要求子类覆写做批量写以省 round-trip（chat_history.ts:19-26）——「接口默认实现即文档」的范例：默认行为可用但低效，注释直接告诉你优化方向。其二，\`InMemoryChatMessageHistory\`（chat_history.ts:98-133）是教科书级最小实现：\`private messages: BaseMessage[] = []\` 加 getMessages/addMessage/clear 三个方法，外加 \`lc_namespace = ["langchain", "stores", "message", "in_memory"]\`——想估算「实现一个自定义 history 要写多少代码」，拿它当基线：**核心逻辑十行以内，序列化声明是 Serializable 的固定成本**。
+
+### 死因清单：为什么必须被淘汰
+
+把旧记忆模型放在 agent 时代的需求面前逐条对照，死因就清晰了。
+
+| 旧模型设计 | agent 时代的需求 | 淘汰理由 |
+|---|---|---|
+| 两段式 load/save，时机由 Chain 编排 | 每轮模型/工具调用之间都要滚动状态 | 两段式粒度太粗，循环式运行时无处插桩 |
+| 自由字典 + memoryKeys 排除法识别主输入 | state schema 声明式定义通道与类型 | 键空间污染、零类型安全 |
+| 记忆对象游离在执行体之外（外部观察者） | 记忆是图状态的一部分，随 checkpoint 持久化 | 无法与 interrupt/resume 语义协同（L90/L91） |
+| ChatHistory 只管消息列表 | 需要长期事实记忆（跨会话） | 语义检索能力缺失，BaseStore 补位（L91） |
+
+1.x 的官方口径与实践一致：langgraph 的 state 是记忆，checkpoint 是持久化，BaseStore 是跨线程长期记忆——三者分工取代了 BaseMemory/ChatHistory 的全部场景。模块九的迁移课（L109-L111）会把 BufferMemory/SummaryMemory/EntityMemory 的逐个去向做映射；本课先立住「为什么」。
+
+### 本课小结
+
+- BaseMemory = 两段式生命周期（loadMemoryVariables 注入 + saveContext 写回），读写时机外包给 Chain，只能服务编排式运行时。
+- 自由字典 + memoryKeys 排除法识别主输入（getPromptInputKey 强制单键）是零类型安全的补丁设计。
+- ChatHistory 双基类并存 + 顶部 TODO 注释 = 官方自证的未偿还技术债；addMessages 默认逐条写、注释要求覆写批量。
+- 新体系分工：langgraph state 记忆（L90/L91）+ BaseStore 长期记忆（L91）；模块九迁移课再补「怎么搬」。
+- 下一课看同一时代的另一件遗留品：LLM 缓存——它没被淘汰，但也没被 langgraph 采纳，挂在 BaseLLM 一层。
+`,
+    null,
+    [
+      {
+        text: 'BaseMemory 定义的记忆生命周期是哪两段？',
+        options: [
+          'read/write 两个方法',
+          'loadMemoryVariables（注入历史）与 saveContext（写回）',
+          'get/put 两个方法',
+          'remember/recall 两个方法',
+        ],
+        answer: 1,
+        explain:
+          'memory.ts:28-54：abstract loadMemoryVariables(values: InputValues): Promise<MemoryVariables> 与 abstract saveContext(inputValues, outputValues): Promise<void>。这是「执行前注入、执行后写回」的两段式模型——记忆的读写时机由调用方（Chain）编排，记忆类自己不知道何时被调。',
+        concept: 'lc-legacy-memory',
+      },
+      {
+        text: 'chat_history.ts 文件顶部那行 TODO 说明了什么？',
+        options: [
+          '计划删除记忆功能',
+          'TODO: Combine into one class for 0.2——两个基类本该合并，历史包袱的活证据',
+          '计划支持流式消息',
+          '只是普通注释，无实际含义',
+        ],
+        answer: 1,
+        explain:
+          'chat_history.ts:4：// TODO: Combine into one class for 0.2。BaseChatMessageHistory 与 BaseListChatMessageHistory 两个抽象基类并存且方法面高度重叠——连官方都标注「该合并却没合并」，是理解 1.x 淘汰这套体系时的重要背景证据。',
+        concept: 'lc-legacy-memory',
+      },
+      {
+        text: 'getPromptInputKey 如何从多键输入里找出主输入？',
+        options: [
+          '取第一个键',
+          '过滤掉所有 memoryVariables 与 "stop" 键后，要求剩余恰好一个键，否则抛错',
+          '要求用户显式传 inputKey',
+          '按字母序取最小键',
+        ],
+        answer: 1,
+        explain:
+          'memory.ts:107-120：Object.keys(inputs).filter((key) => !memoryVariables.includes(key) && key !== "stop")，然后 promptInputKeys.length !== 1 时抛 One input key expected。这暴露了旧体系的脆弱性：记忆变量与业务输入共享同一个字典命名空间，需要靠排除法识别主输入。',
+        concept: 'lc-legacy-memory',
+      },
+      {
+        text: '多键输入时 getInputValue 的行为是？',
+        options: [
+          '自动取第一个键的值',
+          '未显式指定 key 且键数 > 1 时返回 undefined，调用方再抛「必须指定 input key 或只传一个键」错误',
+          '抛出类型错误',
+          '合并所有键的值',
+        ],
+        answer: 1,
+        explain:
+          'memory.ts:56-80：getValue 只在 key 显式给出或恰好单键时返回值，否则返回 undefined；getInputValue 检测到 falsy 后抛出 input values have N keys, you must specify an input key...。「单键约定 + 多键显式指定」的设计说明旧记忆模型与自由字典强耦合。',
+        concept: 'lc-legacy-memory',
+      },
+      {
+        text: 'BaseListChatMessageHistory.addMessages 的默认实现有什么性能暗示？',
+        options: [
+          '批量事务写入',
+          '逐条 await addMessage 循环——注释明确要求子类覆写以批量写省 round-trip',
+          '并行写入所有消息',
+          '直接抛错要求子类必须实现',
+        ],
+        answer: 1,
+        explain:
+          'chat_history.ts:27-31 与 79-83：for (const message of messages) { await this.addMessage(message); }——串行逐条写。JSDoc 写明 Implementations should override this method to handle bulk addition... to avoid unnecessary round-trips。接口默认实现即文档的范例：默认行为可用但低效，注释告诉你怎么优化。',
+        concept: 'lc-legacy-memory',
+      },
+    ],
+    [
+      ['BaseMemory', 'Chain 时代的记忆抽象：memoryKeys + loadMemoryVariables + saveContext 三件套'],
+      ['两段式生命周期', '执行前 loadMemoryVariables 注入历史、执行后 saveContext 写回的记忆读写模型'],
+      [
+        'BaseChatMessageHistory / BaseListChatMessageHistory',
+        'chat_history.ts 里并存且本该合并的双抽象基类（TODO 注释为证）',
+      ],
+      ['InMemoryChatMessageHistory', '教科书级最小参考实现：私有数组 + getMessages/addMessage/clear'],
+    ],
+    [
+      '在新代码里继续用 BaseMemory 体系——1.x 的 agent/图运行时已不接它，记忆状态应进 langgraph state 并由 checkpointer 持久化',
+      '以为 addMessages 是批量高效接口而不覆写——默认是逐条 round-trip，对接真实数据库时必须覆写',
+      '把 InMemoryChatMessageHistory 当生产存储——纯内存数组，进程重启即丢',
+    ],
+  ),
+  'theory',
+)

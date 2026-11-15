@@ -1,0 +1,205 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L59 = withKind(
+  L(
+    'L59',
+    17,
+    'summarization：1009 行的上下文压缩',
+    3,
+    ['L51'],
+    ['lc-summarization-mw'],
+    [
+      '说出 summarization 的触发判定逻辑（单条件 AND / 多条件 OR）与 fraction 触发对模型 profile 的硬依赖',
+      '解释裁剪点的安全搜索：token 二分 + AI/Tool 配对保护 + 前后 5 条搜索窗口',
+      '说出摘要消息的落地方式：复用首条消息 id + RemoveMessage(REMOVE_ALL_MESSAGES) 的状态投影技巧',
+    ],
+    `### 定位：模块五最大的单件，压缩而非截断
+
+模块五进入上下文工程区。summarization 以 1009 行成为内置中间件的第二大实现（仅次于 hitl 的 1233 行），它解决的是长对话的宿命问题：**上下文窗口有限，而对话无限**。与简单截断（trimMessages）不同，它是「压缩」——把老消息交给一个模型读一遍、提炼成摘要、再整体重写消息列表。难点全在细节里：何时触发、从哪切、怎么保证切面不撕裂 AI/Tool 配对、摘要如何以合法的消息协议落回 state。本课按执行顺序拆解这四步。
+
+一句话结论：**summarization = beforeModel 里的一次条件压缩事务：判定触发 → 找安全切点 → 生成摘要 → RemoveMessage 全清 + 摘要与保留段重放。**
+
+### 第一步：触发判定与 profile 硬依赖
+
+beforeModel 开场先做配置解析与废弃参数兼容（maxTokensBeforeSummary → trigger.tokens、messagesToKeep → keep.messages，各打一次 warning），然后合并 runtime.context 覆盖。触发判定在 shouldSummarize：
+
+\`\`\`ts
+for (const trigger of triggerConditions) {   // 条件间：OR
+  let conditionMet = true;
+  if (trigger.messages !== undefined) {
+    if (messages.length < trigger.messages) conditionMet = false;
+  }
+  if (trigger.tokens !== undefined) {
+    if (totalTokens < trigger.tokens) conditionMet = false;
+  }
+  if (trigger.fraction !== undefined) {
+    const maxInputTokens = getProfileLimits(model);
+    if (typeof maxInputTokens === "number") {
+      const threshold = Math.floor(maxInputTokens * trigger.fraction);
+      if (totalTokens < threshold) conditionMet = false;
+    } else {
+      conditionMet = false;   // 拿不到 profile：此条件视为不满足
+    }
+  }
+  if (hasAnyProperty && conditionMet) return true;
+}
+return false;
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/summarization.ts:532-591（commit 7704471，有裁剪）*
+
+而 fraction 用法的 profile 硬依赖在更早处把关：\`requiresProfile\` 为真但 \`getProfileLimits\` 返回 undefined 时直接抛错（375-389），错误消息明确建议「Use absolute token counts instead」。getProfileLimits 的查找顺序是 model.profile.maxInputTokens → getModelContextSize(模型名字符串)，也就是说多数主流模型名能查到表内值，自定义/新模型可能查不到——生产上配 fraction 前先确认。
+
+触发阈值还有一个「多条件并存」的读法陷阱值得点破：\`{ tokens: 5000, messages: 3 }\` 的两个属性在**同一次比较里**各自独立判定（条件内 AND），且判定基准不同——messages 比的是 \`messages.length\`（消息条数），tokens 比的是 countTokensApproximately 对**整段历史**的估算。两个量纲一个线性于对话轮数、一个敏感于单条消息长度（一条带大工具结果的消息能让 tokens 阈值瞬间跨过而条数不变），所以 AND 组合的触发时点远比直觉晚：它是「两个量纲都慢涨到位」的保守信号，适合「宁可少压缩」的场景；OR 数组则适合「任一维度爆了就得压」的积极场景。另外注意 shouldSummarize 只在 beforeModel 轮询，**本轮触发后压缩发生在本轮请求发出之前**——不存在「压完这轮再说」的延迟，所以阈值附近的消息条数抖动（比如恰好卡在 trigger.messages 边界）会表现为「有的轮次压、有的不压」，排查触发时点时要按 countTokensApproximately 的口径重算而不是凭感觉。
+
+### 第二步：找安全切点——二分 + 配对保护
+
+keep 决定保留多少，determineCutoffIndex 据此算切点。token 基 keep 用二分搜索：
+
+\`\`\`ts
+let left = 0, right = messages.length;
+let cutoffCandidate = messages.length;
+const maxIterations = Math.floor(Math.log2(messages.length)) + 1;
+for (let i = 0; i < maxIterations; i++) {
+  const mid = Math.floor((left + right) / 2);
+  const suffixTokens = await tokenCounter(messages.slice(mid));
+  if (suffixTokens <= targetTokenCount) {
+    cutoffCandidate = mid;
+    right = mid;          // 后缀够小，尝试更早切
+  } else {
+    left = mid + 1;       // 后缀超预算，往后挪
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/summarization.ts:663-685（commit 7704471，有裁剪）*
+
+二分的目标是「保留段 token 总量 ≤ keep 目标」的最早已知切点。但裸切点会撕裂工具配对——模型发起 tool_call 后必须紧跟对应 ToolMessage，provider 会拒绝悬空的调用。isSafeCutoffPoint 的保护规则：保留段不能以带 tool_calls 的 AIMessage 开头（773-779），且切点前后各 5 条（SEARCH_RANGE_FOR_TOOL_PAIRS = 5）内不能有「AI 在切点前、Tool 在切点后」的被拆散配对（781-798）。findSafeCutoffPoint 处理最常见情形——切点落在 ToolMessage 上：收集连续 ToolMessage 的 tool_call_id，向前找匹配的 AIMessage 把切点前移；找不到才向后越过整段 ToolMessage。多层兜底的终点都是「再不安全就从 0 切」，宁可全压缩也不产生非法序列。
+
+### 第三步：生成摘要与第四步：合法落回
+
+摘要生成有三个卫生细节。
+
+\`\`\`ts
+const formattedMessages = getBufferString(trimmedMessages);
+// ...
+const config = mergeConfigs(baseConfig, {
+  metadata: { lc_source: "summarization" },
+  tags: [INTERNAL_CALL_TAG],     // "nostream"：消息流消费者看不到这次调用
+});
+const response = await model.invoke(formattedPrompt, config);
+// ...
+const summaryMessage = new HumanMessage({
+  content: \`\${summaryPrefix}\\n\\n\${summary}\`,
+  id: conversationMessages[0].id,               // 复用被替换消息的 id
+  additional_kwargs: { lc_source: "summarization" },
+});
+return {
+  messages: [
+    new RemoveMessage({ id: REMOVE_ALL_MESSAGES }),
+    summaryMessage,
+    ...preservedMessages,
+  ],
+};
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/summarization.ts:938-469（commit 7704471，按执行顺序重排，有裁剪）*
+
+逐条看：getBufferString 产出 \`Human: ... / AI: ...[tool_calls] / Tool: ...\` 的紧凑文本，注释解释这是为了避免对消息对象做 JSON.stringify 时元数据撑爆 token；trimMessagesForSummary 用 trimMessages 的 last 策略 + includeSystem 预裁要送去摘要的内容，失败回退保留最后 15 条（DEFAULT_FALLBACK_MESSAGE_COUNT）；摘要调用本身带 "nostream" tag 与 lc_source 元数据，流式消费者与追踪器都能识别这是内部调用。**id 复用是整个实现的点睛之笔**：LangGraph 的消息 reducer 按 id 归并，摘要消息顶着「原第一条消息」的 id 进来，配合开头的 REMOVE_ALL_MESSAGES 全清，最终投影出的消息历史就是「摘要 + 保留段」，且对 checkpoint 是一次合法更新而非诡异的重复插入。异常路径同样克制：摘要模型调用失败不抛错，返回 \`Error generating summary: ...\` 字符串照常落回（978-980）——压缩失败不能杀死主对话。
+
+### 与 trimMessages 的分界
+
+何时用 summarization、何时用更轻的 trim？trimMessages 是纯函数式截断，无模型调用、零成本、丢信息；summarization 有一次模型调用、保留语义、但引入延迟与摘要失真风险。经验法则：工具密集、多轮任务型 agent 用 summarization（老任务的工具结果价值衰减快，摘要足够）；短对话、强事实型场景用 trim 或 contextEditing（下一课）。另外注意 L110 会把 0.x 的 ConversationSummaryMemory 逐参数映射到本课的这些配置项——trigger/keep/summaryPrompt 就是它的换代接口。
+
+还有一条合规与可观测的衔接值得留在收尾：摘要调用带上 INTERNAL_CALL_TAG 与 lc_source 后，消费端能精确区分「主对话的模型调用」与「压缩内部的模型调用」——计费统计、延迟监控、消息流渲染都应过滤这个 tag，否则一次长对话的成本核算会被摘要调用悄悄抬高。如果你在自建压缩中间件（比如按业务语义做分段摘要），这两个卫生约定（内部调用打标、失败不抛错只降级）应当照抄：前者保护观测面的准确性，后者保护主对话的可用性——**上下文管理组件的失效模式必须退化为「不压缩」，而不是「对话崩溃」**，这是 summarization 1009 行里贯穿始终的设计底线。
+
+### 本课小结
+
+- 触发：单条件 AND、多条件 OR；fraction 依赖 model profile，缺失直接抛错。
+- 切点：token 二分找保留段边界，AI/Tool 配对保护（前移切点或越过 ToolMessage），±5 条搜索窗。
+- 落回：REMOVE_ALL_MESSAGES 全清 + 复用首条消息 id 的摘要 HumanMessage + 保留段重放，一次合法 state 更新。
+- 摘要调用带 "nostream" tag；失败返回错误字符串而不抛——压缩永不杀死主对话。
+- 下一课看更轻的两位：contextEditing（清工具结果而非摘要）与 dynamicSystemPrompt（每轮重写系统提示）。
+`,
+    null,
+    [
+      {
+        text: 'trigger 传单个对象 { tokens: 5000, messages: 3 } 与传数组 [{ tokens: 5000, messages: 3 }, { tokens: 3000, messages: 6 }] 的语义差别是？',
+        options: [
+          '没有差别，数组只是写法不同',
+          '单对象是 AND（所有指定属性都达标才触发）；数组是 OR（任一条件整体满足即触发）',
+          '单对象是 OR，数组是 AND',
+          '数组会被自动求和后当单条件用',
+        ],
+        answer: 1,
+        explain:
+          'shouldSummarize 的注释与实现：数组条件间是 OR 逻辑，单个条件内所有指定属性是 AND 逻辑（summarization.ts:532-591，注释「OR logic between conditions」「AND logic」）。JSDoc 示例也写明「trigger if (tokens >= 5000 AND messages >= 3) OR (tokens >= 3000 AND messages >= 6)」。A/C 把布尔语义说反；D 无求和逻辑。',
+        concept: 'lc-summarization-mw',
+      },
+      {
+        text: 'trigger 或 keep 里用了 fraction（如 trigger: { fraction: 0.8 }），但模型没有 profile 信息（拿不到 maxInputTokens），会发生什么？',
+        options: [
+          '自动回退到默认 4000 token 阈值',
+          '构造/触发时直接抛错：fractional token limits 需要 model profile，请改用绝对 token 数',
+          'fraction 被当作 0 处理，永不触发',
+          '静默按 50% 处理',
+        ],
+        answer: 1,
+        explain:
+          'beforeModel 里 requiresProfile 判定为真而 getProfileLimits(model) 拿不到值时抛出 "Model profile information is required to use fractional token limits. Use absolute token counts instead."（summarization.ts:375-389）。getProfileLimits 依次尝试 model.profile.maxInputTokens 与 getModelContextSize(模型名)（210-232）。A 的回退只发生在 token 基 keep 的裁剪阶段（615 行），不是 fraction 的语义；C/D 无此逻辑。',
+        concept: 'lc-summarization-mw',
+      },
+      {
+        text: '摘要生成后写回 state 的方式是？',
+        options: [
+          '新摘要消息用全新随机 id，追加到消息列表尾部',
+          'RemoveMessage({ id: REMOVE_ALL_MESSAGES }) 清空全部消息，再放一条复用了「第一条会话消息 id」的 HumanMessage 摘要 + 保留段消息',
+          '直接修改 state.messages 数组元素',
+          '摘要只写进日志，不改 state',
+        ],
+        answer: 1,
+        explain:
+          "beforeModel 返回 { messages: [new RemoveMessage({ id: REMOVE_ALL_MESSAGES }), summaryMessage, ...preservedMessages] }（summarization.ts:463-469）；summaryMessage 是 HumanMessage 且 id 取 conversationMessages[0].id，注释写明「Reuse a replaced message's id so the summary projects as an update, not a new message」（456-461）。复用 id 是 LangGraph 消息归并语义的关键：同 id 消息被视为更新而非新增。A 的全新 id 会造成重复消息；C 在 reducer 体系里不可行；D 错——返回值就是 state 更新。",
+        concept: 'lc-summarization-mw',
+      },
+      {
+        text: '裁剪点落在 ToolMessage 上时，findSafeCutoffPoint 会怎么做？',
+        options: [
+          '直接切，不管配对',
+          '向后搜到这条 ToolMessage 之后第一个非 ToolMessage 的位置再切',
+          '向前搜索带匹配 tool_call_id 的 AIMessage，把裁剪点前移到它之前；找不到时才向后跳过整段 ToolMessage',
+          '报错终止',
+        ],
+        answer: 1,
+        explain:
+          'findSafeCutoffPoint 先收集裁剪点起连续 ToolMessage 的 tool_call_id 集合，然后**向前**逐条找带匹配 id 的 AIMessage，找到就把裁剪点前移到该 AIMessage 处（请求与响应不拆散）；向前找不到（孤儿场景）才回退为向后越过整段 ToolMessage（summarization.ts:828-868，注释「Search backward for AIMessage with matching tool_calls」）。B 的「向后跳」只是兜底分支；A 会让 provider 拒绝「有 call 无响应」的消息序列；D 无报错路径。',
+        concept: 'lc-summarization-mw',
+      },
+    ],
+    [
+      [
+        'trigger',
+        '触发条件：{ fraction|tokens|messages } 单对象（AND）或对象数组（OR）；与 contextEditing 共享 contextSizeSchema',
+      ],
+      [
+        'keep',
+        '保留策略：fraction/tokens/messages 三选一（keepSchema 强制恰好一个，summarization.ts:137-147）；决定裁剪点怎么找',
+      ],
+      [
+        'REMOVE_ALL_MESSAGES',
+        'LangGraph 导出的哨兵 id：RemoveMessage 带此 id 时清空整个消息列表，是「全量重写」的标准姿势',
+      ],
+      [
+        'countTokensApproximately',
+        '默认 token 计数器：4 字符 ≈ 1 token 的近似估算（utils.ts:27-77）；AIMessage 的 tool_calls 也被 JSON 序列化计入',
+      ],
+    ],
+    [
+      '以为 trigger 不配就永不压缩、很安全——triggerConditions 为空时 shouldSummarize 直接 false（summarization.ts:538-540），但 keep 默认 { messages: 20 } 只在触发后才起作用，所以真正要警惕的是随手配了个很低的 tokens 阈值',
+      '把 summaryPrompt 里的 {messages} 占位符删了——replace 找不到占位符时完整历史不会被嵌入，模型摘要的就是一段空话；占位符是唯一的注入点',
+      '用 JSON.stringify(messages) 手动数 token 然后怪压缩不触发——内部计数是 countTokensApproximately 的字符近似（含 tool_calls 序列化与 tool_call_id），与你的算法口径不同；要精确就传自定义 tokenCounter',
+      '忽略摘要调用的 tag——createSummary 给模型调用打了 INTERNAL_CALL_TAG（"nostream"）与 lc_source: "summarization"（951-954），消息流消费者不会看到这次内部调用；自建压缩中间件也应照做',
+    ],
+  ),
+  'theory',
+)

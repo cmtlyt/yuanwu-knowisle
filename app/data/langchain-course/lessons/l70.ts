@@ -1,0 +1,266 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L70 = withKind(
+  L(
+    'L70',
+    20,
+    'LastValue 与 BinaryOperatorAggregate：覆盖 vs 归并、INVALID_CONCURRENT_GRAPH_UPDATE',
+    3,
+    ['L69'],
+    ['lc-lastvalue-binop'],
+    [
+      '解释 LastValue 用 [Value] | [] 数组包装区分「未写」与「写了 undefined」的原因',
+      '复现 INVALID_CONCURRENT_GRAPH_UPDATE：两个并行节点写同一 LastValue 通道时报错的机制',
+      '说出 Overwrite 哨兵绕过 reducer 的规则与一步单 Overwrite 的限制',
+    ],
+    `### 两个「默认通道」的分工：用户 API 的换算结果
+
+L66 留了一个伏笔：Annotation 无 reducer 时创建 LastValue、有 reducer 时创建 BinaryOperatorAggregate。这意味着**这两个通道覆盖了绝大多数用户状态定义**——「每个 key 存最新值」用 LastValue，「每个 key 累积合并」用 Binop。本课核心结论：**两者行为差异的全部根源在于 update 对「多值」的态度——LastValue 拒绝、Binop 归并；而它们又共享同一个逃生舱 Overwrite**。
+
+### LastValue：单写覆盖与 INVALID_CONCURRENT_GRAPH_UPDATE
+
+\`\`\`ts
+export class LastValue<Value> extends BaseChannel<Value, Value, Value> {
+  lc_graph_name = "LastValue";
+  // value is an array so we don't misinterpret an update to undefined as no write
+  value: [Value] | [] = [];
+
+  update(values: Value[]): boolean {
+    if (values.length === 0) return false;
+    if (values.length !== 1) {
+      throw new InvalidUpdateError(
+        "LastValue can only receive one value per step.",
+        { lc_error_code: "INVALID_CONCURRENT_GRAPH_UPDATE" }
+      );
+    }
+    this.value = [values[values.length - 1]];
+    return true;
+  }
+  get(): Value {
+    if (this.value.length === 0) throw new EmptyChannelError();
+    return this.value[0];
+  }
+  checkpoint(): Value {
+    if (this.value.length === 0) throw new EmptyChannelError();
+    return this.value[0];
+  }
+  isAvailable(): boolean { return this.value.length !== 0; }
+}
+\`\`\`
+
+*— channels/last_value.ts:12-66（有裁剪，commit fa426b2）*
+
+三个设计点。第一，**数组包装即写入标记**：注释明说防止把合法的 undefined 写入误判为未写，get/checkpoint/isAvailable 的 length 检查因此统一而高效。第二，**checkpoint() 在空通道上抛错**——createCheckpoint 捕获 EmptyChannelError 后直接不让该通道进 channel_values（channels/base.ts:353-362），空通道在快照里缺席而不是存 null。第三，**多值即并发冲突**：_applyWrites 把同一步所有任务对同一通道的写入汇成数组（L76），两个并行节点写同一 key 时 values.length === 2，错误在此引爆——错误码 INVALID_CONCURRENT_GRAPH_UPDATE 直白地告诉你这是图结构问题。
+
+### LastValueAfterFinish：延迟可见的三阶段生命周期
+
+\`\`\`ts
+get(): Value {
+  if (this.value.length === 0 || !this.finished) throw new EmptyChannelError();
+  return this.value[0];
+}
+consume(): boolean {
+  if (this.finished) { this.finished = false; this.value = []; return true; }
+  return false;
+}
+finish(): boolean {
+  if (!this.finished && this.value.length > 0) { this.finished = true; return true; }
+  return false;
+}
+\`\`\`
+
+*— channels/last_value.ts:106-133（commit fa426b2）*
+
+update 存储 → finish 放行 → consume 清空，三阶段缺一不可。它在编译层的唯一用途是 **defer 节点的 branch:to 通道**（graph/state.ts:1942-1944）：defer 标记的节点要等图内普通工作收尾才执行，写入先存着、finish 钩子解锁、读一次即焚。checkpoint 是 [Value, boolean] 二元组——finished 状态必须跨 checkpoint 存活，否则恢复后永远读不到。
+
+### BinaryOperatorAggregate：归并语义与首写即初值
+
+\`\`\`ts
+public update(values: OverwriteOrValue<ValueType, UpdateType>[]): boolean {
+  let newValues = values;
+  if (!newValues.length) return false;
+
+  if (this.value === undefined) {
+    const first = newValues[0];
+    const [isOverwrite, overwriteVal] = _getOverwriteValue<ValueType>(first);
+    if (isOverwrite) { this.value = overwriteVal; }
+    else { this.value = first as ValueType; }
+    newValues = newValues.slice(1);
+  }
+
+  let seenOverwrite = false;
+  for (const incoming of newValues) {
+    if (_isOverwriteValue<ValueType>(incoming)) {
+      if (seenOverwrite) {
+        throw new InvalidUpdateError("Can receive only one Overwrite value per step.");
+      }
+      const [, val] = _getOverwriteValue<ValueType>(incoming);
+      this.value = val; seenOverwrite = true; continue;
+    } else if (!seenOverwrite && this.value !== undefined) {
+      this.value = this.operator(this.value, incoming);
+    }
+  }
+  return true;
+}
+\`\`\`
+
+*— channels/binop.ts:69-101（commit fa426b2）*
+
+与 LastValue 的三个对照。其一，**多值不报错**：\`operator(current, incoming)\` 逐个归并，messages 的 concat reducer 就是这么吸收并行节点产出的一批消息的。其二，**首写即初值**：this.value === undefined 时直接取第一个写入（这免掉了与 default 的归并——初值语义是「没写入时的读值」，一旦写入就不再参与）。其三，**Overwrite 是归并流的短路开关**：出现即停止归并、强制置值，且一步内只允许一个。equals 覆写为 operator 引用比较（binop.ts:126-130），支撑重复 compile 时的通道去重。
+
+### Overwrite 哨兵：绕过 reducer 的正门
+
+\`\`\`ts
+export const OVERWRITE = "__overwrite__";
+export interface OverwriteValue<ValueType> { [OVERWRITE]: ValueType; }
+export class Overwrite<ValueType = any> implements OverwriteValue<ValueType> {
+  lg_name = "Overwrite";
+  readonly [OVERWRITE]: ValueType;
+  static isInstance<ValueType>(value: unknown): value is Overwrite<ValueType> {
+    if (!value || typeof value !== "object") return false;
+    if (OVERWRITE in value) return true;
+    if ("lg_name" in value && value.lg_name === "Overwrite") return true;
+    return false;
+  }
+\`\`\`
+
+*— constants.ts（commit fa426b2）*
+
+它不是私有 hack 而是导出 API：Annotation 的通道 UpdateType 里明确含 \`OverwriteValue<ValueType>\`（graph/annotation.ts:52-54），等价于「节点可以对这个 key 说：别归并了，直接换成我的值」。判型同时接受线格式（__overwrite__ in value，跨序列化恢复后仍可识别）与 lg_name 标记——还是那个跨包判型主题。一句话总结本课：**LastValue 的多值是错误、Binop 的多值是输入、Overwrite 是两者共用的强制覆盖通道**，三者的边界就是图并发语义的边界。
+
+### 误用复现与三种解法：并发写冲突的诊断
+
+INVALID_CONCURRENT_GRAPH_UPDATE 是新手最常撞见的内核错误，值得把「复现 → 诊断 → 修复」完整走一遍。最小复现：两个并行节点写同一个无 reducer 的 key。
+
+\`\`\`ts
+const State = Annotation.Root({
+  // 无 reducer → LastValue 通道
+  result: Annotation<string>,
+});
+
+const graph = new StateGraph(State)
+  .addNode("a", async () => ({ result: "from-a" }))
+  .addNode("b", async () => ({ result: "from-b" }))
+  .addEdge(START, "a")
+  .addEdge(START, "b")     // a、b 并行
+  .addEdge("a", END)
+  .addEdge("b", END)
+  .compile();
+
+// 同一超步里 a、b 各向 result 写一次 → values.length === 2 → 抛错
+await graph.invoke({});  // InvalidUpdateError: LastValue can only receive one value per step.
+\`\`\`
+
+错误码本身就是诊断书：INVALID_CONCURRENT_GRAPH_UPDATE（channels/last_value.ts:38-43）直接指向「图结构层面有两个写手」。修复有三条路，选哪条取决于业务语义：
+
+| 解法 | 写法 | 语义 | 代价 |
+|---|---|---|---|
+| 加 reducer | \`Annotation<string>({ reducer: (a, b) => b ?? a, default: () => "" })\` | 归并（此处等效取最后） | 通道变 BinaryOperatorAggregate，行为可控 |
+| AnyValue | 无法经 Annotation 直接声明，属内核通道 | 静默取最后，不报错 | 并发写不相等值时数据静默丢失（L71） |
+| 结构修正 | 串行化或单写手 | 恢复单写约束 | 需要改图，但语义最诚实 |
+
+第三条常被忽略：报错有时是在告诉你**图设计错了**——两个节点写同一个「结果」字段通常意味着缺少归并规则，而不是缺一个宽容通道。加 reducer 是默认正解，AnyValue 只在「并发写入恒等」的确认信号场景成立。
+
+### Overwrite 的线格式与判别式形态
+
+Overwrite 的判型还有一层序列化考量值得补在结尾：\`_getOverwriteValue\` 同时接受两种输入——\`{ [OVERWRITE]: value }\` 线格式与 \`{ type: OVERWRITE, value }\` 判别式形态（constants.ts:392-413，注释明说后者是 discriminator form）。前者是运行时对象的原生形状，\`OVERWRITE in value\` 一查即中，跨序列化边界（checkpoint 写入再读出）后仍然可识别；后者兼容把 Overwrite 当成普通 discriminated union 处理的调用方。\`Overwrite.isInstance\` 的三段检查（\`OVERWRITE in value\` → \`lg_name === "Overwrite"\` → false）与线格式/判别式双形态一起，保证这个哨兵在内存、checkpoint blob、网络传输三种介质上都不会「变形后失认」——还是 L69 那个跨包判型主题，只是这次连序列化维度也覆盖了。
+
+### 本课小结
+
+- LastValue：单写覆盖、[Value] 数组包装区分未写与 undefined、多写抛 INVALID_CONCURRENT_GRAPH_UPDATE。
+- LastValueAfterFinish：存储→finish 放行→consume 即焚三阶段，checkpoint 带 finished 布尔。
+- BinaryOperatorAggregate：首写即初值、逐个归并、equals 按 operator 引用比较。
+- Overwrite 哨兵一步一次、短路归并；线格式与判别式双形态保证跨序列化可识别；LastValueAfterFinish 无 Overwrite 概念（单值直写）。
+- 下一课：三个「非默认」通道——Topic 事件总线与 AnyValue/EphemeralValue 的多写宽容。
+`,
+    null,
+    [
+      {
+        text: 'LastValue.update 收到两个值时抛什么错误？错误码是什么？',
+        options: [
+          'EmptyChannelError，无错误码',
+          'InvalidUpdateError，lc_error_code 为 INVALID_CONCURRENT_GRAPH_UPDATE',
+          'TypeError，因为数组长度不匹配',
+          '不抛错，静默取最后一个',
+        ],
+        answer: 1,
+        explain:
+          'channels/last_value.ts:38-43：values.length !== 1 时抛 InvalidUpdateError("LastValue can only receive one value per step.", { lc_error_code: "INVALID_CONCURRENT_GRAPH_UPDATE" })。两个并行节点同一步写同一 LastValue 就是这个场景——它是并发冲突的显式信号，不是 bug。A 错在 EmptyChannelError 只用于读空通道；C 错在这是领域错误不是类型错误；D 描述的是 AnyValue 的行为（L71）。',
+        concept: 'lc-lastvalue-binop',
+      },
+      {
+        text: 'LastValue 的内部状态为什么是 value: [Value] | [] 而不是 Value | undefined？',
+        options: [
+          '为了节省内存',
+          '为了区分「从未写入」与「写入过 undefined」——数组长度就是写入标记',
+          'TypeScript 的历史包袱',
+          '为了支持多值缓冲',
+        ],
+        answer: 1,
+        explain:
+          "源码注释原话：value is an array so we don't misinterpret an update to undefined as no write（last_value.ts:15）。若用 undefined 做哨兵，节点合法地返回 { key: undefined } 时通道会误判为空。C/D 无依据；B 的「写入标记」语义贯穿 get/checkpoint/isAvailable 的 length 判断。",
+        concept: 'lc-lastvalue-binop',
+      },
+      {
+        text: 'BinaryOperatorAggregate 的首个写入为什么直接作为初值而不与 default 归并？',
+        options: [
+          '这是 bug，官方文档承认了',
+          '因为 this.value === undefined 时取 first 作为初值再处理剩余——default 工厂只在构造与恢复时生效',
+          '因为 reducer 的第一个参数必须非空',
+          '为了兼容 Python 版本的特殊行为',
+        ],
+        answer: 1,
+        explain:
+          'update 的实现：this.value === undefined 分支里 this.value = first（Overwrite 则取其值），newValues.slice(1) 后才进入归并循环（channels/binop.ts:73-82）。default（initialValueFactory）在构造器（binop.ts:52）与 fromCheckpoint 无 checkpoint 时生效——即「没有任何写入时读 default」，一旦有写入就以写入为起点归并。A 错；C 是实现细节不是动机；D 是对齐 Python 语义的结论而非原因。',
+        concept: 'lc-lastvalue-binop',
+      },
+      {
+        text: 'Overwrite 哨兵在 BinaryOperatorAggregate.update 里的完整规则是？',
+        options: [
+          '可以出现多次，每次都覆盖',
+          '一步内只能出现一次，出现后短路归并——它之前的值被覆盖，之后的普通写入被丢弃',
+          'Overwrite 是 LastValue 专属的 API',
+          'Overwrite 会重置整个通道为初值',
+        ],
+        answer: 1,
+        explain:
+          'binop.ts:84-99：seenOverwrite 标记后，第二个 Overwrite 抛 "Can receive only one Overwrite value per step."，且 seenOverwrite 为 true 后普通值不再参与归并（else if (!seenOverwrite && ...)）。Overwrite 是 constants.ts 导出的通用哨兵（OVERWRITE = "__overwrite__"，Overwrite 类带 lg_name 判型），Annotation 的通道 UpdateType 里就含 OverwriteValue<ValueType>（annotation.ts:52-54）。A 错在单步单 Overwrite；C 错在它是 reducer 通道族的能力；D 错在是覆盖为给定值不是重置初值。',
+        concept: 'lc-lastvalue-binop',
+      },
+      {
+        text: 'BinaryOperatorAggregate.equals 与 LastValueAfterFinish 的 checkpoint 各有什么特殊形态？',
+        options: [
+          'equals 比较 operator 引用；checkpoint 是 [Value, boolean] 二元组',
+          'equals 比较全部内部状态；checkpoint 是纯值',
+          '两者都没有覆写基类',
+          'equals 比较 JSON 序列化结果；checkpoint 是 Map',
+        ],
+        answer: 1,
+        explain:
+          'binop.ts:126-130：两个 BinaryOperatorAggregate 相等当且仅当 operator 引用相同（注释写明对齐 Python 的 operator 引用比较）——同 key 通道重复 compile 时靠它判定语义等价。LastValueAfterFinish 的 checkpoint 存 [this.value[0], this.finished]（last_value.ts:113-116），把 finished 门控状态也编码进存档，恢复后保持「待放行」语义。B 错在 equals 只看 operator；C 错在两者都覆写了基类；D 纯属虚构。',
+        concept: 'lc-lastvalue-binop',
+      },
+    ],
+    [
+      ['LastValue', '默认通道：每步最多一个写入、后写覆盖先写、checkpoint 即值本身'],
+      [
+        'BinaryOperatorAggregate',
+        'reducer 通道：operator(current, incoming) 逐步归并，Annotation 带 reducer 时创建',
+      ],
+      [
+        'INVALID_CONCURRENT_GRAPH_UPDATE',
+        '单写通道（LastValue/UntrackedValue 的 guard 模式）收到多值时的错误码，指向并行节点写冲突',
+      ],
+      [
+        'Overwrite',
+        '绕过 reducer 的强制覆盖哨兵：{ __overwrite__: value } 线格式 + Overwrite 类包装，一步内至多一次',
+      ],
+    ],
+    [
+      '给两个并行分支都接向同一个无 reducer 的状态 key——运行到合并步必抛 INVALID_CONCURRENT_GRAPH_UPDATE，解决方式是加 reducer（变归并）或用 AnyValue（静默取最后）',
+      '以为节点返回 undefined 能「清空」LastValue 通道——[Value] 包装保证 undefined 也是一次合法写入，清空要用 RemoveMessage 这类领域哨兵或专门 reducer',
+      '在一步里给 reducer 通道塞两个 Overwrite（例如并行节点都发 Overwrite）——抛 Can receive only one Overwrite value per step',
+    ],
+  ),
+  'theory',
+)

@@ -1,0 +1,281 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L06 = withKind(
+  L(
+    'L06',
+    2,
+    'engines>=20 与 ESM/CJS 双轨发布：tsdown 构建、files 清单、兼容产物',
+    2,
+    [],
+    ['lc-dual-format'],
+    [
+      '从零搭一个声明 browser/input/require/import 四条件 exports 的双格式 npm 包并跑通构建',
+      '用 @langchain/build 的 getBuildConfig 写出 tsdown.config.ts 并产出 .js 与 .cjs 双产物',
+      '实现根目录 CJS 兼容 barrel 文件并核对 files 字段的白名单发布效果',
+      '接入 attw/publint 校验双格式发布质量并跑通零警告',
+    ],
+    `### 本课要交付的东西
+
+前五课都是读代码，本课动手：**把 1.x 三个包的发布机制复现一遍**——搭一个 mini 包，产出 ESM/CJS 双格式、声明四条件 exports、生成 CJS 兼容 barrel、核对 files 白名单，最后用 attw/publint 跑通零警告验收。完成后你拥有的不只是知识，还有一份可以直接套用到自己库的构建模板。先看目标产物长什么样。
+
+### 取证：langchain 的 exports 与 files
+
+\`\`\`json
+"main": "./dist/index.cjs",
+"types": "./dist/index.d.cts",
+"exports": {
+  ".": {
+    "browser": "./dist/browser.js",
+    "input": "./src/index.ts",
+    "require": {
+      "types": "./dist/index.d.cts",
+      "default": "./dist/index.cjs"
+    },
+    "import": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  }
+}
+\`\`\`
+
+*— libs/langchain/package.json:92-109（commit 7704471，节选 \`.\` 条目）*
+
+逐条件拆解：\`require\` 命中 CJS 产物（\`.cjs\`），\`import\` 命中 ESM 产物（\`.js\`），两者各自带 types 子条件让 TypeScript 精确取到对应声明文件；\`browser\` 是打包器（webpack/vite/esbuild 的 browser target）专用分支，指向不含 node 专属实现的 browser.js；\`input\` 是非标准条件，指向 TS 源码，供 monorepo 内部直接消费源码（跳过 dist）。**注意 main/types 字段仍然存在**——那是给完全不认识 exports 字段的老工具链的双保险，值也指向 CJS 产物。
+
+再看 files 数组里最「奇怪」的一段：
+
+\`\`\`json
+"files": [
+  "dist/",
+  "CHANGELOG.md", "README.md", "LICENSE",
+  "storage", "load",
+  "load.d.cts", "load.cjs", "load.d.ts", "load.js",
+  "hub", "chat_models",
+  "hub.d.cts", "hub.cjs", "hub.d.ts", "hub.js"
+]
+\`\`\`
+
+*— libs/langchain/package.json:10-25（commit 7704471）*
+
+\`dist/\` 是产物目录不奇怪；奇怪的是包根下散落的 \`load.js/load.cjs/load.d.ts/load.d.cts/hub.*\`——**这些不是手写的，是 cjsCompatPlugin 在构建时生成的根级 barrel**，并且必须手列进 files 才会随 npm 包发布。
+
+### 取证：getBuildConfig 的完整默认值
+
+\`\`\`ts
+export function getBuildConfig(options?: Partial<BuildOptions>): BuildOptions {
+  return {
+    format: ["cjs", "esm"],
+    target: "es2022",
+    platform: "node",
+    // rolldown/tsdown can emit \`.mjs\` for ESM when \`fixedExtension\` is enabled.
+    // We want stable \`.js\` ESM output for \`"type": "module"\` packages.
+    fixedExtension: false,
+    dts: { parallel: true, generator: "tsgo", build: true },
+    sourcemap: true,
+    unbundle: true,
+    exports: { customExports: async (exports, context) => { /* ... */ } },
+    // ...
+  };
+}
+\`\`\`
+
+*— langchainjs 仓库 internal/build/src/index.ts:52-72（commit 7704471，有裁剪）*
+
+这十几行是全仓构建的单点真相。**format 双格式**是 L05 判型问题的根源；**fixedExtension: false** 让 ESM 产物叫 \`.js\`（依赖 \`"type": "module"\` 的包级声明）而不是 \`.mjs\`；**dts.generator 用 tsgo**（TypeScript 原生编译器）并行生成声明；**unbundle: true** 意味着产物目录结构与 src 一致（转译不打包），依赖保持外部 import——这就是为什么 dist 里能保持子路径粒度。core 的 tsdown.config.ts 顶格调用了 70+ 个 entry（每个 src 模块一个，对应 74 个子路径导出）：
+
+\`\`\`ts
+export default getBuildConfig({
+  entry: ["./src/index.ts", "./src/agents.ts", "./src/caches/index.ts", /* …共 74 项 */],
+  define: { __PKG_VERSION__: JSON.stringify(pkg.version) },
+  plugins: [
+    cjsCompatPlugin({ files: ["dist/", "CHANGELOG.md", "README.md", "LICENSE"] }),
+    lcSecretsPlugin(),
+    importMapPlugin({ omitFromImportMap: ["load/index", "context", /* … */] }),
+    importConstantsPlugin(),
+  ],
+});
+\`\`\`
+
+*— libs/langchain-core/tsdown.config.ts:1-93（commit 7704471，强裁剪）*
+
+四个插件各司其职：cjsCompatPlugin 生成根 barrel 并声明 files 白名单；lcSecretsPlugin 处理密钥相关的编译期替换；importMapPlugin 维护子路径到 dist 文件的映射（供序列化加载使用）；importConstantsPlugin 注入常量。**entry 数组、define、插件配置——三样就是你在自己包里要复刻的全部。**
+
+### 动手：搭一个 mini 双格式包
+
+\`\`\`ts
+// mini-lc/tsdown.config.ts
+import { getBuildConfig, cjsCompatPlugin } from "@langchain/build";
+
+export default getBuildConfig({
+  entry: ["./src/index.ts", "./src/messages.ts", "./src/tools.ts"],
+  plugins: [
+    cjsCompatPlugin({
+      files: ["dist/", "README.md", "LICENSE"],
+    }),
+  ],
+});
+\`\`\`
+
+\`\`\`json
+// mini-lc/package.json（关键字段）
+{
+  "name": "mini-lc",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "main": "./dist/index.cjs",
+  "types": "./dist/index.d.cts",
+  "files": ["dist/", "README.md", "LICENSE", "messages.js", "messages.cjs", "messages.d.ts", "messages.d.cts", "tools.js", "tools.cjs", "tools.d.ts", "tools.d.cts"],
+  "scripts": { "build": "tsdown" }
+}
+\`\`\`
+
+跑 \`npm run build\` 后 dist/ 得到逐模块的 \`.js\` 与 \`.cjs\` 双产物，包根得到三个子路径的 barrel（messages.* 与 tools.*），tsdown 自动把 exports 字段写回 package.json（含四条件分支）。验收用官方同款工具：
+
+\`\`\`bash
+npx @arethetypeswrong/cli --pack .   # 检查每条 exports 分支的类型解析
+npx publint                           # 检查 exports/files 声明一致性
+npm pack --dry-run                    # 核对 files 白名单实际打包内容
+\`\`\`
+
+三条全绿即验收通过。**attw 的价值在双格式下最明显**：它逐条模拟 require/import/browser 解析，任何一条条件指向错误产物（如 import 指到 .cjs）都会红牌——这正是 L05 判型问题的第一道防线：类型层面的双轨错乱会在安装时就暴露。
+
+### 差异结论：复刻仓库管线时要注意的四点
+
+**第一，barrel 文件的生命周期归插件管。** cjsCompatPlugin 有 generate/clean 两模式：prerelease 构建时生成，常规构建时清理（internal/build/src/plugins/cjs-compat.ts:35-40）。手写同名文件会被静默冲突——barrel 只能「声明需求」，不能「亲手实现」。
+
+**第二，files 是手维护的白名单。** 插件的 files 选项只是提示你要列哪些；npm 不读插件配置。每加一个子路径导出，都要同步往 files 里补四个根文件名——漏一个就有人在某条老工具链上 MODULE_NOT_FOUND。
+
+**第三，main/types 指向 CJS 是刻意保守。** 即使 2026 年 ESM 已经是默认，仓库仍让 main 落在 .cjs 上：老 Node、老 bundler、CDN 默认解析全部走 CJS 兜底。你的包若反着来（main 指 ESM），attw 会警告 CJS 使用者解析失败。
+
+**第四，engines>=20 是软约束。** npm 默认只对 engines 告警不拦截（--engine-strict 才硬拒），真正的执行在 CI 矩阵与文档。但你不能因此声明更老的版本：unbundle 产物里保留的顶层 await 与 es2022 目标语法会在 Node 18 上真实崩溃。
+
+### 源码走读：cjsCompatPlugin 的 barrel 生成循环
+
+barrel 文件到底怎么生出来的？把插件的核心循环摘出来逐行走读：
+
+\`\`\`ts
+    async buildStart({ input }) {
+      if (!options.enabled) return;
+
+      // Get relative path of the entrypoint from src directory
+      for (const entrypointPath of Object.values(input)) {
+        // Normalize to forward slashes for cross-platform compatibility.
+        // On Windows, path.relative and path.join produce backslash paths
+        // which break split("/") operations and import path generation.
+        const relativePath = toPosixPath(
+          path.relative(
+            path.join(process.env.INIT_CWD ?? "", "src"),
+            entrypointPath
+          )
+        );
+
+        // Get the target path for the barrel file (e.g. callbacks/base/index)
+        const barrelTarget = path.posix.join(
+          path.posix.dirname(relativePath),
+          path.posix.basename(relativePath, path.posix.extname(relativePath))
+        );
+        // Get the path for the barrel file (e.g. callbacks/base)
+        const barrelPath =
+          path.posix.basename(barrelTarget) === "index"
+            ? path.posix.dirname(barrelTarget)
+            : barrelTarget;
+        // Get the depth of the barrel file (e.g. 1 for callbacks/base/index)
+        const barrelDepth = barrelPath.split("/").length - 1;
+        // Get the import path for the barrel file (e.g. ../dist/callbacks/base/index.cjs)
+        const importPath =
+          barrelDepth === 0
+            ? \`./dist/\${barrelTarget}\`
+            : \`\${"../".repeat(barrelDepth)}dist/\${barrelTarget}\`;
+\`\`\`
+
+*— internal/build/src/plugins/cjs-compat.ts:95-128（commit 7704471，节选）*
+
+五个步骤环环相扣。**第一步**取每个 entry 相对 src 的路径，注意源码注释专门点名 Windows：\`path.relative\` 在 Windows 上产出反斜杠路径，会让后续 \`split("/")\` 与 import 路径生成整体错位，所以先 \`toPosixPath\` 归一——跨平台构建的第一个坑被注释钉在源码里。**第二步**剥掉扩展名得到 barrel 目标路径（如 \`callbacks/base\`）。**第三步**处理 \`index\` 特例：entry 是 \`xxx/index.ts\` 时 barrel 名取父目录（\`callbacks/base\` 而不是 \`callbacks/base/index\`）。**第四步**按目录深度计算 barrel 文件回头 import dist 产物所需的 \`../\` 数量——深度 1 的 barrel 要写 \`../dist/...\`，深度 2 要写 \`../../dist/...\`。**第五步**是四种产物各写一个文件，紧随其后的代码（:159-166）按 \`shouldGenerate\` 四开关分别调用 \`generateDctsBarrel/generateCjsBarrel/generateDtsBarrel/generateEsmBarrel\`，经由 \`emitFile\` 落盘——generate 模式 \`fs.writeFile\`，clean 模式 \`fs.unlink\`，同时把顶层目录名收进 \`pathsToEmit\`（这就是 files 白名单提示的数据来源）。
+
+读完这个循环，两个此前的谜团同时解开。其一，**为什么主包 files 里散装四件套的名字恰好等于子路径导出名**：barrel 文件名就是从 exports/entry 路径机械推导的，\`./load\` 导出必然产出 \`load.js/load.cjs/load.d.ts/load.d.cts\` 四个根文件。其二，**为什么 barrel 的 import 路径永远指向 dist**：barrel 的职责只是「把解析从包根桥接到 dist 产物」，自身零业务代码，所以它对双格式是纯增量——CJS 使用者 require 包根拿到 \`.cjs\` barrel、barrel 再 require \`./dist/index.cjs\`，两跳之后仍是同一份产物。
+
+### 边界条件：三个真实的翻车现场
+
+复刻这条管线时，三个边界条件值得提前排雷。**现场一：BUILD_MODE 忘了设。** 插件的默认模式由 \`process.env.BUILD_MODE === "prerelease" ? "generate" : "clean"\` 决定（cjs-compat.ts:86-87）——常规构建时 barrel 会被**主动清理**（防止生成物滞留仓库被误提交），如果你在 CI 里直接跑 \`tsdown\` 而不带构建模式变量，产物目录虽然齐全，包根的 barrel 四件套却被清光，\`npm pack\` 后老式解析器全线 MODULE_NOT_FOUND。**现场二：isSafeProjectPath 拦截。** emitFile 落盘前会检查目标路径是否在项目内（cjs-compat.ts:138-143），路径计算出错（比如第三步的 index 特例没处理对）不会报错而是静默跳过——产物缺失比产物错误更难排查，验收时务必用 \`npm pack --dry-run\` 实际核对文件清单。**现场三：unbundle 模式下的子路径粒度。** unbundle 转译不打包，dist 保持与 src 一致的模块结构，这要求 entry 数组与 exports 子路径一一对应——core 用 74 个 entry 对应 74 个子路径，你 mini 包里 3 个 entry 就该有 3 个子路径；两者数目对不上时 publint 会指出 exports 指向不存在的产物，这是最廉价的接线错误探测器。
+
+### 本课小结
+
+- getBuildConfig 统一全仓构建：format ["cjs","esm"]、target es2022、fixedExtension:false（ESM 产物叫 .js）、dts 用 tsgo、unbundle 转译模式。
+- exports 四条件：browser（打包器分支）/input（monorepo 源码消费）/require(.cjs)/import(.js)，各带 types 子条件；main/types 兜底老工具链。
+- cjsCompatPlugin 生成根级 barrel（load.js/.cjs/.d.ts/.d.cts 模式）并必须同步列进 files 白名单。
+- 验收三件套：attw 逐条件验类型、publint 验声明一致性、npm pack --dry-run 验打包内容。
+- 双格式是 L05 instanceof 失效的根源，也是下一课 classic 博物馆「79 个 files 条目」的背景——下一课走进博物馆看它的 files 字段清单。
+`,
+    null,
+    [
+      {
+        text: 'getBuildConfig 的默认输出格式与目标是什么？',
+        options: [
+          '仅 ESM，target esnext',
+          '双格式 ["cjs", "esm"]，target es2022，platform node',
+          '仅 CJS，target es2015',
+          'UMD，target es2020',
+        ],
+        answer: 1,
+        explain:
+          'internal/build/src/index.ts:54-56 实测 `format: ["cjs", "esm"]`、`target: "es2022"`、`platform: "node"`。这是全仓所有包共享的构建底座（各包 tsdown.config.ts 调 getBuildConfig）。A/C/D 与源码不符——双格式正是 L05 判型问题存在的前提。',
+        concept: 'lc-dual-format',
+      },
+      {
+        text: 'package.json 里 "type": "module" 与 fixedExtension: false 的组合，决定了 ESM 产物的扩展名是？',
+        options: ['.mjs', '.js', '.esm.js', '.m.ts'],
+        answer: 1,
+        explain:
+          'internal/build/src/index.ts:57-60 注释明确：tsdown 在 fixedExtension 启用时会产出 .mjs，但仓库要的是 "type": "module" 包下稳定的 .js ESM 输出，所以固定 fixedExtension: false。于是 require 条件指向 .cjs、import 条件指向 .js，双格式靠扩展名语义而非 .mjs 后缀区分。A 恰好是被刻意规避的方案。',
+        concept: 'lc-dual-format',
+      },
+      {
+        text: 'cjsCompatPlugin 生成的根目录 barrel 文件（如 load.js / load.cjs / load.d.cts）的作用是？',
+        options: [
+          '加速 tsdown 的增量编译',
+          '为 CommonJS 使用者提供根级别兼容入口，并把这些文件列入 files 白名单发布',
+          '生成 sourcemap 映射',
+          '替代 exports 字段的条件解析',
+        ],
+        answer: 1,
+        explain:
+          'internal/build/src/plugins/cjs-compat.ts:18-56：插件按 exports 子路径在包根生成 .js/.cjs/.d.ts/.d.cts barrel 文件，解决老式解析器（不看 exports 字段的 CJS require）从根路径找到入口的问题；插件还有 files 选项把这些根文件纳入 npm 发布白名单——langchain 的 files 数组里那些散装的 load.cjs/hub.d.cts 就来自这里（libs/langchain/package.json:10-25）。A/C 无据；D 错——exports 条件解析仍在，barrel 是兜底。',
+        concept: 'lc-dual-format',
+      },
+      {
+        text: '三个核心包的 engines 字段声明是什么？',
+        options: ['node >=18', 'node >=20', 'node >=16 与 npm >=8', '没有 engines 声明'],
+        answer: 1,
+        explain:
+          '实测三包 package.json 均为 "engines": { "node": ">=20" }（如 libs/langchain/package.json:8-9）。20 不是任意选择：ESM 顶层 await、稳定的 node:test、当前 LTS 支持面都以此为界。安装侧 npm 只对 engines 告警（除非 engine-strict），所以这是软约束——CI 与文档才是真正的执行者。',
+        concept: 'lc-dual-format',
+      },
+    ],
+    [
+      [
+        'exports 条件',
+        'package.json exports 字段里的解析分支：browser/input/require/import 各指向不同产物文件，由运行环境与模块系统决定命中哪条',
+      ],
+      [
+        'tsdown',
+        '基于 rolldown 的 TypeScript 构建器；本仓以 @langchain/build 的 getBuildConfig 统一配置全部包的构建',
+      ],
+      [
+        'unbundle 模式',
+        'tsdown 的转译模式：不把依赖打进产物，只做逐文件转译与声明文件生成，产物保持与源码一致的模块结构',
+      ],
+      [
+        'files 白名单',
+        'package.json files 数组：npm publish 只打包清单内文件，cjs 兼容 barrel 必须显式列入才会随包发布',
+      ],
+    ],
+    [
+      '把 barrel 文件写进源码而非让 cjsCompatPlugin 生成——插件在 build:prerelease 时 generate、其余时候 clean，手写文件会被清掉或与生成物冲突',
+      '以为装了 tsdown 就能复现仓库产物——必须走 getBuildConfig（ATTW/publint 校验、importMap 插件、es2022 目标都在里面），裸 tsdown 默认值产出的 exports 字段过不了 publint',
+      '给 files 数组漏掉生成的根 barrel（load.cjs/hub.d.cts 等）——npm 包里没有这些文件，老式 CJS 解析器直接报 MODULE_NOT_FOUND',
+    ],
+  ),
+  'practice',
+)

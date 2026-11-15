@@ -1,0 +1,169 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L104 = withKind(
+  L(
+    'L104',
+    30,
+    'memory 隐式读写协议：loadMemoryVariables/saveContext，状态藏在 chain 对象里',
+    3,
+    ['L102'],
+    ['lc-legacy-memory-protocol'],
+    [
+      '能默写 BaseMemory 的三件套接口：memoryKeys/loadMemoryVariables/saveContext，并解释每一环的调用方是谁',
+      '能跟踪 BufferMemory.loadMemoryVariables 的数据流：chatHistory.getMessages → getBufferString 渲染成字符串变量',
+      '能说出这套隐式协议的三个结构性问题：状态在对象里、渲染时机被库决定、多用户隔离靠约定',
+    ],
+    `### 状态藏在哪：一个对象的私有领域
+
+L103 的判决书里，「隐式 memory 副作用」是四条罪名中最难在代码评审里被发现的一条。本课把它单独解剖。核心结论：**旧 memory 协议把「对话状态」藏进 chain 对象内部的 chatHistory，用变量字典的形式在读写两个方向上与 prompt 暗通款曲；1.x 则把状态摆上台面——messages 数组既是输入也是输出，持久化交给 checkpointer。**理解这组对照，是后面 Memory 族迁移四课（L109-L112）的全部前提。
+
+先看协议的法定条文。BaseMemory 抽象类住在 core：
+
+\`\`\`ts
+export abstract class BaseMemory {
+  abstract get memoryKeys(): string[];
+  abstract loadMemoryVariables(values: InputValues): Promise<MemoryVariables>;
+  abstract saveContext(
+    inputValues: InputValues,
+    outputValues: OutputValues
+  ): Promise<void>;
+}
+\`\`\`
+
+*— langchain-core/src/memory.ts:28-54（commit 7704471）*
+
+三件套各司其职：\`memoryKeys\` 声明这个记忆体对外暴露哪些变量名；\`loadMemoryVariables\` 在链执行**前**被调，返回 \`{ 变量名: 值 }\` 字典供 prompt 填充；\`saveContext\` 在链执行**后**被调，把本轮输入输出写回记忆。注意 \`MemoryVariables\` 的类型同样是 \`Record<string, any>\`——协议从接口到数据全是字符串字典。这个抽象类虽然在 core，但 1.x 主线包没有任何 import 它的代码，它纯粹是给 classic 供类型的历史遗留。
+
+### BufferMemory 的数据流：从消息到字符串
+
+默认记忆实现把协议的运转方式展示得最清楚：
+
+\`\`\`ts
+export class BufferMemory extends BaseChatMemory implements BufferMemoryInput {
+  humanPrefix = "Human";
+  aiPrefix = "AI";
+  memoryKey = "history";
+
+  async loadMemoryVariables(_values: InputValues): Promise<MemoryVariables> {
+    const messages = await this.chatHistory.getMessages();
+    if (this.returnMessages) {
+      const result = { [this.memoryKey]: messages };
+      return result;
+    }
+    const result = {
+      [this.memoryKey]: getBufferString(messages, this.humanPrefix, this.aiPrefix),
+    };
+    return result;
+  }
+}
+\`\`\`
+
+*— langchain-classic/src/memory/buffer_memory.ts:50-96（commit 7704471）*
+
+逐行走读这条数据流。第一层是存储：\`this.chatHistory\`（来自父类 BaseChatMemory）负责消息的持久存取，BufferMemory 自己不存消息。第二层是渲染：\`returnMessages\` 为 false（默认）时，消息数组被 \`getBufferString\` 渲染成 \`"Human: 你好\\nAI: 你好"\` 形态的**字符串**——因为旧 prompt 模板（f-string 风格）需要的是一个 \`history\` 占位符的文本值。第三层是包装：渲染结果装进以 \`memoryKey\`（默认 \`"history"\`）为键的字典返回。
+
+这里埋着三个结构性问题。**问题一：状态藏在对象里。**chatHistory 挂在 BufferMemory 上，BufferMemory 挂在 ConversationChain 上（conversation.ts:30-53 的默认注入），一条链一旦实例化就自带会话历史——同一个链对象 call 两次，第二次的输出取决于第一次调用留下的状态。这在单机 demo 里无害，在多用户服务里就是事故源：隔离只能靠「每个用户 new 一个链」或 chatHistory 实现里的 sessionId 惯例，框架层没有任何保证。
+
+**问题二：渲染时机被库决定。**消息到字符串的转换（getBufferString）发生在「读记忆」时，且默认就转成字符串。你想要消息对象？要记得传 \`returnMessages: true\`。两种形态（字符串/对象）由一个布尔开关决定，模板与下游代码必须知道你选了哪种——这类配置耦合在新协议里不存在，因为 messages 数组就是唯一形态。
+
+**问题三：三元组的键名全靠手写对齐。**旧协议里有一组必须互相咬合的键：链的 inputKeys（由模板变量反推）、memory 的 memoryKeys、模板里的占位符。DEFAULT_TEMPLATE 用 \`history\` 和 \`input\` 两个占位符，BufferMemory 的 memoryKey 恰好默认是 \`history\`——这个「恰好」没有编译期保护，改任何一处名字都会在运行时炸出 "history not found" 类错误。L103 讲的字符串键缺陷，在 memory 协议上表现最痛。
+
+### 两个协议的正面对照
+
+| 维度 | 旧协议（BaseMemory） | 新协议（1.x） |
+|---|---|---|
+| 状态载体 | chain 对象内部的 chatHistory | messages: BaseMessage[]（图状态字段） |
+| 读写时机 | 链执行前读、后写，框架自动 | 读写都是显式节点行为，状态流转可见 |
+| 数据形态 | 字符串（默认）或 BaseMessage[]（开关） | 统一 BaseMessage[] |
+| 键名契约 | inputKeys/memoryKeys/占位符三处手写对齐 | 类型/schema 定义字段，编译期保护 |
+| 持久化 | chatHistory 实现各自为政 | checkpointer 统一快照（L106） |
+| 多轮裁剪 | 各 Memory 子类各写一套（窗口/摘要/token） | trimMessages + middleware 组合（L109-L110） |
+
+对照表右侧每一格都指向后文某课。最值得现在就记住的一格是「持久化」：旧体系里 InMemoryChatMessageHistory、数据库 history 各自实现一套 addMessage/getMessages，快照粒度是「一条消息」；新体系 checkpointer 的粒度是「整个图状态在超步结束后的版本快照」，消息只是状态的一部分——粒度升级带来的是 time-travel、回放、interrupt 恢复这些旧体系结构性做不到的能力。
+
+### core 里的幸存者：getBufferString 与 chat_history
+
+迁移不是全盘抛弃。\`getBufferString\` 本身是好用的渲染工具，新世界的 summarization 中间件（L110）import 它来生成喂给摘要模型的文本——证据在 langchain/src/agents/middleware/summarization.ts:4-13 的 import 列表里能看到 \`getBufferString\`。同理，\`BaseChatMessageHistory\`/\`BaseListChatMessageHistory\` 两个持久层抽象（chat_history.ts:10,40）在 1.x 依然存活，只是消费方从 chain 换成了 LangGraph 生态。**识别哪些旧概念是「协议问题」哪些是「积木问题」，是迁移判断力的分水岭**：memory 协议死了，消息积木活得很好。
+
+### 本课小结
+
+- BaseMemory 三件套（memoryKeys/loadMemoryVariables/saveContext）定义在 core memory.ts:28-54，但只被 classic 消费——1.x 不接受 memory 参数。
+- BufferMemory 的读路径：chatHistory.getMessages → getBufferString 渲染 → {history: 字符串}；默认渲染成字符串是旧模板范式的适配。
+- 三个结构性问题：状态藏在 chain 对象、渲染时机被库决定（returnMessages 开关）、键名三元组手写对齐。
+- 幸存积木：getBufferString 与 BaseChatMessageHistory 抽象在 1.x 仍可用，换的是消费架构而非积木本身。
+- 下一课转向新大陆：Agent 即编译图——createAgent 一行实现体背后的 LangGraph 世界观。
+`,
+    null,
+    [
+      {
+        text: 'BaseMemory 抽象类定义在哪个包里？1.x 新 agent 接受 memory 参数吗？',
+        options: [
+          '定义在 @langchain/core/memory.ts；新 agent 不接受 memory 参数',
+          '定义在 @langchain/classic/memory.ts；新 agent 接受 memory 参数但已 deprecated',
+          '定义在 @langchain/langgraph；新 agent 通过 memory 中间件传入',
+          '定义在 @langchain/core/memory.ts；新 agent 接受 memory 参数',
+        ],
+        answer: 0,
+        explain:
+          'BaseMemory（含 loadMemoryVariables/saveContext 抽象方法）定义在 langchain-core/src/memory.ts:28-54——注意是 core 不是 classic，因为 classic 的 chain 靠它供类型；但 1.x 新 agent 的 CreateAgentParams 里没有 memory 字段，对话状态走 messages + checkpointer。B 错在包名与「接受参数」都错；C 错在 BaseMemory 不在 langgraph，memory 中间件（如 summarization）与 BaseMemory 协议无关；D 错在后半句。concept=lc-legacy-memory-protocol。',
+        concept: 'lc-legacy-memory-protocol',
+      },
+      {
+        text: 'BufferMemory 默认（returnMessages=false）时，loadMemoryVariables 返回的 history 是什么？',
+        options: [
+          'BaseMessage[] 数组',
+          'getBufferString 渲染后的字符串，如 "Human: ...\\nAI: ..."',
+          '存进数据库的原始文本',
+          'JSON 序列化的消息列表',
+        ],
+        answer: 1,
+        explain:
+          'buffer_memory.ts:80-96：先 `await this.chatHistory.getMessages()` 拿消息数组，returnMessages 为 false 时用 `getBufferString(messages, this.humanPrefix, this.aiPrefix)` 渲染成 Human:/AI: 前缀的字符串塞进 {memoryKey}。A 是 returnMessages=true 时的行为；C 错在存储层是 chatHistory，渲染发生在读取时；D 无此行为。这个「渲染成字符串再拼模板」的环节是旧协议与新 messages 状态最大的体验差异。concept=lc-legacy-memory-protocol。',
+        concept: 'lc-legacy-memory-protocol',
+      },
+      {
+        text: 'saveContext(inputValues, outputValues) 的调用方是谁？',
+        options: [
+          '用户代码在每次对话后手动调用',
+          'BaseChain 的 call 包装层在 _call 执行后自动调用——用户代码完全看不到这次写回',
+          'BaseMemory 类内部的定时器',
+          'LLM 模型适配器在流式结束时调用',
+        ],
+        answer: 1,
+        explain:
+          'L103 已取证：memory 注入发生在 BaseChain 的 call 包装层，_call 前读（loadMemoryVariables）、_call 后写（saveContext）。这正是「隐式」协议的实质——副作用在框架层发生，子类与用户代码都不感知。A 错，旧 API 的卖点就是全自动；C 错，没有任何定时机制；D 错，模型层不参与记忆写回。concept=lc-legacy-memory-protocol。',
+        concept: 'lc-legacy-memory-protocol',
+      },
+      {
+        text: '旧 memory 体系里的 BaseChatMemory（如 BufferMemory 的父类）和 BaseChatMessageHistory 是什么关系？',
+        options: [
+          '同一个类的两个名字',
+          '两层：BaseChatMemory 负责「变量读写协议」，内部持有 BaseChatMessageHistory 负责「消息存取」——持久层抽象在 core（chat_history.ts:10）',
+          'BaseChatMessageHistory 是 BaseChatMemory 的父类',
+          '互不相干的两套 API',
+        ],
+        answer: 1,
+        explain:
+          '旧 memory 分两层：BaseMemory（变量读写）→ BaseChatMemory（chat_memory.ts:29，内部持有 chatHistory）→ 具体 history 实现。BaseChatMessageHistory/BaseListChatMessageHistory 定义在 langchain-core/src/chat_history.ts:10,40，1.x 仍保留这两个接口，只是消费方从 chain 换成了 LangGraph（L106 展开）。A 错，C 错在方向反了——BaseChatMemory extends BaseMemory；D 错，是明确的分层。concept=lc-legacy-memory-protocol。',
+        concept: 'lc-legacy-memory-protocol',
+      },
+    ],
+    [
+      ['memoryKeys', 'BaseMemory 三件套之一：声明本记忆暴露哪些变量名（如 BufferMemory 的 ["history"]）'],
+      [
+        'getBufferString',
+        '把 BaseMessage[] 渲染成 Human:/AI: 前缀字符串的工具函数——旧 memory 默认输出形态，core messages 至今保留',
+      ],
+      [
+        'returnMessages',
+        'BufferMemory 开关：true 返回 BaseMessage[]，false 返回渲染字符串——两种形态分裂是旧协议混乱的缩影',
+      ],
+    ],
+    [
+      '以为 memoryKeys、inputKeys、outputKeys 三元组会自动对齐——键名靠字符串手写一致，拼错只在运行时报错',
+      '在多用户服务里共用一个 ConversationChain 实例而不配 sessionId——chatHistory 是对象内状态，隔离全靠惯例',
+      '把 returnMessages=false 时的字符串 history 当 BaseMessage[] 再传给新 API——1.x 统一吃 BaseMessage[]，字符串要先转消息对象',
+    ],
+  ),
+  'theory',
+)

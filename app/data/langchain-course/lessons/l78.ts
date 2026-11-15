@@ -1,0 +1,241 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L78 = withKind(
+  L(
+    'L78',
+    22,
+    '八种流模式与 StreamChunk：[namespace, mode, payload] 与子图路由',
+    2,
+    ['L75'],
+    ['lc-stream-modes'],
+    [
+      '说出八种 StreamMode 各自的 payload 形态与生产者（values/updates 出自 tick，messages/tools 出自回调处理器）',
+      '解释 StreamChunk 三元组如何用 namespace 数组实现子图路由，以及 eventNamespace 剥离 task 段的规则',
+      '辨析哪些模式按订阅才产出（checkpoints/tasks）、哪些模式在未订阅时也会推伴随事件（values 附带 checkpoints envelope）',
+    ],
+    `### 定锚：流不是「日志」，是协议
+
+模块六前四课解决了「跑」，本课解决「看」。LangGraph 的流式输出常被当成调试便利功能，但从源码看它是一套**协议**：所有模式共享同一个信封 \`StreamChunk = [string[], StreamMode, unknown]\`（stream.ts:31-32），由一张「模式集合 + 推送管道」的内部流承载，八种模式只是信封上 mode 字段的取值。核心结论：**流模式的全部差异可以归结为三个问题——谁生产、何时生产、路由到哪个命名空间**。想清楚这三个问题，八种模式就不再是八段记忆负担，而是一张分类表。
+
+### 八种模式一张表：谁生产、何时生产
+
+\`\`\`ts
+export type StreamMode =
+  | "values"
+  | "updates"
+  | "debug"
+  | "messages"
+  | "checkpoints"
+  | "tasks"
+  | "custom"
+  | "tools";
+
+export type Durability = "exit" | "async" | "sync";
+\`\`\`
+
+*— pregel/types.ts:25-35（commit fa426b2）*
+
+| 模式 | payload | 生产者 | 时机 |
+|---|---|---|---|
+| values | 全量输出状态 | tick 的 mapOutputValues | 每超步收尾 |
+| updates | \`{node: 增量}\` | tick 的 mapOutputUpdates | 每超步收尾（**默认模式**） |
+| custom | writer 手写内容 | 节点里的 runtime.writer | 节点运行中任意时刻 |
+| messages | [消息 chunk, 元数据] | StreamProtocolMessagesHandler 回调 | LLM token 到达时 |
+| tools | on_tool_start/event/end/error | StreamToolsHandler 回调 | 工具生命周期事件 |
+| checkpoints | 全量快照+任务描述 | tick 的 mapDebugCheckpoint | 仅订阅时 |
+| tasks | 任务创建/结果描述 | tick 的 mapDebugTasks | 仅订阅时 |
+| debug | v0 聚合包装 | tick 内多处 | 仅订阅时 |
+
+默认值在编译层固定：\`streamMode: "updates"\`（graph/state.ts:1558）。注意 updates 的 payload 过滤了 TAG_HIDDEN 任务、且首写为 ERROR/INTERRUPT 的任务不产出——控制流哨兵不会混进业务增量：
+
+\`\`\`ts
+const outputTasks = tasks.filter(([task, ww]) => {
+  return (
+    (task.config === undefined || !task.config.tags?.includes(TAG_HIDDEN)) &&
+    ww[0][0] !== ERROR &&
+    ww[0][0] !== INTERRUPT
+  );
+});
+\`\`\`
+
+*— pregel/io.ts:211-219（commit fa426b2）*
+
+这段过滤器之后还有一条容易漏掉的特判：若某个任务的写入里出现了 **RETURN 通道**（task() 函数式 API 的返回值），updates 会改为按 RETURN 写生成增量（io.ts:224-231）——函数式任务的「返回值即输出」，与普通节点「写 channel 即输出」是两种更新形态。values/updates 的产出都发生在 L75 讲过的收尾段，因此它们的节奏是超步级的；messages/tools 则是事件级的，节点还没跑完 token 就已经在流里了——**这正是两种流「体感延迟」差异的根源**。
+
+### 管道本身：modes 集合与关闭后的静默
+
+\`\`\`ts
+export class IterableReadableWritableStream extends IterableReadableStream<StreamChunk> {
+  modes: Set<StreamMode>;
+  private _closed: boolean = false;
+
+  push(chunk: StreamChunk) {
+    if (this._closed || !this.controller) {
+      // Silently drop chunks when stream is closed - this is expected behavior
+      // when async operations try to push after stream termination
+      return;
+    }
+    this.passthroughFn?.(chunk);
+    this.controller.enqueue(chunk);
+  }
+
+  error(e: any) {
+    try {
+      this.controller?.error(e);
+    } finally {
+      // Mark the stream as closed so any late \`push()\` calls from in-flight
+      // parallel tasks are dropped instead of throwing on an errored controller.
+      this._closed = true;
+    }
+  }
+}
+\`\`\`
+
+*— pregel/stream.ts:175-251（commit fa426b2）*
+
+三个细节支撑生产语义。**modes 集合是闸门**：\`_emit\` 推送前检查 \`this.stream.modes.has(mode)\`，未订阅的模式在源头就被拦下。**关闭即静默**：并行任务在流关闭后仍可能补 push（BSP 的收尾时序不保证任务先于流结束），静默丢弃避免 errored controller 抛竞态异常——这也意味着「流结束后丢失的 chunk」是设计行为而非 bug。**passthroughFn 与多路复用**：\`createDuplexStream\` 把多个子图流合并进父流，passthrough 检查「目标流的 modes 是否包含该模式或该 chunk 是 checkpoints envelope」（stream.ts:513-528），只放行订阅过的模式。
+
+### 子图路由：namespace 数组与 eventNamespace
+
+\`\`\`ts
+export function eventNamespace(
+  checkpointNs: string,
+  metadata: Record<string, unknown>,
+  options: StreamNamespaceOptions | undefined
+): string[] {
+  const ns = checkpointNs.split("|");
+  if (options === undefined) return ns;
+  let path = metadata.langgraph_path;
+  let taskSegments = 1;
+  while (
+    Array.isArray(path) &&
+    path[0] === PUSH &&
+    path[path.length - 1] === true
+  ) {
+    taskSegments += 1;
+    path = path[1];
+  }
+  return ns.slice(0, Math.max(ns.length - taskSegments, 0));
+}
+
+export function isOutsideStream(ns: string[], options: StreamNamespaceOptions | undefined): boolean {
+  if (options === undefined || options.subgraphs) return false;
+  return ns.length > 0 && ns.join("|") !== options.parentNs;
+}
+\`\`\`
+
+*— pregel/stream.ts:75-102（commit fa426b2）*
+
+namespace 是事件的路由地址：顶层图事件为 \`[]\`，子图事件带上中间各层段。\`eventNamespace\` 的 while 循环处理 **task() 函数式 API 的 PUSH 路径**——这类任务的 namespace 末尾带 task 段，事件本应归属任务所在的图而非任务本身，所以按嵌套深度剥掉对应数量的段。\`isOutsideStream\` 是消费侧过滤器：不订阅 subgraphs 时，只有与 parentNs 相同（或顶层）的事件放行——**一个节点内部自己起的子图，其事件在不开 subgraphs 时仍会流给该节点**（注释明确写了这条边界）。对外的 SSE 编码把地址拼进事件名：
+
+\`\`\`ts
+const event = ns?.length ? \`\${mode}|\${ns.join("|")}\` : mode;
+enqueueChunk({ event, data });
+\`\`\`
+
+*— pregel/stream.ts:500-501（commit fa426b2）*
+
+\`toEventStream\` 产出 \`event: updates|child|grandchild\` 形式的 SSE 行——HTTP 层的消费者就是靠这个事件名做多路分发的，这也是为什么三元组的第一个元素必须是数组而不是字符串。
+
+### 伴随事件：values 未订阅 checkpoints 也会推 envelope
+
+\`\`\`ts
+protected _emitValuesWithCheckpointMeta(entries: ...): void {
+  const meta = this._currentCheckpointMeta();
+  for (const [mode, payload] of entries) {
+    if (
+      mode === "values" &&
+      meta?.checkpoint != null &&
+      !this.stream.modes.has("checkpoints")
+    ) {
+      this.stream.push([this.checkpointNamespace, "checkpoints", meta.checkpoint]);
+    }
+    if (this.stream.modes.has(mode)) {
+      this.stream.push([this.checkpointNamespace, mode, payload]);
+    }
+  }
+}
+\`\`\`
+
+*— pregel/loop.ts:2060-2078（commit fa426b2）*
+
+这是八模式表里唯一的「例外」条款：**未订阅 checkpoints 时，每个 values 事件旁会推一个轻量 checkpoint envelope**——\`StreamChunkMeta\` 的文档注释解释这是给 streamEvents v3 的：客户端不做全量快照订阅也能构建分支/时间旅行 UI（stream.ts:11-21）。它与完整 checkpoints 流的区别在 payload：envelope 是精简快照，checkpoints 模式是带 tasks/config 的全量描述。注意方向别记反：**是 values 拉着 envelope 走，不是 checkpoints 模式带上 values**。
+
+### 本课小结
+
+- 八模式三分法：**tick 收尾生产**（values/updates/checkpoints/tasks/debug）、**回调生产**（messages/tools）、**节点手写**（custom）；默认 updates。
+- StreamChunk 三元组统一信封；namespace 数组承载子图路由，SSE 事件名 \`mode|ns...\` 是它的 HTTP 形态。
+- eventNamespace 剥 task 段服务 task() API；isOutsideStream 的 subgraphs 开关决定子图事件是否外流。
+- checkpoints/tasks 按订阅才产出；values 未订阅 checkpoints 时附轻量 envelope 供 v3 使用。
+- 流的承载是 checkpoint——下一课进入 checkpoint 结构与 durability 三档。
+`,
+    null,
+    [
+      {
+        text: '不指定 streamMode 时，graph.stream 的默认模式是？',
+        options: ['values', 'updates', 'debug', 'messages'],
+        answer: 1,
+        explain:
+          'CompiledStateGraph 构造参数里写死 `streamMode: "updates"`（graph/state.ts:1558）——默认给的是「每个节点写入的增量」而非全量状态。values 要显式指定才能看到每步后的完整状态；debug 是 v0 时代的聚合包装模式。',
+        concept: 'lc-stream-modes',
+      },
+      {
+        text: 'checkpoints 与 tasks 两种流模式的产出时机是？',
+        options: [
+          '每个超步无条件产出',
+          '仅当消费端订阅了这两种模式（或 legacy 的 debug）时才在 tick 里产出——全量快照序列化开销大，按需才付',
+          '只在出错时产出',
+          '只在子图里产出',
+        ],
+        answer: 1,
+        explain:
+          'tick 里两处都有 `this.stream.modes.has("checkpoints") || this.stream.modes.has("debug")` 的守卫，源码注释直说「Full-state checkpoint snapshots are expensive; skip unless a consumer subscribed」。A 会让无人消费的运行白白付出全通道序列化成本；C/D 无此逻辑。',
+        concept: 'lc-stream-modes',
+      },
+      {
+        text: 'messages 与 tools 两种流模式的实现方式是？',
+        options: [
+          '每个超步结束后轮询通道状态',
+          'BaseCallbackHandler 挂进 config.callbacks，在 handleLLMNewToken/handleToolStart 等回调里直接向流推 chunk——事件驱动而非轮询',
+          '由 checkpointer 的 list 接口回放',
+          '复用 Runnable.stream 的默认实现',
+        ],
+        answer: 1,
+        explain:
+          'StreamToolsHandler（stream.ts:257 起）与 StreamProtocolMessagesHandler（messages-v2.ts:102 起）都是 BaseCallbackHandler，随 config.callbacks 下发到每个任务，模型出 token、工具起止时立刻推 [ns, mode, payload]。A 的轮询实现延迟高且拿不到 token 级粒度；C 是 checkpoint 重放不是流；D 与 Runnable 层流无关。',
+        concept: 'lc-stream-modes',
+      },
+      {
+        text: 'StreamChunk 的第一个元素是 string[]，它承载什么？',
+        options: [
+          '输出通道名列表',
+          '事件的 checkpoint 命名空间路径：顶层图是 []，子图事件带上父到子的命名空间段，消费者据此把事件路由回对应子图',
+          '该事件流经的所有节点名',
+          '版本号数组',
+        ],
+        answer: 1,
+        explain:
+          'StreamChunk = [string[], StreamMode, unknown]（stream.ts:31-32），命名空间来自 checkpoint_ns 按 "|" 切分；eventNamespace 还会把 task 段剥掉（PUSH 路径展开计数 taskSegments）。A 是 payload 里的事；C 不存在该信息；D 无版本数组。SSE 编码时这个数组拼成 `event: mode|ns1|ns2`。',
+        concept: 'lc-stream-modes',
+      },
+    ],
+    [
+      ['StreamChunk', '流输出的统一三元组 [namespace[], mode, payload]，八种模式共用同一信封'],
+      ['StreamMode', '八种流模式的联合类型：values/updates/debug/messages/checkpoints/tasks/custom/tools'],
+      [
+        'eventNamespace',
+        '把 checkpoint namespace 字符串切分成段、并按需剥离 task 段的函数，决定事件归属哪层子图',
+      ],
+      [
+        'IterableReadableWritableStream',
+        'Pregel 内部的流管道：modes 集合决定哪些模式被放行，关闭后 push 静默丢弃防止竞态报错',
+      ],
+    ],
+    [
+      '以为 messages 流会自动包含子图——namespaceOptions.subgraphs 默认 false，isOutsideStream 会把非本命名空间的事件过滤掉，要显式开启 subgraphs',
+      '在流关闭后仍持有 writer 引用继续 push——IterableReadableWritableStream 关闭后 push 是静默丢弃，不会报错也不会到达消费端，调试「丢了最后几条」先查流生命周期',
+      '把 custom 模式与 tools/messages 混为一谈——custom 读的是节点里 runtime.writer/streamWriter 手写的事件；tools/messages 是框架自动挂的回调，无需节点代码配合',
+    ],
+  ),
+  'theory',
+)

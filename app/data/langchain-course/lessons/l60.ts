@@ -1,0 +1,210 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L60 = withKind(
+  L(
+    'L60',
+    17,
+    'contextEditing 与 dynamicSystemPrompt：提示词工程中间件',
+    2,
+    ['L51'],
+    ['lc-context-editing'],
+    [
+      '说出 contextEditing 默认策略 ClearToolUsesEdit 的四项默认值（100k token 触发、保留 3 条、[cleared] 占位、不清输入）',
+      '辨析 contextEditing 与 summarization 的机制分野：就地替换 vs 全量重写、wrapModelCall vs beforeModel',
+      '解释 dynamicSystemPrompt 为什么用 systemMessage.concat 而不是整体替换系统提示',
+    ],
+    `### 定位：比摘要更轻的两件提示词工具
+
+L59 的 summarization 是重型装备：调一次模型、重写整个消息历史。本课的两位轻量级选手覆盖「不值得动用摘要」的场景：**contextEditing 只处理最占 token 的一类内容——工具结果**（一次搜索返回 5000 字，几次调用就把窗口吃满），把它换成一行占位符即可；**dynamicSystemPrompt** 则每轮重算系统提示，让「提示词随状态变化」成为一行配置。两者合起来覆盖了提示词工程里最高频的两个诉求：控体积、控人设。
+
+一句话结论：**contextEditing = 请求视图上的工具结果打码；dynamicSystemPrompt = 每轮拼接式重写系统提示。**
+
+### contextEditing：策略接口 + 默认实现
+
+中间件本体极薄（wrapModelCall 里循环 apply 所有策略），重量都在 ClearToolUsesEdit 策略类里。先看默认值与触发：
+
+\`\`\`ts
+const DEFAULT_TOOL_PLACEHOLDER = "[cleared]";
+const DEFAULT_TRIGGER_TOKENS = 100_000;
+const DEFAULT_KEEP = 3;
+
+export class ClearToolUsesEdit implements ContextEdit {
+  async apply({ messages, model, countTokens }) {
+    const tokens = await countTokens(messages);
+    // 1) 无条件清理孤儿 ToolMessage（找不到匹配 tool_call_id 的 AI 消息）
+    for (let i = 0; i < messages.length; i++) { /* ...收集 orphanedIndices */ }
+    for (let i = orphanedIndices.length - 1; i >= 0; i--) {
+      messages.splice(orphanedIndices[i]!, 1);
+    }
+    // 2) 触发判定（与 summarization 的 shouldSummarize 同构：条件间 OR、条件内 AND）
+    if (!this.#shouldEdit(messages, currentTokens, model)) return;
+    // 3) 收集全部 ToolMessage 候选，按 keep 策略留最新的 N 条，其余清掉
+    const keepCount = await this.#determineKeepCount(candidates, countTokens, model);
+    const candidatesToClear = candidates.slice(0, -keepCount);
+    // 4) 逐条原位替换
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/contextEditing.ts:29-376（commit 7704471，有裁剪）*
+
+四步结构里第一步最容易忽略：**孤儿清理是无条件的**——不管触发与否，只要某条 ToolMessage 向前找不到带匹配 tool_call_id 的 AIMessage（或该 AIMessage 的 tool_calls 里根本没有这个 id），就地删除。这是对历史脏数据的自愈。真正清理时的原位替换细节：
+
+\`\`\`ts
+messages[idx] = new ToolMessage({
+  tool_call_id: toolMessage.tool_call_id,
+  content: this.placeholder,
+  name: toolMessage.name,
+  artifact: undefined,
+  response_metadata: {
+    ...toolMessage.response_metadata,
+    context_editing: { cleared: true, strategy: "clear_tool_uses" },
+  },
+});
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/contextEditing.ts:430-442（commit 7704471）*
+
+三个设计意图：tool_call_id 保留，配对协议不破；\`context_editing.cleared\` 标记让清理**幂等**——下一轮再触发时已清理的条目直接跳过（389-394 的跳过逻辑）；artifact 显式置空，工具的大体积二进制产物一并释放。clearToolInputs: true 时还会把对应 AIMessage 里的 tool_call args 替换为 \`{}\`，并在该 AI 消息的 metadata 里记录 cleared_tool_inputs 列表（725-756）。
+
+### 与 summarization 的机制分野
+
+两件工具常被混为一谈，机制差异列清楚：
+
+| 维度 | contextEditing | summarization |
+|---|---|---|
+| 挂点 | wrapModelCall（请求视图） | beforeModel（state 更新） |
+| 作用对象 | 仅 ToolMessage（+可选 tool inputs） | 全部会话消息 |
+| 处理方式 | 占位符原位替换，无模型调用 | 模型生成摘要，REMOVE_ALL 全量重写 |
+| 持久化 | 不改 checkpoint（每轮重算） | 写回 state，持久生效 |
+| 信息损失 | 工具原始结果（可接受时） | 被压缩段的细节 |
+
+选型口诀：**token 压力主要来自工具大结果 → contextEditing；来自对话本身（多轮、长推理）→ summarization**。两者可叠用：先清工具结果，还不够再摘要。
+
+### 动态 token 计数与自定义策略
+
+tokenCountMethod 提供两档计数：默认 "approx" 用共享的 countTokensApproximately（4 字符 ≈ 1 token）；"model" 走模型的 getNumTokensFromMessages 精确计数——但只有 OpenAI 系实现了这个方法，其他模型直接抛错（946-948）。精确计数在大上下文时更准但更慢，默认档是速度优先的取舍。自定义清理走 ContextEdit 接口：apply 收到 messages 数组引用、countTokens 函数与 model，就地修改即可——比如「清理旧 HumanMessage」或「把超长的 reasoning 块替换为长度标注」。edits 是数组，多个策略按序执行，前一个的产物就是后一个的输入。
+
+自定义策略的「就地修改」契约还有一条纪律要注意：apply 拿到的是 request.messages 的**活引用**，改数组元素即改请求视图——这既是能力（零拷贝高效）也是陷阱（改了但不想要的改动无法撤销）。写自定义策略时应遵循 ClearToolUsesEdit 的三个先例：只动 ToolMessage 类目标、原位替换保留 tool_call_id、写入可识别的元数据标记让策略幂等。keep 计数的动态判定（#determineKeepCount，636 行起）也值得借鉴：它按 keep 的量纲（fraction/tokens/messages 三选一）把「保留几条」折算成数字，token 基的策略会从最新条目向前累加直到预算耗尽——所以 token 基 keep 在「最近一条工具结果特别大」时会保留得很少，出现「刚发生的调用就被清」的观感，配置时要预期到这一点。
+
+### dynamicSystemPrompt：74 行的拼接哲学
+
+对照着看最短的一个内置中间件（全文件 74 行）：
+
+\`\`\`ts
+wrapModelCall: async (request, handler) => {
+  const systemPrompt = await fn(
+    request.state as AgentBuiltInState,
+    request.runtime as Runtime<TContextSchema>
+  );
+  const isExpectedType =
+    typeof systemPrompt === "string" ||
+    SystemMessage.isInstance(systemPrompt);
+  if (!isExpectedType) {
+    throw new Error(
+      "dynamicSystemPromptMiddleware function must return a string or SystemMessage"
+    );
+  }
+  return handler({
+    ...request,
+    systemMessage: request.systemMessage.concat(systemPrompt),
+  });
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/dynamicSystemPrompt.ts:53-72（commit 7704471）*
+
+关键决策是 **concat 而非替换**：createAgent 传入的静态 systemPrompt 始终保留在前，动态生成的内容追加在后。这样「基础人设（静态）+ 每轮状态注入（动态）」自然分层，也避免了动态回调忘了返回基础提示词导致人设丢失的事故。返回值支持 SystemMessage 实例意味着可以携带 cache_control 等内容块级配置（L54 的 systemMessage 示例同款用法）。类型校验是硬失败——提示词工程中间件对「静默错」零容忍。todoListMiddleware 注入使用说明时用的也是同款 concat 手法（todoListMiddleware.ts:192-198），可以视为这个模式在「静态内容」上的特例。
+
+这个模式还有一个与 L54 双通道校准的联动细节：dynamicSystemPrompt 改的是 systemMessage，而 AgentNode 的 handlerWithValidation 检测到 systemMessage 变更后会把 systemPrompt 同步重算（AgentNode.ts:644-658）——所以每轮请求里静态人设与动态注入最终合并为一条 SystemMessage 发给 provider。concat 的成本因此是「每轮重建一条完整系统消息」，对 provider 侧的 prompt cache 不友好（消息内容轮轮变化会击中缓存失效）；若你的系统提示词很长且状态注入其实很少变，可以反过来用「静态为主、动态为辅」的拆分：高频不变的部分留给 createAgent 的 systemPrompt（provider 可缓存），真正轮变的才进回调。这是 L60 两位中间件共同暗示的提示词工程经济学：**变化率不同的内容分层放置**，与 L59 的「价值衰减不同的内容分级压缩」是同一个思想在不同维度的投影。
+
+### 本课小结
+
+- contextEditing 挂 wrapModelCall，只改请求视图：孤儿 ToolMessage 无条件清理，触发后按 keep 保留最新 N 条工具结果、其余原位替换为 [cleared] 并打 cleared 元数据。
+- 幂等靠 response_metadata.context_editing 标记；tool_call_id 永远保留，provider 配对协议不破。
+- 与 summarization 的分界：请求视图 vs state 重写、工具结果 vs 全对话、零模型调用 vs 一次模型调用。
+- dynamicSystemPrompt 每轮以 state/runtime 重算提示词，硬类型校验 + concat 追加，静态人设不丢。
+- 下一课进入安全区：pii/piiRedaction——正则检测、四种脱敏策略，以及一对「进得去、回得来」的红action地图。
+`,
+    null,
+    [
+      {
+        text: 'ClearToolUsesEdit「清理」一条旧工具结果时，具体做了什么？',
+        options: [
+          '把这条 ToolMessage 从消息列表里删除',
+          '用一条新 ToolMessage 原位替换：content 变为占位文本（默认 [cleared]）、artifact 置 undefined，并在 response_metadata.context_editing 记录 cleared: true',
+          '把整条消息替换成 SystemMessage',
+          '只清 artifact，content 不动',
+        ],
+        answer: 1,
+        explain:
+          'messages[idx] = new ToolMessage({ tool_call_id, content: placeholder, name, artifact: undefined, response_metadata: { ...原, context_editing: { cleared: true, strategy: "clear_tool_uses" } } })（contextEditing.ts:430-442）。原位替换而非删除的原因：tool_call_id 必须保留，否则对应的 AIMessage tool_call 会悬空（provider 拒绝）。A 会制造悬空调用；C 类型错乱；D 清的是 content 主体，artifact 是连带清空。',
+        concept: 'lc-context-editing',
+      },
+      {
+        text: 'contextEditing 中间件挂在哪个 hook 上？这带来什么副作用？',
+        options: [
+          'beforeModel；编辑结果会作为 state 更新持久化',
+          'wrapModelCall；就地编辑 request.messages 只影响当次模型请求，不产生 state 更新（除非其他机制写回）',
+          'afterModel；编辑的是模型输出',
+          'beforeAgent；整个 agent 生命周期只跑一次',
+        ],
+        answer: 1,
+        explain:
+          'contextEditingMiddleware 的实现是 wrapModelCall: 对 request.messages 逐个 edit.apply 就地修改后 handler(request)（contextEditing.ts:907-963）。wrapModelCall 的产物是「发给模型的请求」，不是 state——所以清除动作每次模型调用都会重算（幂等，因为有 cleared 标记防重复清理），但 checkpoint 里的原始消息不受影响。A 是 summarization 的挂点（其返回值写 state）；C 时机错；D 时机错。',
+        concept: 'lc-context-editing',
+      },
+      {
+        text: 'tokenCountMethod: "model" 的限制是？',
+        options: [
+          '所有模型都支持',
+          '目前只有 OpenAI 系模型实现了 getNumTokensFromMessages；其他模型会抛「does not support token counting」',
+          'model 模式是纯估算，approx 是精确值',
+          'model 模式不消耗任何计算',
+        ],
+        answer: 1,
+        explain:
+          'tokenCountMethod === "model" 分支检查 request.model 上有没有 getNumTokensFromMessages 方法，没有则抛 `Model "..." does not support token counting`（contextEditing.ts:921-949），注释写明「currently only OpenAI models have this method」。B 正确。C 把两个模式说反了——approx 是 4 字符/token 的近似（默认），model 才是精确计数；D 无依据。',
+        concept: 'lc-context-editing',
+      },
+      {
+        text: 'dynamicSystemPromptMiddleware 的回调返回非 string/SystemMessage 值（如一个对象）时？',
+        options: [
+          '自动 JSON.stringify 后当提示词用',
+          '抛错：function must return a string or SystemMessage',
+          '静默忽略本次返回，沿用原提示词',
+          '当作结构化输出 schema 使用',
+        ],
+        answer: 1,
+        explain:
+          'isExpectedType 检查 typeof === "string" 或 SystemMessage.isInstance，不满足则抛 "dynamicSystemPromptMiddleware function must return a string or SystemMessage"（dynamicSystemPrompt.ts:59-66）。A/D 无此逻辑；C 错——这是硬校验不是宽松降级，prompt 工程中间件宁可炸也不静默错。',
+        concept: 'lc-context-editing',
+      },
+    ],
+    [
+      [
+        'ClearToolUsesEdit',
+        '默认清理策略类：镜像 Anthropic clear_tool_uses_20250919 行为，旧工具结果替换为占位符并打 cleared 元数据标记',
+      ],
+      [
+        'ContextEdit',
+        '自定义清理策略接口：apply({ messages, countTokens, model }) 就地修改消息数组（contextEditing.ts:72-98）；实现它可接入任意清理逻辑',
+      ],
+      [
+        'orphaned ToolMessage',
+        '孤儿工具消息：找不到带匹配 tool_call_id 的 AIMessage 的 ToolMessage；ClearToolUsesEdit 无论是否触发清理都会先删掉它们',
+      ],
+      [
+        'dynamicSystemPrompt',
+        '每轮模型调用前用 (state, runtime) => string | SystemMessage 生成提示词的中间件；拼接而非替换，保留 createAgent 的原始 systemPrompt',
+      ],
+    ],
+    [
+      '以为 contextEditing 清理是持久的——它挂在 wrapModelCall 上只改请求视图，checkpoint 里的完整历史原样保留；需要「真删」要配合 summarization 或自定义 beforeModel 写回',
+      '对着非 OpenAI 模型开 tokenCountMethod: "model"——直接抛错；模型 profile 缺失时 fraction 触发/保留也会退化为默认值或抛错（与 L59 的 summarization 同源）',
+      '在 dynamicSystemPrompt 回调里返回 undefined 期待「这轮不改提示词」——undefined 同样触发类型抛错；要条件性生效请在回调里返回原 request.systemMessage 的内容或空串',
+      '把 excludeTools 的匹配对象搞混——排除判定用的是 toolMessage.name || toolCall.name，即以消息上的名字优先，改过名的工具要注意两条路径',
+    ],
+  ),
+  'theory',
+)

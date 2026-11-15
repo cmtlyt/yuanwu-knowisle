@@ -1,0 +1,226 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L29 = withKind(
+  L(
+    'L29',
+    8,
+    'stream 首块缓冲与 IterableReadableStream：为什么错误能立即抛出',
+    3,
+    ['L27'],
+    ['lc-stream-buffer'],
+    [
+      '能用 AsyncGeneratorWithSetup 的 setup/firstResult 机制解释「首块缓冲」如何把流式初始化错误提前到 await chain.stream(...) 这一行',
+      '能说出 IterableReadableStream 对原生 ReadableStream 补了哪些能力（asyncIterator、cancel 回传 generator.return）',
+      '能解释 atee/concat 与 consumeAsyncIterableInContext 在流式管线中的位置，并识别 ALS 上下文在迭代消费中的作用',
+    ],
+    `### 一个 await 的两种世界：调用点错误 vs 消费点错误
+
+L27 结尾留了个钩子：stream() 在返回前先 await 首块。本课回答三个递进的问题——为什么这么做（错误时序）、怎么做（AsyncGeneratorWithSetup 的 firstResult 机制）、流对象本身是什么（IterableReadableStream）。核心结论：**langchain 把「流能不能开始」与「流的内容」分成两个时刻管理**，前者在 await stream() 里同步暴露，后者交给消费者按需拉取。
+
+### AsyncGeneratorWithSetup：setup 即首块
+
+\`\`\`ts
+this.setup = new Promise((resolve, reject) => {
+  void AsyncLocalStorageProviderSingleton.runWithConfig(
+    pickRunnableConfigKeys(
+      params.config as Record<string, unknown> | undefined
+    ),
+    async () => {
+      // Abort the first read too so timeouts can stop streams before the
+      // first chunk is available.
+      this.firstResult = this.signal
+        ? raceWithSignal(params.generator.next(), this.signal)
+        : params.generator.next();
+      if (params.startSetup) {
+        this.firstResult.then(params.startSetup).then(resolve, reject);
+      } else {
+        this.firstResult.then((_result) => resolve(undefined as S), reject);
+      }
+    },
+    true
+  );
+});
+
+async next(...args: [] | [TNext]): Promise<IteratorResult<T>> {
+  this.signal?.throwIfAborted();
+
+  if (!this.firstResultUsed) {
+    this.firstResultUsed = true;
+    return this.firstResult;
+  }
+
+  return AsyncLocalStorageProviderSingleton.runWithConfig(
+    ...,
+    ...
+  );
+}
+\`\`\`
+
+*— libs/langchain-core/src/utils/stream.ts:215-259（commit 7704471）*
+
+三个细节拼出全貌。其一，构造函数里**立刻**发起 generator.next()——不是等消费者来要，而是抢跑；首块结果存进 firstResult，setup Promise 在它 settle 时 resolve/reject。base.ts:322 的 \`await wrappedGenerator.setup\` 等的就是这一刻，所以「首块缓冲」不是队列缓冲，而是**把第一次 next 的完成（或失败）作为返回流的前置条件**。其二，首块也参与取消：raceWithSignal 让 timeout/AbortSignal 能在首块尚未产出时就把 stream() 干掉——注释写明「Abort the first read too」。其三，next() 有个 firstResultUsed 标记：消费者拿到的第一个块就是构造时抢跑的那一个，不重拉、不丢块。整个包装器还全程包裹在 runWithConfig 里——每次 next 都在 ALS 配置上下文中执行，底层 generator 内部（比如 lambda）仍能读到 config，这条线在 L35 收束。
+
+### IterableReadableStream：补齐 async iterator 语法
+
+\`\`\`ts
+export class IterableReadableStream<T>
+  extends ReadableStream<T>
+  implements IterableReadableStreamInterface<T>
+{
+  public reader: ReadableStreamDefaultReader<T>;
+
+  async next(): Promise<IteratorResult<T>> {
+    this.ensureReader();
+    try {
+      const result = await this.reader.read();
+      if (result.done) {
+        this.reader.releaseLock(); // release lock when stream becomes closed
+        return { done: true, value: undefined };
+      } else {
+        return { done: false, value: result.value };
+      }
+    } catch (e) {
+      this.reader.releaseLock(); // release lock when stream becomes errored
+      throw e;
+    }
+  }
+
+  async return(): Promise<IteratorResult<T>> {
+    this.ensureReader();
+    if (this.locked) {
+      const cancelPromise = this.reader.cancel();
+      this.reader.releaseLock();
+      await cancelPromise;
+    }
+    return { done: true, value: undefined };
+  }
+
+  [Symbol.asyncIterator]() {
+    return this;
+  }
+}
+\`\`\`
+
+*— libs/langchain-core/src/utils/stream.ts:15-73（commit 7704471）*
+
+类注释直说来源：从 web-streams-polyfill 的 PR 移植，目的是「Support async iterator syntax for ReadableStreams in all environments」。\`[Symbol.asyncIterator]()\` 返回 this——流对象自己就是迭代器，reader 全程同一个（ensureReader 幂等），所以 done/error 时机锁释放正确。return() 的价值在提前退出：\`for await\` 循环 break 时 JS 会调用迭代器的 return()，这里转成 reader.cancel()，再由 fromAsyncGenerator 的 cancel 回调接上 \`await generator.return(reason)\`：
+
+\`\`\`ts
+static fromAsyncGenerator<T>(generator: AsyncGenerator<T>) {
+  return new IterableReadableStream<T>({
+    async pull(controller) {
+      const { value, done } = await generator.next();
+      if (done) {
+        controller.close();
+      }
+      // Fix: \`else if (value)\` will hang the streaming when nullish value (e.g. empty string) is pulled
+      controller.enqueue(value);
+    },
+    async cancel(reason) {
+      await generator.return(reason);
+    },
+  });
+}
+\`\`\`
+
+*— libs/langchain-core/src/utils/stream.ts:106-121（commit 7704471）*
+
+pull 是按需推进的：ReadableStream 内部队列有欠账才拉 generator.next()，背压语义继承自 Web Streams 标准。那行 Fix 注释值得背下来——早期实现 \`else if (value)\` 会把空字符串这类 falsy 块吞掉，而 generator 没被推进（pull 没有完成它的 next 消费），流就此挂起；修复后 enqueue 无条件执行，nullish 值也成为合法 chunk。**「chunk 可能为空串」因此是消费端必须处理的现实**，尤其模型流式的 delta 经常是空串。
+
+### 上下游两块拼图：concat 与 context 内消费
+
+首块缓冲解决「开头」，还有两个工具负责「中间」与「外部」。中间聚合靠 concat（utils/stream.ts:148-181）：数组 concat、字符串 +、数字 +、带 concat 方法的对象（BaseMessageChunk！）、普通对象递归合并、其余抛 \`Cannot concat ...\`——\`_concatOutputChunks\` 对它的一层薄委托就是 L27 见到的尽力聚合。外部消费者主要指 RunnableLambda 里用户返回的生成器：consumeAsyncIterableInContext（iter.ts:76-94）把每次 \`iterator.next()\` 都包进 runWithConfig，**让用户生成器体内的嵌套 Runnable 调用仍处于 ALS 上下文**，否则 lambda 返回 AsyncIterable 之后的链路会丢掉 config——这是「lambda 返回生成器就自动获得流式」能成立的前提。
+
+### 收尾通道：throw、asyncDispose 与 fromReadableStream
+
+IterableReadableStream 对迭代器协议的补全还有三块。其一是 \`throw()\`：与 return() 对称的提前终止——先 \`reader.cancel()\` 释放锁，再抛出传入的错误（utils/stream.ts:60-72），消费者注入异常同样能正确清理。其二是 \`[Symbol.asyncDispose]\`：\`await this.return()\` 的语法糖（:75-80），让 \`await using\` 语法在离开作用域时自动收尾——类型声明上还留着 @ts-ignore 注释兼容 Node 18 的类型面（最新 Node 22 才有显式资源管理提案的完整支持）。其三是静态适配器 \`fromReadableStream\`（:81-104）：把任意原生 ReadableStream（比如 fetch 响应的 body）转成可 async 迭代的形态，实现是 MDN 文档里的经典 \`pump()\` 递归——reader.read() 成功就 enqueue 并继续，done 就 close，cancel 分支释放锁。三者合起来回答一个问题：**为什么 core 不直接用原生 ReadableStream？** 因为「async iterator 语法支持所有环境」之外，还需要统一的取消收尾（return/throw/dispose 三通道）与跨源适配（generator 与原生流双向转换，fromAsyncGenerator 与 fromReadableStream 各管一向）。L31 的 atee 广播、L27 的首块缓冲，全部建立在这个统一流抽象之上——它不在教科书的 ReadableStream 标准里，却是整条 LCEL 流式管线的地基。
+
+### 本课小结
+
+- stream() 的首块缓冲本质：AsyncGeneratorWithSetup 在构造时抢跑 generator.next()，setup Promise settle 后才返回流对象——初始化错误（鉴权、模型名、参数）在 await stream() 这一行抛出，不等到消费点。
+- 首块同样接受取消：raceWithSignal 让 timeout/AbortSignal 能在首块产出前终止流；后续每次 next 也有 throwIfAborted/raceWithSignal 双保险。
+- IterableReadableStream 是「ReadableStream + AsyncIterable」的兼容层：单一 reader、done/error 时释放锁、break 时经 return()→cancel()→generator.return() 正确收尾，提前断开也能让回调树落账。
+- fromAsyncGenerator 无条件 enqueue 修复过 nullish chunk 挂起问题——空字符串 chunk 是合法输出，消费端别按真值过滤。
+- 下一课进入组合子家族：pipe 与 RunnableSequence——LCEL 的串行心脏如何用 first/middle/last 与吸并扁平化撑起链式调用。
+`,
+    null,
+    [
+      {
+        text: 'stream() 返回前 await wrappedGenerator.setup 的直接效果是？',
+        options: [
+          '等待整个流消费完毕',
+          '等待底层 generator 的第一个 next() 完成——期间抛出的错误会在 await chain.stream(...) 这一行出现',
+          '等待 config 校验完成，与流内容无关',
+          '只是为了类型检查，没有运行时效果',
+        ],
+        answer: 1,
+        explain:
+          'AsyncGeneratorWithSetup 构造时即启动 firstResult = generator.next()（utils/stream.ts:224-226），setup 这个 Promise 在首个块可用（或抛错）时 settle（:230）。stream() 里 await wrappedGenerator.setup（base.ts:322）所以「拉首块 + 报错」都发生在返回流对象之前。选项 A 错：只等首块，不等全部；选项 C 错：config 校验（ensureConfig）是同步前置；选项 D 与源码注释「Buffer the first streamed chunk to allow for initial errors to surface immediately」（base.ts:315-316）直接矛盾。',
+        concept: 'lc-stream-buffer',
+      },
+      {
+        text: 'IterableReadableStream 相比原生 ReadableStream 补的关键能力是？',
+        options: [
+          '支持背压，原生不支持',
+          '实现 [Symbol.asyncIterator]，可直接 for await 消费；next() 内部维护同一个 reader 保证消费锁一致',
+          '把字节流转成文本流',
+          '自动重试失败的 chunk',
+        ],
+        answer: 1,
+        explain:
+          'utils/stream.ts:15-79：类声明 extends ReadableStream 且实现 next()/return()/throw() 与 [Symbol.asyncIterator]()（返回自身），类注释写明动机是「Support async iterator syntax for ReadableStreams in all environments」——老 Node 环境没有原生 async iterator 支持。选项 A 错：背压是 ReadableStream 本身的机制；选项 C 是 TextStream 的事；选项 D 无此功能，chunk 级重试不在此层。',
+        concept: 'lc-stream-buffer',
+      },
+      {
+        text: '消费者提前 break 跳出 for await 循环时，IterableReadableStream 会发生什么？',
+        options: [
+          '流继续在后台跑完，chunk 全部丢弃',
+          'return() 被调用：先 reader.cancel() 再 releaseLock，fromAsyncGenerator 的 cancel 会调 generator.return(reason) 终止底层 generator',
+          '什么也不做，流对象被 GC 即可',
+          '抛出 StreamInterrupted 错误',
+        ],
+        answer: 1,
+        explain:
+          'utils/stream.ts:49-58 的 return() 在锁定时先 cancel 再释放锁；fromAsyncGenerator 的 cancel 回调是 await generator.return(reason)（:117-119）。generator.return 会触发 AsyncGenerator 的 finally 块——这是回调系统 handleChainEnd 能在提前断开时正确收尾的通道。选项 A 描述的是没人调用 return() 的情形（泄漏）；选项 C 忽略了资源清理语义；选项 D 无此错误类型。',
+        concept: 'lc-stream-buffer',
+      },
+      {
+        text: 'fromAsyncGenerator 的 pull 回调里有一处 Fix 注释：controller.enqueue(value) 不带 else if (value)。修复的问题是？',
+        options: [
+          '空字符串等 nullish 值被跳过导致流挂起',
+          'value 为 null 时会崩溃',
+          'done 之后的 chunk 仍然入队',
+          '并发 pull 导致乱序',
+        ],
+        answer: 0,
+        explain:
+          'utils/stream.ts:114-115 注释原文：Fix: `else if (value)` will hang the streaming when nullish value (e.g. empty string) is pulled——早期实现里空字符串是 falsy 会被跳过 enqueue，但 generator.next() 又依赖 pull 被再次调用来推进，于是流卡死。改成无条件 enqueue 后 nullish 值也能作为 chunk 传递。选项 B 错：enqueue(null) 本身合法（且 done 时先 close）；选项 C 错：done 分支先 controller.close()；选项 D 错：pull 由 ReadableStream 串行调度，无并发问题。',
+        concept: 'lc-stream-buffer',
+      },
+    ],
+    [
+      [
+        '首块缓冲',
+        'stream() 在返回流前先拉取并缓存第一个 chunk 的模式：错误提前到调用点，代价是首块延迟计入 await stream() 而非首次迭代',
+      ],
+      [
+        'AsyncGeneratorWithSetup',
+        '把 AsyncGenerator 与「setup Promise（首个值可用即 resolve）」绑定的包装器，是 LCEL 流式管线的通用前奏（utils/stream.ts:183-280）',
+      ],
+      [
+        'IterableReadableStream',
+        'core 自己实现的「既是 ReadableStream 又是 AsyncIterable」的流类，兼容所有运行时环境（utils/stream.ts:15-122）',
+      ],
+      [
+        'consumeAsyncIterableInContext',
+        '在 ALS 配置上下文中逐 next() 消费异步可迭代对象的工具，保证 lambda 返回的生成器内部仍能取到 config（iter.ts:76-94）',
+      ],
+    ],
+    [
+      '以为 await chain.stream(...) 返回后流已在跑——返回时刻只保证了首块可用，后续块仍按需 pull',
+      '在 for await 中 break 后不消费流也不让它被 return()——底层 generator 挂起，回调树可能收不了尾',
+      '假设 chunk 不会是空字符串——fromAsyncGenerator 明确修复过 nullish chunk 导致挂起的问题，消费端要按可空处理',
+    ],
+  ),
+  'theory',
+)

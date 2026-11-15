@@ -1,0 +1,177 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L51 = withKind(
+  L(
+    'L51',
+    15,
+    'AgentMiddleware 接口全解：stateSchema/contextSchema/tools/tracePolicy',
+    3,
+    ['L47'],
+    ['lc-mw-interface'],
+    [
+      '说出 AgentMiddleware 接口的完整成员清单：品牌标记、~middlewareTypes 幽灵属性、name 与五个可选配置（stateSchema/contextSchema/tools/streamTransformers/tracePolicy）',
+      '解释 stateSchema 与 contextSchema 在持久性、可写性、schema 形态允许集上的三条差异',
+      '说明 MiddlewareTypeConfig 五槽类型包与 InferMiddleware* 反查族如何支撑 createAgent 的泛型推导',
+      '描述 tracePolicy 与 FilterPrivateProps 在观测面与类型面上的裁剪作用',
+    ],
+    `模块五开篇。前一个模块我们反复从「框架怎么消费中间件」的视角看问题；现在切换到「中间件怎么声明自己」。核心结论：**AgentMiddleware 是一个纯接口——一个必需的品牌标记、一个类型层幽灵属性、一个必需 name、五个可选配置槽与六个可选 hook；状态进状态机、上下文只读、工具要有人执行、观测可整形，四件事在接口上各有专属槽位**。本课聚焦前四个配置，六个 hook 留给 L52。
+
+### 接口全景：品牌、幽灵与必需 name
+
+先看接口的骨架成员（hook 成员下一课展开）：
+
+\`\`\`ts
+export interface AgentMiddleware<
+  TSchema extends StateDefinitionInit | undefined = any,
+  TContextSchema extends ... = any,
+  TFullContext = any,
+  TTools extends readonly (ClientTool | ServerTool)[] = readonly (...)[],
+  TStreamTransformers extends ReadonlyArray<() => StreamTransformer<any>> = ...,
+> {
+  readonly [MIDDLEWARE_BRAND]: true;
+
+  readonly "~middlewareTypes"?: MiddlewareTypeConfig<
+    TSchema, TContextSchema, TFullContext, TTools, TStreamTransformers
+  >;
+
+  name: string;
+  stateSchema?: TSchema;
+  contextSchema?: TContextSchema;
+  tools?: TTools;
+  streamTransformers?: TStreamTransformers;
+  tracePolicy?: TracePolicy;
+  ...
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/types.ts:404-490（commit 7704471，有裁剪）*
+
+品牌标记的动机写在常量定义旁：*Unique symbol used to brand middleware instances. This prevents functions from being accidentally assignable to AgentMiddleware since functions have a 'name' property that would otherwise make them structurally compatible.*（types.ts:362-367）——没有品牌，\`(name: string) => ...\` 这种带 name 的函数就能通过结构检查混进 middleware 数组，运行时一执行 hook 就崩。TypeScript 结构类型世界里，symbol 品牌是最轻量的_nominal_补丁。幽灵属性 \`~middlewareTypes\` 则是反向通道：运行时对象不携带它（L53 会验证），类型层却靠它反查全部泛型信息——这是 L39 const 泛型与 L99 类型级 reduce 的接口侧支点。
+
+### stateSchema 与 contextSchema：三条硬差异
+
+接口文档给两个 schema 写了对照式注释（types.ts:444-459），差异可归纳为三条。**第一，持久性**：state 是 persisted between multiple invocations，context 是 read-only and not persisted——跨 invoke 的计数器、缓存水位线写 stateSchema，每轮请求级的用户身份、租户配置写 contextSchema。**第二，可写性**：hook 返回的状态补丁会合并进图状态（L47 的返回值协议），context 则被 Object.freeze 且在消费前过滤。**第三，形态集**：stateSchema 接受四形态（Zod object / StateSchema / AnnotationRoot / undefined），因为它要进图状态机、需要 ReducedValue 这类通道语义；contextSchema 只接受 Zod object / optional / default / undefined，因为它只是一份被切片校验的配置。两条 schema 在 L49 的装配管线里走完全不同的路径，接口层的形态约束正是那条管线的预检。
+
+### tools 与 streamTransformers：注册即声明，执行看联动
+
+tools 槽位让中间件自带工具。接口对 ToolCallRequest 的注释埋了关键伏笔（types.ts:155-174）：动态注册的工具在 request.tool 上是 undefined，中间件应在 wrapToolCall 里用展开语法补上实现——**声明与执行是两回事**：ReactAgent 构造器「有客户端工具或 middleware 定义了 wrapToolCall 才创建 ToolNode」（L46），AgentNode 的 added/replaced 校验（L45）则要求新增工具必须有 wrapToolCall 执行者。三处源码共同构成一条纪律：tools 槽位负责把工具送进模型视野，wrapToolCall 负责让它真的能跑。streamTransformers 槽位类似——注册的流转换器工厂在编译期与 createAgent 的 streamTransformers 合并（ReactAgent.ts:690-701），本课不展开，L43/L78 的流通道里再对账。
+
+### tracePolicy：观测面的整形器
+
+\`\`\`ts
+tracePolicy?: TracePolicy;
+
+/**
+ * Shapes what \`LangChainTracer\` sends to LangSmith for this middleware's
+ * lifecycle hook runs. Execution, streaming, and other callbacks still see
+ * the raw values.
+ */
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/types.ts:473-490（commit 7704471）*
+
+接口 JSDoc 自带示例：\`tracePolicy: { processInputs: omitPayload }\`——把中间件 hook 的输入从 LangSmith 上报里抹掉，本地执行与流式回调不受影响。它的消费点在 MiddlewareNode.nodeOptions：\`tracePolicy: this.middleware.tracePolicy\` 直接传给图节点（nodes/middleware.ts:187-192），与 L92/L93 的 Tracer 家族对接。设计动机很实际：中间件 hook 常处理敏感数据（pii 中间件本身就在碰敏感信息），观测面必须能独立于执行面收窄。注意它是「整形」不是「开关」——控制的是上报内容的形状，不是是否执行。
+
+### 类型包与反查族：泛型信息的打包运输
+
+MiddlewareTypeConfig 把五个泛型参数装进一个接口（types.ts:66-97）：Schema/ContextSchema/FullContext/Tools/StreamTransformers 五个槽，注释原话是 *This pattern simplifies type signatures and makes it easier to add new type parameters without changing multiple function signatures*——新加一个泛型只需动这一个包。围绕它有一整套反查族：ResolveMiddlewareTypeConfig（幽灵属性 infer）、InferMiddlewareType（按槽取值）、InferMiddlewareSchema/ContextSchema/FullContext/Tools/StreamTransformers 五个快捷方式，以及状态合并族 InferMiddlewareStates（对 middleware 数组做类型级递归 reduce 后 & AgentBuiltInState，types.ts:734-764）。类型层还有一个与 L49 呼应的细节：
+
+\`\`\`ts
+type FilterPrivateProps<T> = {
+  [K in keyof T as K extends \`_\${string}\` ? never : K]: T[K];
+};
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/types.ts:630-632（commit 7704471）*
+
+下划线私有字段在运行时被 exclude 于 input/output（annotation.ts）、在类型层被 FilterPrivateProps 剔除于 hook 可见状态——**同一契约在两个世界的同构实现**。这就是为什么 hook 里 typeof state._modelCalls 的类型是 never 而不是 number：类型系统先一步把私有字段挡在推导之外（如 L50 实操里需要 as Record<string, unknown> 绕行）。
+
+### 本课小结
+
+- 接口成员清单：MIDDLEWARE_BRAND 必需品牌（Symbol.for("AgentMiddleware")）、~middlewareTypes 幽灵类型属性、name 必需、stateSchema/contextSchema/tools/streamTransformers/tracePolicy 五个可选槽、六个可选 hook。
+- state 与 context 三差异：持久 vs 只读、可补丁 vs 冻结切片、四形态 vs 纯 Zod 形态集。
+- tools 只负责声明进模型视野，执行权在 wrapToolCall——三处源码（ToolNode 创建条件、added/replaced 校验、request.tool override）共同锚定这条纪律。
+- MiddlewareTypeConfig 五槽打包 + Infer 反查族支撑 createAgent 的泛型推导；FilterPrivateProps 与运行时下划线契约同构成对。
+- 下一课逐个拆解六个 hook 的类型签名与调用时机。
+`,
+    null,
+    [
+      {
+        text: 'MIDDLEWARE_BRAND 在接口里的存在形式是？',
+        options: [
+          '一个可选的字符串标签',
+          'readonly [MIDDLEWARE_BRAND]: true 的必需品牌属性，symbol 值为 Symbol.for("AgentMiddleware")',
+          '一个运行时基类，中间件必须继承',
+          '一个版本号字段',
+        ],
+        answer: 1,
+        explain:
+          'types.ts 里接口声明 readonly [MIDDLEWARE_BRAND]: true，注释说明用途是防止函数意外赋值给 middleware 数组——函数有 name 属性，若无品牌会与中间件结构兼容；常量本体是 Symbol.for("AgentMiddleware")。选项 A 形状不对且非必需；选项 C 错——中间件是纯对象/接口，无基类；选项 D 无此字段。',
+        concept: 'lc-mw-interface',
+      },
+      {
+        text: 'middleware 的 stateSchema 允许哪些形态？contextSchema 呢？',
+        options: [
+          '两者都只允许 Zod object',
+          'stateSchema 允许 Zod object / StateSchema（支持 ReducedValue、UntrackedValue）/ AnnotationRoot / undefined；contextSchema 只允许 Zod object、Zod optional、Zod default 或 undefined',
+          'stateSchema 只允许 Zod；contextSchema 允许任意类型',
+          '两者都允许任意 schema',
+        ],
+        answer: 1,
+        explain:
+          '接口文档逐条列出：stateSchema 是 A Zod object / A StateSchema (supports ReducedValue, UntrackedValue) / An AnnotationRoot / Undefined 四形态；contextSchema 则是 Zod object / optional / default / undefined——状态要进图状态机所以需要通道语义（reducer、untracked），context 只是只读切片所以纯 Zod 即可。选项 A、C、D 都漏了或多了形态。',
+        concept: 'lc-mw-interface',
+      },
+      {
+        text: '~middlewareTypes 幽灵属性的作用是？',
+        options: [
+          '运行时存储中间件配置',
+          '仅用于类型推断：ResolveMiddlewareTypeConfig 从它 infer 出 MiddlewareTypeConfig，让泛型信息在运行时对象缺席的情况下仍可反查',
+          '序列化时的版本标记',
+          '中间件之间的通信总线',
+        ],
+        answer: 1,
+        explain:
+          '接口注释写明 This is a phantom property used only for type inference；ResolveMiddlewareTypeConfig 用 T extends { ~middlewareTypes?: infer Types } 提取类型包——运行时对象上根本没有这个字段，它只活在类型系统里。选项 A 与 phantom 矛盾；选项 C、D 无对应实现。',
+        concept: 'lc-mw-interface',
+      },
+      {
+        text: 'tracePolicy 影响的是什么？',
+        options: [
+          '中间件 hook 的实际执行流程',
+          'LangChainTracer 上报到 LangSmith 的本中间件 hook 运行数据形状；执行、流式与其他回调仍看到原始值',
+          'checkpoint 的序列化格式',
+          '工具执行的超时策略',
+        ],
+        answer: 1,
+        explain:
+          "接口文档原文：Shapes what LangChainTracer sends to LangSmith for this middleware's lifecycle hook runs. Execution, streaming, and other callbacks still see the raw values——它是纯观测面整形（如 omitPayload 隐藏输入），不改变任何执行语义。选项 A 与文档后半句直接矛盾；选项 C、D 属于不相关机制。",
+        concept: 'lc-mw-interface',
+      },
+    ],
+    [
+      [
+        'MIDDLEWARE_BRAND',
+        'Symbol.for("AgentMiddleware") 品牌常量：中间件接口的必需标记，阻止普通函数因结构兼容而冒充中间件',
+      ],
+      [
+        'MiddlewareTypeConfig',
+        '五槽类型包（Schema/ContextSchema/FullContext/Tools/StreamTransformers），把中间件的全部泛型参数打包，简化函数签名',
+      ],
+      [
+        'InferMiddlewareState',
+        '从中间件类型反查 state 的辅助类型，自动过滤下划线前缀的私有属性（FilterPrivateProps）',
+      ],
+      [
+        'AnyAgentMiddleware',
+        '放宽泛型的中间件宽型，用于 createAgent 的配置数组；const 传参时仍可保留精确推断',
+      ],
+    ],
+    [
+      '把中间件当成需要继承的基类——它是纯接口/对象字面量，createMiddleware 只是把配置对象加上品牌标记原样返回，没有任何运行时包装',
+      '在 contextSchema 里用 StateSchema 或 AnnotationRoot——context 只接受 Zod object/optional/default，想用通道语义（reducer 等）必须放进 stateSchema',
+      '以为 middleware.tools 注册的工具自动可执行——只有存在 wrapToolCall 执行路径时动态工具才真正可用（L45 的 added 工具校验、L46 的 request.tool override 链）',
+    ],
+  ),
+  'theory',
+)

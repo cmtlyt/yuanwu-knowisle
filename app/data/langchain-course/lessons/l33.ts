@@ -1,0 +1,291 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L33 = withKind(
+  L(
+    'L33',
+    9,
+    'RunnableWithFallbacks / RunnableAssign / pick：错误保留策略与字典扩展器',
+    2,
+    ['L30'],
+    ['lc-fallbacks-assign'],
+    [
+      '实现带 fallback 的链并解释错误保留策略：全部失败时抛出的是主 runnable 的第一个错误（firstError）',
+      '解释 fallback 流式的边界：只有 stream 创建期的错误才触发兜底，流中途错误不再 fallback',
+      '用 assign/pick 组装字典扩展管线并说出 _transform 双通道（passthrough + mapper）的时序',
+    ],
+    `### 错误处理与字典变形：组合子的实用层
+
+L30-L32 讲的是「怎么把 Runnable 组起来」，本课的组合子解决两个工程问题：**组起来之后失败了怎么办**（RunnableWithFallbacks）与**字典输入怎么增删字段**（RunnableAssign/pick）。两者共同点：都建立在 pipe 之上——fallback 是 withFallbacks 产物，pick/assign 是 this.pipe(...) 的语法糖，组合子的组合子。
+
+### 兜底循环与 firstError 保留
+
+\`\`\`ts
+*runnables() {
+  yield this.runnable;
+  for (const fallback of this.fallbacks) {
+    yield fallback;
+  }
+}
+
+async invoke(input, options?) {
+  const config = ensureConfig(options);
+  const callbackManager_ = await getCallbackManagerForConfig(config);
+  const { runId, ...otherConfigFields } = config;
+  const runManager = await callbackManager_?.handleChainStart(...);
+  const childConfig = patchConfig(otherConfigFields, {
+    callbacks: runManager?.getChild(),
+  });
+  const res = await AsyncLocalStorageProviderSingleton.runWithConfig(
+    childConfig,
+    async () => {
+      let firstError;
+      for (const runnable of this.runnables()) {
+        config?.signal?.throwIfAborted();
+        try {
+          const output = await runnable.invoke(input, childConfig);
+          await runManager?.handleChainEnd(_coerceToDict(output, "output"));
+          return output;
+        } catch (e) {
+          if (firstError === undefined) {
+            firstError = e;
+          }
+        }
+      }
+      if (firstError === undefined) {
+        throw new Error("No error stored at end of fallback.");
+      }
+      await runManager?.handleChainError(firstError);
+      throw firstError;
+    }
+  );
+  return res;
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/base.ts:2983-3032（commit 7704471，有裁剪）*
+
+设计三要点。第一，runnables() 是个生成器，主 runnable 天然排在候选首位——fallback 顺序即尝试顺序。第二，**错误保留策略是 firstError**：只记录第一个错误（来自主 runnable），全部失败时抛它。为什么不用最后一个？主 runnable 的错误最接近「真实故障原因」（fallback 往往是降级实现，其错误多为次生问题），排障时第一条错误链最完整。第三，整个候选循环包在 runWithConfig 里——每个候选经同一个 childConfig（runManager?.getChild() 产生的子回调），追踪树上它们是兄弟 run，共享父 run。
+
+### 流式兜底的边界
+
+\`\`\`ts
+let firstError;
+let stream;
+for (const runnable of this.runnables()) {
+  config?.signal?.throwIfAborted();
+  const childConfig = patchConfig(otherConfigFields, {
+    callbacks: runManager?.getChild(),
+  });
+  try {
+    const originalStream = await runnable.stream(input, childConfig);
+    stream = consumeAsyncIterableInContext(childConfig, originalStream);
+    break;
+  } catch (e) {
+    if (firstError === undefined) {
+      firstError = e;
+    }
+  }
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/base.ts:3051-3067（commit 7704471）*
+
+try 块只包住 \`await runnable.stream(...)\`——**候选切换发生在流创建期**。类注释把规则写得很直白（base.ts:2905-2907）：流开始后的错误不再 fallback。原理不难推：流已经向消费者吐了块，中途换候选意味着块序列的语义断裂（已吐的块来自主实现、后续来自 fallback），框架选择不做这种「缝合」，让错误如实上抛。这也是「首块缓冲」（L29）的另一个受益者：创建期错误因首块预取而被提前暴露，兜底切换能发生在**吐出任何块之前**。拿到流后用 consumeAsyncIterableInContext 包一层——与 L32 lambda 相同的 ALS 保活手法。
+
+### RunnableAssign：字典扩展器
+
+\`\`\`ts
+async invoke(input, options?) {
+  const mapperResult = await this.mapper.invoke(input, options);
+  return {
+    ...input,
+    ...mapperResult,
+  } as RunOutput;
+}
+
+async *_transform(generator, runManager?, options?) {
+  const mapperKeys = this.mapper.getStepsKeys();
+  const [forPassthrough, forMapper] = atee(generator);
+  const mapperOutput = this.mapper.transform(
+    forMapper,
+    patchConfig(options, { callbacks: runManager?.getChild() })
+  );
+  const firstMapperChunkPromise = mapperOutput.next();
+  for await (const chunk of forPassthrough) {
+    if (typeof chunk !== "object" || Array.isArray(chunk)) {
+      throw new Error(
+        \`RunnableAssign can only be used with objects as input, got \${typeof chunk}\`
+      );
+    }
+    const filtered = Object.fromEntries(
+      Object.entries(chunk).filter(([key]) => !mapperKeys.includes(key))
+    );
+    if (Object.keys(filtered).length > 0) {
+      yield filtered as unknown as RunOutput;
+    }
+  }
+  yield (await firstMapperChunkPromise).value;
+  for await (const chunk of mapperOutput) {
+    yield chunk as unknown as RunOutput;
+  }
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/base.ts:3276-3323（commit 7704471，有裁剪）*
+
+invoke 是一行 spread：原输入字段全保留，mapper（内部就是一个 RunnableMap，构造时 RunnableMap 实例直接接收，base.ts:3266-3274）算出的新键覆盖。注意 mapper 拿到的输入也是**完整 input**——每个分支自己决定读哪些键，assign 不做裁剪。流式版本是 L31 atee 的再现：passthrough 通道逐块过滤掉 mapper keys 后透传（原键先流出），mapper 通道并行计算新键（\`mapperOutput.next()\` 预启动，先算起来），透传完毕后 yield mapper 的块。**passthrough 过滤 mapper keys 的原因**：新键稍后由 mapper 的块给出，先透传同名旧键会造成同键两块。非对象输入有显式守卫：直接抛 RunnableAssign can only be used with objects as input。
+
+pick 与 assign 的注册方式值得合看：
+
+\`\`\`ts
+pick(keys: string | string[]): Runnable {
+  return this.pipe(new RunnablePick(keys) as Runnable);
+}
+
+assign(mapping): Runnable {
+  return this.pipe(
+    new RunnableAssign(
+      new RunnableMap<Record<string, unknown>>({ steps: mapping })
+    ) as Runnable
+  );
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/base.ts:629-647（commit 7704471）*
+
+两者都是 \`this.pipe(...)\`——不修改原 Runnable、返回新链，组合子的组合子。RunnablePick._pick（base.ts:3410-3421）的细节：数组键 \`keys.map((key) => [key, input[key]]).filter((v) => v[1] !== undefined)\`，全空返回 undefined——裁剪语义是「值不存在的键直接消失」而非「保留 undefined 占位」。在流式管线里 pick 常接在 Map 后提取单键、assign 常接在检索后注入 context 字段，两者一裁一扩构成字典手术刀。
+
+### 可序列化的兜底与裁剪器的另一半
+
+两个类的元信息各有一个反直觉点。RunnableWithFallbacks 的类头声明了 \`lc_serializable = true\`（base.ts:2958-2976）——与 L26 的 FewShotPromptTemplate（不可序列化）形成对照：**fallback 链是纯结构（runnable + fallbacks 数组），没有运行时状态，可以整链序列化落盘**；这也让 LCEL 链的序列化能穿过 fallback 边界而不断裂。RunnablePick 侧则有两个实现细节：
+
+\`\`\`ts
+async _pick(input: RunInput): Promise<RunOutput> {
+  if (typeof this.keys === "string") {
+    return input[this.keys];
+  } else {
+    const picked = this.keys
+      .map((key) => [key, input[key]])
+      .filter((v) => v[1] !== undefined);
+    return picked.length === 0
+      ? (undefined as RunOutput)
+      : Object.fromEntries(picked);
+  }
+}
+
+async *_transform(generator) {
+  for await (const chunk of generator) {
+    const picked = await this._pick(chunk);
+    if (picked !== undefined) {
+      yield picked;
+    }
+  }
+}
+\`\`\`
+
+*— libs/langchain-core/src/runnables/base.ts:3410-3435 裁剪（commit 7704471）*
+
+单键形态是裸下标访问——键不存在时返回 undefined，语义是「取值」而非「取字典」；多键形态过滤 undefined 后若全空也返回 undefined。**invoke 与 _transform 对 undefined 的处理不同**：invoke 经 \`_callWithConfig(this._pick.bind(this))\` 原样返回 undefined（base.ts:3423-3427），transform 则把 undefined 块**静默丢弃**（:3429-3435 的 if 过滤）——流式管线里「本轮没有可裁剪的键」不产出块，下游不会收到空值，这与 L29「空串也是合法 chunk」的约定互为对照：pick 层的 undefined 被上游消化，不会流到消费端。把两个类与 assign 合起来记：pick 是「单键取值 / 多键裁字典」的二态工具，assign 是「原值透传 / 新键并行」的扩展器，一个收缩一个膨胀，都建立在 pipe 上、都以 undefined 的处理为边界语义——fallback 的序列化能力与 pick 的 undefined 语义，正是本课主题之外的另一半细节。类字段面也可顺带记全：构造器只存 \`runnable\` 与 \`fallbacks\` 两个字段（base.ts:2977-2982），\`lc_namespace\` 固定为 \`["langchain_core", "runnables"]\`——没有第三种配置项，兜底链的全部语义都活在 invoke/stream 的循环里而不是字段里。pick 的单键形态还隐含一个消费端义务：返回 undefined 时 invoke 的结果就是 undefined，不抛错也不告警——链上拿不到值与键写错是同一个表现，排查时要回到 keys 检查；多键形态构造的是新字典（map+filter+fromEntries），原 input 不被修改，与 pipe 的不可变组合原则一致。最后把三个类的失败形态排成一张速查表：fallback 全败抛 firstError（invoke 循环）、流创建期失败换候选（_streamIterator 循环）、assign 非对象输入显式抛错（_transform 守卫）、pick 键缺失静默 undefined（_pick 返回值）——四个入口、四种失败表达，共同点是**都不吞错误上下文**：要么把原始错误抛上去，要么把空值如实交给调用方判断。
+
+### 本课小结
+
+- fallback 的错误哲学：顺序尝试、首个成功即返回、全部失败抛 **firstError**（主 runnable 的原始错误）；候选共享父 run 的子回调，追踪树上是兄弟分支。
+- 流式 fallback 只覆盖 stream 创建期（首块缓冲让切换尽量发生在吐块前），流中途错误不兜底、如实上抛。
+- RunnableAssign = \`{...input, ...mapperResult}\` 的浅合并扩展器；流式下 atee 双通道——passthrough（过滤 mapper keys）先流，mapper 新键随后；非对象输入显式抛错。
+- pick/assign 都建立在 pipe 上：pick→RunnablePick（数组键滤 undefined、全空返回 undefined），assign→RunnableAssign(RunnableMap)；一裁一扩是字典管线的两把手术刀。
+- 下一课看「bind 家族」：withRetry/withConfig/withFallbacks/withListeners 四个修饰器为何全是包装类，bind 的实现本质是什么。
+`,
+    null,
+    [
+      {
+        text: 'RunnableWithFallbacks.invoke 中主 runnable 与两个 fallback 都失败时，最终抛出的是？',
+        options: [
+          '最后一个 fallback 的错误',
+          '主 runnable 抛出的第一个错误（firstError），并先经 runManager.handleChainError 上报',
+          '聚合了三个错误的 AggregateError',
+          '固定文案的 No error stored at end of fallback. 错误',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:3012-3029：循环里 if (firstError === undefined) { firstError = e; } 只记录**首个**错误；循环走完若 firstError 存在则 await runManager?.handleChainError(firstError) 后 throw firstError。固定文案那个错误只在「连错误都没存到」的病态分支出现（:3025-3027）。选项 A 错：保留的是 firstError 不是 lastError——主 runnable 的原始错误对排障最有价值；选项 C 无聚合逻辑。',
+        concept: 'lc-fallbacks-assign',
+      },
+      {
+        text: '主 runnable 的 stream() 成功创建但消费到第 3 块时抛错，fallback 行为是？',
+        options: [
+          '自动切到 fallback 重新流式',
+          '不 fallback：只有 stream 创建期（await runnable.stream(...)）的错误才会换下一个候选，流中途错误直接向上抛',
+          '重试主 runnable 三次再 fallback',
+          '丢弃已产出的块并抛聚合错误',
+        ],
+        answer: 1,
+        explain:
+          '类注释明说（base.ts:2905-2907）：When streaming, fallbacks will only be called on failures during the initial stream creation. Errors that occur after a stream starts will not fallback。代码上 _streamIterator 的候选循环只包住 await runnable.stream(input, childConfig)（:3053-3067），拿到流后 for await 阶段的错误走 handleChainError + rethrow（:3087-3090）。选项 A 是最常见的错误假设——已经向消费者吐过的块无法撤回，中途切换会产生语义混乱，框架干脆不做。选项 C/D 无出处。',
+        concept: 'lc-fallbacks-assign',
+      },
+      {
+        text: 'RunnableAssign.invoke(input) 的返回值结构是？',
+        options: [
+          '仅 mapper 的输出',
+          '{ ...input, ...mapperResult }——原输入字段全部保留，mapper 新键覆盖同名键',
+          'mapperResult 与 input 的深度合并',
+          '数组 [input, mapperResult]',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:3276-3286：const mapperResult = await this.mapper.invoke(input, options); return { ...input, ...mapperResult } as RunOutput。浅合并、mapper 同名键覆盖原值。选项 A 错：assign 的价值就在「原值透传 + 新键并行计算」；选项 C 错：spread 是浅层，无递归合并；选项 D 无出处。',
+        concept: 'lc-fallbacks-assign',
+      },
+      {
+        text: 'RunnableAssign._transform 中 atee 拉出的两个通道各是什么？',
+        options: [
+          '一个给 mapper，一个给 logger',
+          'forPassthrough 透传输入（过滤掉 mapper 的 keys），forMapper 喂给 mapper.transform——先 yield 完 passthrough 再 yield mapper 输出',
+          '两个都给 mapper 并行',
+          'passthrough 只透传 mapper 的新键',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:3293-3323：const [forPassthrough, forMapper] = atee(generator)；passthrough 通道逐块 Object.fromEntries(Object.entries(chunk).filter(([key]) => !mapperKeys.includes(key))) 后 yield，mapper 通道经 this.mapper.transform(forMapper, ...) 计算新键；顺序是先透传后 mapper（mapperOutput.next() 预启动但最后 yield）。选项 D 方向说反：过滤掉的是 mapper keys，透传的是**其余**原键；选项 B/C 的分工描述与源码不符。',
+        concept: 'lc-fallbacks-assign',
+      },
+      {
+        text: 'Runnable.pick(["a", "b"]) 的实现是？',
+        options: [
+          '独立重写了 invoke，不经过 pipe',
+          'this.pipe(new RunnablePick(keys))——pick 是 pipe 的语法糖；RunnablePick 对数组键过滤 undefined 值，全空返回 undefined',
+          '直接修改原 Runnable 的输出再返回自身',
+          '返回 RunnableMap',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:629-632：return this.pipe(new RunnablePick(keys) as Runnable)。RunnablePick._pick（:3410-3421）对数组键做 .map + .filter(v => v[1] !== undefined)，picked 为空返回 undefined——「键存在但值是 undefined」与「键不存在」结果一致。选项 A 错：pick/assign 都是组合子的组合子，建立在 pipe 上；选项 C 违反不可变组合原则；选项 D 是 assign 的产物不是 pick 的。',
+        concept: 'lc-fallbacks-assign',
+      },
+    ],
+    [
+      [
+        'RunnableWithFallbacks',
+        '兜底组合子：runnables() 生成器把主 runnable 排在 fallbacks 前，顺序尝试首个成功即返回（base.ts:2958-3033）',
+      ],
+      [
+        'firstError',
+        'fallbacks 的错误保留策略：循环记录首个错误，全部失败时抛它而非最后一个——主 runnable 的原始错误信息得以保全',
+      ],
+      [
+        'RunnableAssign',
+        '字典扩展器：invoke = {...input, ...mapperResult}；流式下 passthrough 与 mapper 双通道经 atee 并发（base.ts:3246-3351）',
+      ],
+      [
+        'RunnablePick',
+        '字典裁剪器：string 键直取 input[key]，数组键过滤 undefined、全空返回 undefined（base.ts:3381-3439）',
+      ],
+    ],
+    [
+      '以为流式 fallback 全程有效——只有 stream 创建失败才兜底，流中途错误不切候选；想要全程兜底得自己在消费层重建流',
+      '以为 fallback 会吞掉错误细节——最终抛的是 firstError（主 runnable 的原始错误），别在 fallback 的 catch 里抹掉错误上下文',
+      '把 assign 当深度合并——spread 浅合并，mapper 输出与原输入的同名嵌套对象是整体替换不是递归合并',
+    ],
+  ),
+  'framework',
+)

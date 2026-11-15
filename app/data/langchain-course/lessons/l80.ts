@@ -1,0 +1,384 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L80 = withKind(
+  L(
+    'L80',
+    22,
+    'retry/timeout/resume 容错矩阵：指数退避、心跳、interrupt 按 XXH3 精确路由',
+    3,
+    ['L77'],
+    ['lc-retry-timeout-resume'],
+    [
+      '实现一个带 RetryPolicy 的不稳定工具节点，跑通指数退避全流程并验证 writes 在重试前被清空',
+      '搭一个 idleTimeout 实验节点：用 refreshOn "auto" 与 "heartbeat" 两种模式对照验证心跳续期的差异',
+      '调通 interrupt 的精确 resume：用 { [interruptId]: answer } 形式的 Command.resume 验证答案按 XXH3 任务 id 路由到对应任务',
+      '产出一份失败恢复实验记录：节点带 error handler 的图在失败后 resume，验证 ERROR_SOURCE_NODE 驱动的错误处理器重排',
+    ],
+    `### 定锚：三种失败，三套协议
+
+容错在 LangGraph 里不是一个开关，而是三套互相咬合的协议：**retry** 处理「节点级瞬时失败」（重试从头跑，靠清空写入保证一致性）；**timeout** 处理「节点级卡死」（run/idle 双时钟，靠 scope.close() 隔离迟到写入）；**resume** 处理「图级中断」（interrupt 答案与错误处理器，靠 pending writes 里的哨兵精确续跑）。本课把三套协议逐个拆开，再用四个实验把它们跑通。核心结论：**三者共享同一套存储基础——pending writes 里的哨兵写（ERROR/ERROR_SOURCE_NODE/INTERRUPT/RESUME），理解哨兵就理解了全部容错**。
+
+### retry：指数退避与不重试清单
+
+\`\`\`ts
+export const DEFAULT_INITIAL_INTERVAL = 500;
+export const DEFAULT_BACKOFF_FACTOR = 2;
+export const DEFAULT_MAX_INTERVAL = 128000;
+export const DEFAULT_MAX_RETRIES = 3;
+export const DEFAULT_JITTER = true;
+
+const DEFAULT_STATUS_NO_RETRY = [
+  400, 401, 402, 403, 404, 405, 406, 407, 409,
+];
+\`\`\`
+
+*— pregel/retry.ts:13-29（commit fa426b2）*
+
+\`\`\`ts
+const interval = Math.min(
+  resolvedRetryPolicy.maxInterval ?? DEFAULT_MAX_INTERVAL,
+  initialInterval * (resolvedRetryPolicy.backoffFactor ?? DEFAULT_BACKOFF_FACTOR) ** (attempts - 1)
+);
+const sleepMs =
+  (resolvedRetryPolicy.jitter ?? DEFAULT_JITTER)
+    ? interval + Math.random() * 1000
+    : interval;
+await new Promise((resolve) => setTimeout(resolve, sleepMs));
+\`\`\`
+
+*— pregel/retry.ts:169-183（commit fa426b2）*
+
+公式读三遍：500ms 起步、每轮 ×2、封顶 128s、最多 3 次（maxAttempts 含首次之外的额外尝试判断在 attempts >= maxAttempts）、抖动加 0~1s。**retryOn 是白名单式的放行检查**——返回 false 就不重试；默认 handler 除了状态码清单还排除 AbortError/GraphValueError/ECONNABORTED/insufficient_quota（retry.ts:32-62）。优先级：**节点级 \`pregelTask.retry_policy\` 覆盖图级 retryPolicy**（retry.ts:86 的 \`??\` 链）。三段复位代码（清 writes、注 RESUMING、重置 interruptCounter）在 L74/L77 已拆过，这里合成一句话：**重试 = 一次节点内的小 resume**。
+
+### timeout：run/idle 双时钟与墙钟复检
+
+\`\`\`ts
+class TimedAttemptScope {
+  active = true;
+  lastProgress = Date.now();
+  touch(): void { this.lastProgress = Date.now(); }
+  autoTouch(): void {
+    if (this.refreshOn === "auto") this.lastProgress = Date.now();
+  }
+  close(): void { this.active = false; }
+}
+
+class IdleProgressCallbackHandler extends BaseCallbackHandler {
+  #touch = () => { this.#scope.autoTouch(); };
+  handleLLMStart = this.#touch;
+  handleLLMNewToken = this.#touch;
+  handleToolEnd = this.#touch;
+  handleCustomEvent = this.#touch;
+  // ... handleChain*/handleRetriever*/handleText 等十余个事件全部挂同一个 touch
+}
+\`\`\`
+
+*— pregel/timeout.ts:27-114（commit fa426b2）*
+
+idle timeout 的「进展」定义由 LangChain 回调事件承载：模型出 token、工具起止、链起止、检索器事件、自定义事件，任何一件都续期。\`refreshOn: "heartbeat"\` 模式下 autoTouch 变空操作，只有 \`runtime.heartbeat()\`（wrapConfig 里注入的 wrapped.heartbeat，timeout.ts:158-160）算进展——给「长等待但事件嘈杂」的场景用。看门狗赛跑与收尾：
+
+\`\`\`ts
+const watchdog = new Promise<AttemptOutcome<T>>((resolve) => {
+  if (policy.runTimeout !== undefined) {
+    runTimer = setTimeout(() => resolve({ type: "timeout", kind: "run" }), policy.runTimeout);
+  }
+  if (policy.idleTimeout !== undefined) {
+    const idleMs = policy.idleTimeout;
+    const checkIdle = () => {
+      const remaining = scope.lastProgress + idleMs - Date.now();
+      if (remaining <= 0) resolve({ type: "timeout", kind: "idle" });
+      else idleTimer = setTimeout(checkIdle, remaining);
+    };
+    idleTimer = setTimeout(checkIdle, idleMs);
+  }
+});
+let outcome = await Promise.race([nodeOutcome, watchdog]);
+...
+if (outcome.type !== "timeout") {
+  const now = Date.now();
+  if (policy.runTimeout !== undefined && now - start >= policy.runTimeout) {
+    outcome = { type: "timeout", kind: "run" };
+  } else if (policy.idleTimeout !== undefined &&
+             now - scope.lastProgress >= policy.idleTimeout) {
+    outcome = { type: "timeout", kind: "idle" };
+  }
+}
+\`\`\`
+
+*— pregel/timeout.ts:252-298（commit fa426b2）*
+
+idle 定时器**自重排**（checkIdle 里按剩余时间再设 setTimeout），不是固定闹钟。墙钟复检的注释值得整段读：看门狗是 macrotask，同步 CPU 节点阻塞事件循环时定时器永远轮不上——复检保证「硬墙钟」承诺对同步代码也成立。超时收尾四连：\`scope.close()\`（迟到写入丢弃）→ \`task.writes.splice(0)\`（丢弃缓冲写）→ \`timeoutController.abort()\`（中止传播）→ 抛 \`NodeTimeoutError\`（timeout.ts:309-326）——它交给节点 retryPolicy 决定是否重试。
+
+### resume：XXH3 精确路由与错误处理器重排
+
+\`\`\`ts
+if (cmd.resume != null) {
+  if (
+    typeof cmd.resume === "object" &&
+    Object.keys(cmd.resume).length &&
+    Object.keys(cmd.resume).every(isXXH3)
+  ) {
+    for (const [tid, resume] of Object.entries(cmd.resume)) {
+      const existing =
+        pendingWrites
+          .filter((w) => w[0] === tid && w[1] === RESUME)
+          .map((w) => w[2])
+          .slice(0, 1) ?? [];
+      existing.push(resume);
+      yield [tid, RESUME, existing];
+    }
+  } else {
+    yield [NULL_TASK_ID, RESUME, cmd.resume];
+  }
+}
+\`\`\`
+
+*— pregel/io.ts:97-115（commit fa426b2）*
+
+\`isXXH3\` 是「32 位十六进制串」的正则检查（hash.ts:8-11）——interrupt 调用的 id 就是任务 id 的 XXH3 哈希。**键匹配的对象形式走精确路由**：答案只写给对应任务，并自动与 checkpoint 上已有的 RESUME 写合并（existing + 新值）；**其他形式走 NULL_TASK_ID 广播**，所有挂着 interrupt 的任务都收到。这就是多个 interrupt 并存时的匹配机制：\`Command.resume = { [interruptId1]: "yes", [interruptId2]: "no" }\`。错误处理器重排则是 resume 的另一半：
+
+\`\`\`ts
+protected _resumeErrorHandlersIfApplicable() {
+  const failed = new Map<string, Error>();
+  for (const [tid, chan] of this.checkpointPendingWrites) {
+    if (chan !== ERROR_SOURCE_NODE) continue;
+    const errorWrite = this.checkpointPendingWrites.find(
+      ([t, c]) => t === tid && c === ERROR
+    );
+    if (errorWrite === undefined) continue;
+    ...
+    failed.set(tid, error);
+  }
+  for (const [tid, error] of failed) {
+    const task = this.tasks[tid];
+    if (task === undefined) continue;
+    ...
+    this.scheduleErrorHandler(task, error);
+  }
+}
+\`\`\`
+
+*— pregel/loop.ts:1604-1630（commit fa426b2）*
+
+上一进程失败的任务在 pending writes 里留下 ERROR_SOURCE_NODE + ERROR 一对哨兵；resume 时扫描它们，把原任务标记为已处理（补写 ERROR 让 runner 的完成判据生效），再调度一个新鲜的错误处理器任务——**失败处理跨进程可续**。
+
+### 动手：四个实验
+
+\`\`\`ts
+import { StateGraph, MessagesAnnotation, MemorySaver, Command, interrupt }
+  from "@langchain/langgraph";
+
+// 实验 1：retry 指数退避 + writes 清空验证
+let attempts = 0;
+const flaky = async () => {
+  attempts += 1;
+  if (attempts < 3) throw new Error("transient");
+  return { messages: [{ role: "assistant", content: \`ok after \${attempts}\` }] };
+};
+const g1 = new StateGraph(MessagesAnnotation)
+  .addNode("flaky", flaky, { retryPolicy: { maxAttempts: 3 } })
+  .addEdge("__start__", "flaky").addEdge("flaky", "__end__")
+  .compile();
+// 第三次尝试成功；若在 flaky 内部用 getConfig() 打印 config.configurable，
+// 重试轮能看到 CONFIG_KEY_RESUMING === true（retry.ts:199 注入）
+
+// 实验 2：idleTimeout 心跳对照
+const heartbeatNode = async () => {
+  // refreshOn "auto"：任何回调事件续期；"heartbeat"：只有 runtime.heartbeat() 续期
+  await longLlmCall(); // 出 token → auto 模式续期
+};
+// 节点配置：{ retryPolicy: undefined, timeout: { idleTimeout: 2000, refreshOn: "auto" } }
+
+// 实验 3：interrupt 精确 resume
+const humanNode = async (state) => {
+  const answer = interrupt("need approval");
+  return { messages: [{ role: "assistant", content: answer }] };
+};
+const g3 = new StateGraph(MessagesAnnotation)
+  .addNode("human", humanNode).addEdge("__start__", "human")
+  .addEdge("human", "__end__")
+  .compile({ checkpointer: new MemorySaver() });
+await g3.invoke({ messages: [] }, { configurable: { thread_id: "h1" } }); // 抛 GraphInterrupt
+// 裸值广播：
+await g3.invoke(new Command({ resume: "yes" }),
+  { configurable: { thread_id: "h1" } });
+// 精确路由（对象键是 interrupt 的 id，32 位十六进制）：
+// await g3.invoke(new Command({ resume: { "<interruptId>": "approved" } }), ...)
+
+// 实验 4：error handler 跨进程重排
+const broken = async () => { throw new Error("db down"); };
+const handler = async (state) => {
+  // 读 error：通过 __error_handler__ 通道注入；这里简化为返回降级消息
+  return { messages: [{ role: "assistant", content: "fallback" }] };
+};
+const g4 = new StateGraph(MessagesAnnotation)
+  .addNode("broken", broken, { errorHandler: handler })
+  .addEdge("__start__", "broken").addEdge("broken", "__end__")
+  .compile({ checkpointer: new MemorySaver() });
+await g4.invoke({ messages: [] }, { configurable: { thread_id: "e1" } });
+// getStateHistory 可见 ERROR_SOURCE_NODE 写；若 handler 自己失败，
+// 下一次 resume 时 _resumeErrorHandlersIfApplicable 会重排它
+\`\`\`
+
+验收要点：实验 3 里裸值与对象路由的差异可在 resume 后用 \`getState\` 检查哪个任务收到了 RESUME 写；实验 4 验证「失败不中止运行」（L77 的 handledExceptions 语义），且 handler 任务出现在 tasks 流里。四个实验共享同一个观察口径：**一切容错行为最终都落在 pending writes 的哨兵上**。
+
+### retryOn 逐行读法：白名单的边界
+
+retryOn 是「返回 false 就放弃」的放行检查，默认实现值得逐分支读一遍：
+
+\`\`\`ts
+const DEFAULT_RETRY_ON_HANDLER = (error: any) => {
+  if (
+    error.message.startsWith("Cancel") ||
+    error.message.startsWith("AbortError") ||
+    error.name === "AbortError"
+  ) return false;
+  // Thrown when interrupt is called without a checkpointer
+  if (error.name === "GraphValueError") return false;
+  if ((error as any)?.code === "ECONNABORTED") return false;
+  const status = (error as any)?.response?.status ?? (error as any)?.status;
+  if (status && DEFAULT_STATUS_NO_RETRY.includes(+status)) return false;
+  if ((error as any)?.error?.code === "insufficient_quota") return false;
+  return true;
+};
+\`\`\`
+
+*— pregel/retry.ts:32-62（commit fa426b2）*
+
+两个分支的注释信息量大：GraphValueError 的排除理由是「interrupt 被调用但没配 checkpointer 时抛的就是它」——**中断不该被重试消化，重试循环会把控制流异常当瞬时故障反复吞掉**；insufficient_quota 是唯一被点名不重试的业务错误码（配额用尽重试只会烧更多配额）。重试主循环本身的边界也别忽视：循环顶部先查 \`signal.aborted\`（用户已中止就不白睡，retry.ts:162-167）；\`attempts >= maxAttempts\` 的判断在**加一之后**（attempts += 1 再比较，retry.ts:183-186），所以 maxAttempts=3 的语义是「最多再试 3 次而非总共 3 次执行」；睡眠与注入复位代码之间还有 \`logWarning\` 默认开启的 console.log（retry.ts:206-214）——生产上看到 \`Retrying task "xxx" after ...\` 日志即来自这里，想静默就在 RetryPolicy 里传 \`logWarning: false\`。
+
+### wrapConfig：超时如何包裹节点的每个出口
+
+idle 时钟不只是「挂个回调 handler」那么简单——\`wrapConfig\` 把节点运行期能触碰的**每个出口**都包了一层：
+
+\`\`\`ts
+const send = configurable[CONFIG_KEY_SEND];
+if (typeof send === "function") {
+  patch[CONFIG_KEY_SEND] = (writes: PendingWrite[]) => {
+    if (!scope.active) return undefined;
+    if (writes && writes.length) scope.autoTouch();
+    return send(writes);
+  };
+}
+const callFn = configurable[CONFIG_KEY_CALL];
+if (typeof callFn === "function") {
+  patch[CONFIG_KEY_CALL] = (...args: unknown[]) => {
+    if (!scope.active) {
+      throw new Error(
+        \`Node "\${taskName}" attempt was cancelled after its timeout fired\`);
+    }
+    scope.autoTouch();
+    return (callFn as (...a: unknown[]) => unknown)(...args);
+  };
+}
+...
+wrapped.heartbeat = () => {
+  if (policy.idleTimeout !== undefined) scope.touch();
+};
+if (typeof wrapped.writer === "function") {
+  const writer = wrapped.writer;
+  wrapped.writer = ((chunk: unknown) => {
+    if (!scope.active) return undefined;
+    scope.autoTouch();
+    return (writer as (c: unknown) => unknown)(chunk);
+  }) as typeof wrapped.writer;
+}
+\`\`\`
+
+*— pregel/timeout.ts:116-170（commit fa426b2）*
+
+四个包裹各有含义。**send 与 writer 是「写出口」**：节点写通道、写流之前先 autoTouch——只要节点还在产出，idle 时钟就被续期；而 \`scope.active\` 已翻 false 时写入直接静默丢弃（对应前文超时四连里的 close，迟到的缓冲写不会泄漏进 checkpoint）。**call 是「子任务出口」**：超时后 task() 调用直接抛「attempt was cancelled after its timeout fired」而不是静默吞掉——动态任务不能在超时后继续派生。**heartbeat 是显式续期**：注释写明「heartbeat always resets the idle clock, even under refreshOn: "heartbeat"」且无 idleTimeout 配置时是 no-op（timeout.ts:156-160）。还有一处装配细节：\`IdleProgressCallbackHandler\` **只在 \`refreshOn\` 缺省为 "auto" 且配了 idleTimeout 时才追加**进 callbacks（timeout.ts:172-186）——"heartbeat" 模式下回调 handler 根本不挂，事件再嘈杂也推动不了 idle 时钟，这是两种模式对照实验的源码依据。wrapConfig 与 L77 的信号链是互补关系：信号链管「整体止血」，wrapConfig 管「进展观测与出口隔离」。
+
+### 实验收尾：三个对照与两条铁律
+
+四个实验跑通后，用三个对照把行为钉死。**对照一（retry 粒度）**：把实验 1 的 flaky 改成先调用一次 \`interrupt()\` 再抛瞬时错，你会发现重试轮的 interrupt 复用了既有答案而不是重新挂起——这就是 interruptCounter 复位与 RESUMING 注入协同的可观测面；若删掉节点级 retryPolicy 只留图级，行为不变（\`pregelTask.retry_policy ?? retryPolicy\` 的 ?? 链在两者都存在时才优先节点级，retry.ts:105-113）。**对照二（timeout 出口）**：在实验 2 的节点里于 idleTimeout 触发后调用 \`runtime.heartbeat()\`，会得到 no-op——scope.close() 之后 touch 仍被允许执行但时钟已无意义，真正保证隔离的是 send/writer/call 三出口的 active 检查。**对照三（resume 路由）**：给 g3 挂两个 interrupt 节点后用裸值 resume，两个任务都收到同一答案；换成对象形式后 \`getState\` 里只有对应任务收到 RESUME 写。两条铁律收束本课：**其一，任何容错配置（retry/timeout/handler）都改变「pending writes 的内容」而不改变「断点/中断的语义」**——控制流哨兵在所有容错路径下都原样穿透；**其二，验证容错必须带 checkpointer**——MemorySaver 不只是为了跨进程，实验 3/4 的哨兵写入（RESUME/ERROR_SOURCE_NODE）只有落进 pending writes 才能被 resume 路径读到，无 checkpointer 的图连 interrupt 都会以 GraphValueError 收场（上一节 retryOn 的排除分支正是为它准备的）。
+
+### 本课小结
+
+- retry：500ms×2^n 封顶 128s 共 3 次 + 抖动；4xx/409 与 Abort/GraphValueError/ECONNABORTED/insufficient_quota 不重试；节点级策略覆盖图级。
+- 重试三复位：清 writes、注 RESUMING、interruptCounter=-1——重试本质是节点内的小 resume。
+- timeout 双时钟：run 墙钟 + idle 进展时钟（回调事件或心跳续期）；同步节点靠 race 后墙钟复检兜底；超时四连 close/清写/abort/NodeTimeoutError。
+- resume 两支柱：interrupt 答案按 XXH3 任务 id 精确路由（对象键）或广播（裸值）；ERROR_SOURCE_NODE 驱动错误处理器跨进程重排。
+- 下一课升到预置层：createReactAgent 与 ToolNode 如何把这套运行时包成两节点图。
+`,
+    null,
+    [
+      {
+        text: 'RetryPolicy 的默认参数组合是？',
+        options: [
+          'initialInterval 100ms、backoffFactor 2、maxInterval 60s、maxAttempts 5、jitter 关',
+          'initialInterval 500ms、backoffFactor 2、maxInterval 128s、maxAttempts 3、jitter 开（+0~1s 随机）',
+          '固定 1s 间隔、无限重试',
+          'initialInterval 1s、backoffFactor 3、maxAttempts 10、jitter 开',
+        ],
+        answer: 1,
+        explain:
+          'retry.ts 顶部导出的常量：DEFAULT_INITIAL_INTERVAL = 500、DEFAULT_BACKOFF_FACTOR = 2、DEFAULT_MAX_INTERVAL = 128000、DEFAULT_MAX_RETRIES = 3、DEFAULT_JITTER = true；睡眠时长 = min(maxInterval, interval × 2^(attempts-1)) + Math.random()×1000。A/C/D 的数值均与源码不符。',
+        concept: 'lc-retry-timeout-resume',
+      },
+      {
+        text: '下列哪类错误不会触发默认重试？',
+        options: [
+          '500 Internal Server Error',
+          '409 Conflict 与 ECONNABORTED——前者在 DEFAULT_STATUS_NO_RETRY 清单里，后者在 DEFAULT_RETRY_ON_HANDLER 的排除名单里',
+          '429 Too Many Requests',
+          '任意 TypeError',
+        ],
+        answer: 1,
+        explain:
+          '默认不重试清单分两部分：状态码清单 [400,401,402,403,404,405,406,407,409]（retry.ts:19-29）与 error 类型判断——消息以 Cancel/AbortError 开头、name 为 AbortError、GraphValueError、code ECONNABORTED、error.code insufficient_quota 都直接返回 false（retry.ts:32-62）。429 不在清单（限流恰恰该退避重试）、TypeError 无特殊状态码走 retryOn 默认放行。',
+        concept: 'lc-retry-timeout-resume',
+      },
+      {
+        text: '每次重试前 _runWithRetry 对任务状态做了哪些复位？',
+        options: [
+          '什么都不做，任务状态天然可复用',
+          '清空 pregelTask.writes、注入 CONFIG_KEY_RESUMING=true、把 scratchpad.interruptCounter 重置为 -1',
+          '只清空 writes',
+          '重建整个任务对象',
+        ],
+        answer: 1,
+        explain:
+          '三件事各管一层：`pregelTask.writes.splice(0)` 清掉上一轮尝试的写入（L77 已见，防止双重写入）；RESUMING 标志让节点内部的子图调用按 resume 语义复用答案；interruptCounter=-1 让节点从头重数 interrupt 调用——否则重试后的 interrupt 会拿到新 id，下一次 resume 无法与已存答案匹配（retry.ts:112-113, 198-205）。A 会导致写入重复与答案失配；C 漏了子图语义。',
+        concept: 'lc-retry-timeout-resume',
+      },
+      {
+        text: 'NodeTimeoutError 抛出前，runAttemptWithTimeout 对「同步 CPU 密集节点」做了什么特殊处理？',
+        options: [
+          '直接放弃，同步节点无法超时',
+          'race 结束后用墙钟复检：若节点实际运行时间已越过 runTimeout/idleTimeout，仍强制改判为 timeout——防止 macrotask 看门狗被同步代码挡住而失效',
+          '把同步节点转成 Web Worker',
+          '给同步节点双倍超时预算',
+        ],
+        answer: 1,
+        explain:
+          '源码注释解释了根因：「Watchdog timers are macrotasks and cannot fire while a synchronous (CPU-bound) node blocks the event loop」——setTimeout 回调排在同步代码后面，节点若同步跑超了预算，race 会以 ok/err 结算。所以在 outcome 非 timeout 时补一次 `now - start >= policy.runTimeout` 与 idle 的墙钟检查（timeout.ts:281-298）。A 错——恰是这段代码解决了同步场景；C/D 无此机制。',
+        concept: 'lc-retry-timeout-resume',
+      },
+    ],
+    [
+      [
+        'RetryPolicy',
+        '节点/图级重试策略：initialInterval/backoffFactor/maxInterval/maxAttempts/jitter/retryOn/logWarning',
+      ],
+      [
+        'TimeoutPolicy',
+        '节点超时策略：runTimeout（墙钟）+ idleTimeout（无进展时限）+ refreshOn（auto/heartbeat）',
+      ],
+      [
+        'TimedAttemptScope',
+        '单次节点尝试的进展追踪器：touch 显式续期、autoTouch 自动续期、close 后迟到的写入/调用被丢弃',
+      ],
+      [
+        'ERROR_SOURCE_NODE',
+        '失败来源节点的持久化哨兵；resume 时 _resumeErrorHandlersIfApplicable 扫描它重排错误处理器任务',
+      ],
+    ],
+    [
+      '给有副作用（发邮件、写库）的节点配重试——重试会把节点从头跑一遍，副作用会重复；要么幂等化，要么改用 error handler + interrupt 补偿',
+      '以为 idleTimeout 会覆盖纯 CPU 循环——autoTouch 依赖回调事件（LLM/工具/写入），纯同步循环既不产生事件也不让出事件循环，只有墙钟复检能拦住它，且拦截粒度是整个 runTimeout',
+      'resume 时把 Command.resume 写成裸值数组而不带 interrupt id 映射——裸值走 NULL_TASK_ID 广播，多个 interrupt 同时挂着时会全部收到同一个答案；精确路由要 { [xxh3任务id]: answer } 形式',
+    ],
+  ),
+  'practice',
+)

@@ -1,0 +1,229 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L112 = withKind(
+  L(
+    'L112',
+    31,
+    'AgentExecutor → createAgent：主循环与构造参数映射',
+    3,
+    ['L105'],
+    ['lc-executor-migration'],
+    [
+      '实现 AgentExecutor（while 循环 + maxIterations=15 + handleParsingErrors）到 createAgent 的完整改写并跑通，逐项核对构造参数的新家',
+      '写出 returnIntermediateSteps 与 earlyStoppingMethod 两个旧开关在图世界的等价物（流订阅 + recursionLimit/toolCallLimit），产出参数映射表',
+      '打通 initializeAgentExecutor 字符串选型到 createAgent({ model, tools }) 一把梭的迁移路径，产出可直接复用的改造模板',
+    ],
+    `### 压轴对照：从手写循环到编译图
+
+模块九前半的最后一步，也是 0.x 迁移里最核心的一跃：AgentExecutor → createAgent。核心结论：**这不是「类改名」，而是执行模型的换代——旧执行器是 BaseChain 子类里的手写 while 循环（七个构造开关逐一找新家），新 agent 是编译图（构造参数面重学：model/tools/prompt/responseFormat/stateSchema/middleware）。**本课是前六课映射的收束点：前几课拆的 LCEL、messages、middleware 积木在这里全部合流。对照表在本课最后，先解剖源码，commit 7704471 取证。
+
+### 旧执行器解剖：七个开关和一个 while
+
+AgentExecutor 的字段面（executor.ts:352-390）：
+
+\`\`\`ts
+export class AgentExecutor extends BaseChain<ChainValues, AgentExecutorOutput> {
+  agent: BaseSingleActionAgent | BaseMultiActionAgent;
+  tools: this["agent"]["ToolType"][];
+  returnIntermediateSteps = false;
+  maxIterations?: number = 15;
+  earlyStoppingMethod: StoppingMethod = "force";
+  handleParsingErrors: boolean | string | ((e) => string) = false;
+  handleToolRuntimeErrors?: (e: Error) => string;
+\`\`\`
+
+*— langchain-classic/src/agents/executor.ts:352-390（commit 7704471，JSDoc 裁剪）*
+
+七个字段就是旧 agent 的全部配置面。主循环在 \`_call\` 内部（executor.ts:480-612 的迭代逻辑）：
+
+\`\`\`ts
+private shouldContinue(iterations: number): boolean {
+  return this.maxIterations === undefined || iterations < this.maxIterations;
+}
+...
+let iterations = 0;
+while (this.shouldContinue(iterations)) {
+  // 1. 调 agent 拿下一个动作（AgentAction / AgentFinish）
+  // 2. 执行工具，产出 observation
+  // 3. iterations += 1
+}
+\`\`\`
+
+*— langchain-classic/src/agents/executor.ts:466-503（commit 7704471，有裁剪）*
+
+这个 while 循环是 L102 说的两代分水岭的具象：**循环体里每一步做什么、以什么顺序做、出错怎么办，全写死在执行器里**——改任何一环都要继承或 fork 这个类。旧入口 initializeAgentExecutor 再叠一层字符串分发（initialize.ts:26-63 的 switch，把 "zero-shot-react-description" 等类型名映射到不同 prompt 工厂），协议、循环、配置三层耦合在一个类家族里。
+
+### 新执行体：构造即编译，循环归图
+
+新世界的对应物已经在本模块 L105 论证过：createAgent 一行实现体返回 ReactAgent，#graph 是执行体。现在补齐参数面的迁移翻译：
+
+\`\`\`ts
+// 旧（@langchain/classic）：
+import { AgentExecutor, initializeAgentExecutor } from "@langchain/classic/agents";
+const executor = await initializeAgentExecutor(tools, model, "zero-shot-react-description");
+executor.returnIntermediateSteps = true;
+executor.maxIterations = 10;
+executor.handleParsingErrors = "Invalid tool input, try again.";
+const result = await executor.call({ input: "查一下天气" });
+
+// 新（langchain 1.x）：
+import { createAgent, toolErrorMiddleware, toolRetryMiddleware, toolCallLimitMiddleware } from "langchain";
+const agent = createAgent({
+  model: "openai:gpt-4o",            // 字符串：模型标识，取代 agentType 协议名
+  tools: [search, weather],
+  middleware: [
+    toolErrorMiddleware({ outputText: "Invalid tool input, try again." }),
+    toolRetryMiddleware({ maxAttempts: 2 }),
+    toolCallLimitMiddleware({ limit: 10, behavior: "terminate" }),
+  ],
+});
+const res = await agent.invoke({ messages: [{ role: "user", content: "查一下天气" }] });
+\`\`\`
+
+逐项翻译逻辑如下。**agent+tools 两个字段**→ \`model\` + \`tools\`（CreateAgentParams 的 model 接受字符串标识或模型实例，types.ts:571-600 的 JSDoc 两种示例都给了：字符串 "anthropic:claude-3-7-sonnet-latest" 与 \`new ChatOpenAI({ model: "gpt-4o" })\`，注释还写明字符串入口底层走 \`initChatModel\`——这正是 initializeAgentExecutor 字符串选型的精确接棒者，L9 拆过它的推断逻辑）。**handleParsingErrors 三态**→ toolErrorMiddleware（错误转 observation 文本，语义与旧 true/string 一致）。**handleToolRuntimeErrors**→ 同在工具容错 middleware 族。**maxIterations=15**→ 拆两层：图级 recursionLimit + 工具级 toolCallLimitMiddleware（behavior 可选 terminate/raise）。**earlyStoppingMethod="force"**→ 旧「到点强停」的语义归入限闸的 terminate 行为。**returnIntermediateSteps**→ 不需要开关，stream 订阅或 getState 天然可取：
+
+\`\`\`ts
+// 对应旧 returnIntermediateSteps = true 的中间步骤收集
+const stream = agent.stream(
+  { messages: [{ role: "user", content: "查一下天气" }] },
+  { streamMode: "updates" },   // 每个节点的状态更新逐段吐出
+);
+for await (const update of stream) {
+  console.log(Object.keys(update)); // 能看到 agent / tools 等节点的分步产出
+}
+const final = await agent.getState({ configurable: { thread_id: "t1" } });
+// final.values.messages 即完整轨迹，含全部中间消息——旧 AgentStep 的超集
+\`\`\`
+
+两种观测面的粒度差异也值得记一笔：stream 的 updates 模式按**节点**切片（agent 节点一次、tools 节点一次，每段是那个节点写入的状态增量），适合做进度展示与逐段落库；getState 是**终态快照**，适合事后审计。旧 returnIntermediateSteps 只有「结束才给」一种粒度，且 AgentStep 里只有 action+observation 两个纯文本字段——新观测面连每一步的完整消息结构（含 tool_calls 原始参数）都保留，排障信息量是升级不是平移。
+
+### 协议三元组与 _Exception 伪工具：循环内部的两个细节
+
+迁移映射前，先把循环体里两个容易被略过的机制看清楚，它们分别解释了「旧协议为什么重」与「handleParsingErrors 的本质」。
+
+**协议三元组住在 core**。AgentAction/AgentFinish/AgentStep 三个类型定义在 core 的 agents.ts 里（langchain-core/src/agents.ts:1-16，commit 7704471）：
+
+\`\`\`ts
+export type AgentAction = {
+  tool: string;
+  toolInput: string | Record<string, any>;
+  log: string;
+};
+export type AgentFinish = { returnValues: Record<string, any>; log: string };
+export type AgentStep = { action: AgentAction; observation: string };
+\`\`\`
+
+*— langchain-core/src/agents.ts:1-16（commit 7704471，有裁剪）*
+
+plan 方法返回 \`AgentFinish | AgentStep[]\` 二元结果（executor.ts:195 的签名）——整个旧 agent 体系就架在这对类型上：模型输出先被各协议的输出解析器翻译成 AgentAction（带 log 字段承载 ReAct 的思考文本），工具执行结果与 action 配成 AgentStep 累积进 steps，直到出现 AgentFinish。core 里的定义至今还在、但 1.x 主线无人消费——这是「类型在 core 存活 ≠ 协议存活」的典型化石。新世界没有这个翻译层：模型原生 tool_calls 就是动作协议，AgentAction 的三字段（工具名/参数/思考文本）分别由 tool_calls 的 name/args/内容自然承载。
+
+**_Exception 伪工具：错误回喂的旧形态**。executor.ts:503-545（commit 7704471）：\`agent.plan\` 抛 OutputParserException 时，按 handleParsingErrors 三态把错误转成 observation 文本，然后构造一个 \`tool: "_Exception"\` 的 AgentAction——执行器内部有个内置 ExceptionTool 专门接住这个伪动作，把 observation 原样返回给下一轮 plan。看清楚这个机制就明白：**旧 handleParsingErrors 的「重试」本质是伪造一次成功的工具调用**，让循环继续转而不是中断。新世界的 toolErrorMiddleware 是同一思想的干净版本：错误转 observation 文本写进 ToolMessage，图回边重跑——语义同源，机制从「伪工具 + while 顶层 catch」变成「真实 ToolMessage + 图回边」。旧版还有个 AgentExecutorIterator（executor.ts:47-110），把 iterations/intermediateSteps/finalOutputs 抽成独立可迭代类，尝试提供「分步执行」——在图世界里这是每步一个 checkpoint 的天然能力，这个类没有迁移必要。
+
+### 参数映射总表
+
+| AgentExecutor 旧开关（executor.ts:352-390） | 1.x 新家 | 关系 |
+|---|---|---|
+| agent（协议类实例） | model + 内置 ReAct 图 | 协议选择消失，统一 tool_calls |
+| tools | tools | 直接平移 |
+| maxIterations = 15 | recursionLimit + toolCallLimitMiddleware | 一变二，分层限闸 |
+| earlyStoppingMethod = "force" | toolCallLimit 的 behavior: "terminate" | 语义吸收 |
+| handleParsingErrors（三态） | toolErrorMiddleware | 属性→切面 |
+| handleToolRuntimeErrors | toolError/toolRetry middleware | 属性→切面 |
+| returnIntermediateSteps | stream 模式 / getState | 开关→天然观测面 |
+| —（无对应） | prompt/systemPrompt、responseFormat、stateSchema、middleware、checkpointer | 1.x 新增面 |
+
+表末三行的新增面值得点一句：旧执行器没有系统提示词参数（prompt 藏在各协议工厂里）、没有结构化输出策略（要走 OutputParser）、没有持久化（要手动接 memory）。新参数面把这些全部提为一等公民——**迁移完成时你会发现，新 agent 不只是「旧执行器的替代」，它把旧执行器根本没能力表达的东西也接上了。**
+
+### 验证清单
+
+改造后跑四项断言，每项都对应一个旧开关的语义：**其一**，同样的工具集与输入，新旧产出等价的最终答案——中间轨迹形态不同属正常（旧是 AgentStep 数组、新是消息序列），比对的是 returnValues 级别的业务结果；**其二**，构造死循环工具（永远要求再调一次），验证限闸触发行为与旧 maxIterations 兜底等价——旧版到 15 次 force 停止，新版确认 toolCallLimit 的 terminate 在预期的调用次数生效；**其三**，让工具抛错，验证错误被回喂成 observation（对应旧 handleParsingErrors=true 语义），模型下一轮能读到错误文本并修正；**其四**，stream 订阅验证中间步骤可见（对应旧 returnIntermediateSteps）——updates 模式下每个节点的产出逐段到达，结束时 getState 取回的 messages 是旧 AgentStep 数组的超集（还多出模型与工具的完整消息结构）。四项断言跑通，迁移才算闭环；任何一项失败，回到参数映射表找对应的新家，不要在图外用 while 手工补偿——那是把旧架构的复杂度原样搬进新世界。
+
+### 本课小结
+
+- AgentExecutor = BaseChain 子类 + 手写 while（maxIterations=15 兜底）+ 七个开关；createAgent = 工厂 + ReactAgent 编译图，参数面重学。
+- 最大语义变化：agentType 协议选择消失（五套协议收敛 tool_calls，L113 展开），字符串从「agent 类型」变成「模型标识」。
+- 开关的新家分层：限闸归 recursionLimit+toolCallLimit，容错归 toolError/toolRetry，中间步骤归 stream/getState——旧单开关在新世界是「分层可组合」。
+- 新增面（prompt/responseFormat/stateSchema/checkpointer）是旧执行器没有的能力，迁移时顺手接入。
+- L102-L112 十一课完成模块九前半：世界观五课 + 映射前六课；下一课进入协议族退役现场，看五个旧 Agent 类如何整体谢幕。
+`,
+    null,
+    [
+      {
+        text: 'AgentExecutor 的默认 maxIterations 是多少？它在 createAgent 世界里的对应物是？',
+        options: [
+          '15；recursionLimit（图级）+ toolCallLimitMiddleware（工具级）分层接管',
+          '15；还是 maxIterations 参数，名字没变',
+          '10；由 modelCallLimitMiddleware 接管',
+          '25；无对应物',
+        ],
+        answer: 0,
+        explain:
+          'executor.ts:367 `maxIterations?: number = 15`，executor.ts:503 的 `while (this.shouldContinue(iterations))` 是主循环。新架构无此单一参数：图执行步数归 LangGraph recursionLimit 管，工具调用次数归 toolCallLimitMiddleware（middleware/index.ts:47-51 导出）按工具精确限闸。B 错，新参数面没有 maxIterations；C 错，modelCallLimitMiddleware 限模型调用不是循环总闸；D 错，25 是 RunnableLambda 委托时的默认 recursionLimit，与 maxIterations=15 无对应关系。concept=lc-executor-migration。',
+        concept: 'lc-executor-migration',
+      },
+      {
+        text: '旧 handleParsingErrors（false/true/string/function 三态）在 1.x 对应什么？',
+        options: [
+          'createAgent 的 handleParsingErrors 参数，语义不变',
+          'middleware 化：toolErrorMiddleware（错误转 observation）与 toolRetryMiddleware（重试）等可组合切面',
+          '删除了，新架构无错误处理',
+          'try/catch 由用户全权负责',
+        ],
+        answer: 1,
+        explain:
+          'executor.ts:384-390 的三态开关（JSDoc：true/string/function 都会把错误文本回喂 LLM 当 observation）对应新世界的 toolErrorMiddleware/toolRetryMiddleware（台账条目 22/26：middleware/index.ts:68-76 导出）。从「执行器的一个属性」变成「工具环上的可插拔节点」，还能组合重试策略。A 错，createAgent 参数面无此字段；C 错，容错没消失而是升级；D 错，有标准 middleware。concept=lc-executor-migration。',
+        concept: 'lc-executor-migration',
+      },
+      {
+        text: 'initializeAgentExecutor 的字符串选型（"zero-shot-react-description" 等）在 1.x 变成了什么？',
+        options: [
+          '还传字符串，如 createAgent({ agentType: "zero-shot" })',
+          '字符串的语义变了：从「agent 协议类型」变成「模型标识」（model: "openai:gpt-4o"），协议选择整体消失',
+          '变成 JSON 配置对象',
+          '改为 class 名字传参',
+        ],
+        answer: 1,
+        explain:
+          'initialize.ts:26-63 的 switch 按 agentType 字符串分发到不同 prompt 工厂（ZeroShotAgent.fromLLMAndTools 等）——旧 agent 是 prompt 模板驱动的协议选择。1.x 用 `createAgent({ model: "openai:gpt-4o", tools })`（index.ts:89-106 示例），字符串从 agent 类型变成模型标识，ReAct 协议由内部图固定实现。A 错，无 agentType 参数；C/D 均无此形态。concept=lc-executor-migration。',
+        concept: 'lc-executor-migration',
+      },
+      {
+        text: '旧 returnIntermediateSteps 开关（收集 AgentStep 数组）在图世界的天然等价物是？',
+        options: [
+          '必须手写日志收集',
+          '图执行自带观测面：stream 按节点/模式订阅中间过程（八种流模式），或 getState 取完整状态——不需要开关',
+          'returnSteps: true 参数',
+          'middleware 返回值',
+        ],
+        answer: 1,
+        explain:
+          '旧执行器是黑盒 while 循环，中间步骤要开 returnIntermediateSteps（executor.ts:361）手动收集；新架构执行即图，stream 可按 messages/updates/events 等模式订阅（L78 八种流模式），结束时 getState 取回全部状态。A 错，是框架内建；C 错，无此参数；D 错，middleware 不是中间步骤的收集机制。concept=lc-executor-migration。',
+        concept: 'lc-executor-migration',
+      },
+    ],
+    [
+      [
+        'AgentExecutor',
+        '旧 agent 运行时（executor.ts:352）：BaseChain 子类 + 手写 while 循环，maxIterations=15 兜底',
+      ],
+      [
+        'earlyStoppingMethod',
+        '旧循环到达 maxIterations 时的停止策略（默认 "force"）——新世界由 recursionLimit 与 toolCallLimit 分层取代',
+      ],
+      [
+        'CreateAgentParams',
+        'createAgent 的参数面（types.ts:571）：model/tools/prompt(systemPrompt)/responseFormat/stateSchema/middleware 等',
+      ],
+      [
+        'toolCallLimitMiddleware',
+        '工具调用次数限闸 middleware：按全局/单工具精确控制，maxIterations 的工具级继承者',
+      ],
+    ],
+    [
+      '逐字段机械翻译构造参数——CreateAgentParams 没有 agent/memory/maxIterations/returnIntermediateSteps 这些字段，机械翻译会卡在「找不到新家」',
+      '用 recursionLimit 精确控制工具调用次数——图级步数与工具调用次数不是一回事，精确限闸要用 toolCallLimitMiddleware',
+      '在 classic 里 import createReactAgent 当作新 createAgent——同名陷阱：classic 的 createReactAgent 是旧 prebuilt 入口（agents/index.ts:96-99），与 ReactAgent 类无继承关系',
+    ],
+  ),
+  'practice',
+)

@@ -1,0 +1,230 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L86 = withKind(
+  L(
+    'L86',
+    24,
+    '向量化与存储环：EmbeddingsInterface 双方法 + VectorStore 三抽象',
+    2,
+    ['L83'],
+    ['lc-embeddings-vectorstore'],
+    [
+      '手写实现一个符合 EmbeddingsInterface 契约的最小 Embeddings 类，并用 this.caller 收口并发重试',
+      '构建一个内存 VectorStore 子类，实现 addVectors/addDocuments/similaritySearchVectorWithScore 三抽象',
+      '辨析 embedDocuments/embedQuery 语义分离的原因与 similaritySearch 模板方法编排',
+    ],
+    `### 向量化与存储环：两个抽象、五个方法
+
+RAG 第三环把文本变成向量并落库。本课结构：先拆 Embeddings 的双方法契约与 AsyncCaller 收口，再拆 VectorStore 的三抽象与模板方法编排，最后手写一个内存实现做对照。核心结论：**向量化环的契约刻意分成「索引时批量」与「查询时单条」两条路，存储环的契约刻意只留「向量级」一条路——所有文本层的编排都留在基类模板方法里**。
+
+### EmbeddingsInterface：双方法为何分开
+
+\`\`\`ts
+export type EmbeddingsParams = AsyncCallerParams;
+
+export interface EmbeddingsInterface<TOutput = number[]> {
+  embedDocuments(documents: string[]): Promise<TOutput[]>;
+  embedQuery(document: string): Promise<TOutput>;
+}
+
+export abstract class Embeddings<TOutput = number[]> implements EmbeddingsInterface<TOutput> {
+  caller: AsyncCaller;
+  constructor(params: EmbeddingsParams) { this.caller = new AsyncCaller(params ?? {}); }
+  abstract embedDocuments(documents: string[]): Promise<TOutput[]>;
+  abstract embedQuery(document: string): Promise<TOutput>;
+}
+\`\`\`
+
+*— langchain-core/src/embeddings.ts:7-61（commit 7704471）*
+
+契约只有两个方法，但语义不是「批量 vs 单个」那么浅。真实动因是**索引时与查询时的不对称**：主流 embedding 服务对入库文档与查询文本可能要求不同的处理——比如 instruction-tuned 模型要求查询侧拼 \`query: \` 前缀、某些服务索引用 bulk 端点而查询用近线端点、两侧的维数与模型版本甚至可以不同。一个合并的 \`embed()\` 会把这些差异压死在签名里。\`TOutput\` 泛型默认 \`number[]\`，但接口不强制它是向量——rerank 类实现可以返回其它结构，这是比 Python 版更宽的类型面。
+
+\`EmbeddingsParams = AsyncCallerParams\` 这行类型别名值得注意：**限流配置直接复用调用器配置**，不存在第二套参数体系。基类 JSDoc 明确要求子类用 \`this.caller\` 发起异步调用（embeddings.ts:36-38），从而统一获得 maxConcurrency/maxRetries/exponential backoff。这条约束在 core 里是文档级而非编译级的——写自定义 provider 时必须自觉遵守。
+
+### VectorStore：三条抽象路与一条模板路
+
+\`\`\`ts
+export abstract class VectorStore extends Serializable implements VectorStoreInterface {
+  lc_namespace = ["langchain", "vectorstores", this._vectorstoreType()];
+  embeddings: EmbeddingsInterface;
+  abstract _vectorstoreType(): string;
+  abstract addVectors(vectors: number[][], documents, options?): Promise<string[] | void>;
+  abstract addDocuments(documents, options?): Promise<string[] | void>;
+  abstract similaritySearchVectorWithScore(query: number[], k: number, filter?): Promise<[DocumentInterface, number][]>;
+  async delete(_params?) { throw new Error("Not implemented."); }
+}
+\`\`\`
+
+*— langchain-core/src/vectorstores.ts:553-649（commit 7704471）*
+
+四个抽象方法加一个可选默认。\`_vectorstoreType()\` 看似只是类型标识，但它被拼进了 \`lc_namespace\`（第 566 行）——序列化识别名依赖子类方法返回值，这在 core 里是个少见的「基类字段引用子类方法」写法。\`delete\` 默认抛 Not implemented——删除是可选能力，选型时按需核对。
+
+三个抽象方法的分工值得咀嚼。\`addVectors\` 是**已有向量的直写路**：向量由外部算好（比如迁移存量数据、离线批处理），向量库只管存。\`addDocuments\` 是**文本到库的完整路**：注意它是 abstract——**基类不代劳 embed**，embed 与写库的编排完全由子类决定。为什么不给个默认实现？因为批量策略因库而异：pgvector 一次能吞几千条，某些云服务有单请求条数上限、需要分批与断点续传，基类预设编排会绑架所有 provider。\`similaritySearchVectorWithScore\` 是**唯一的检索抽象**：签名收的是向量不是文本——检索的最小单元被钉死在「向量 → 带分结果」。
+
+返回类型 \`Promise<string[] | void>\` 透露了一个务实取舍：id 返回是「尽力提供」，不是所有后端都能在写入时回 id。
+
+### 模板方法：文本编排固定在基类
+
+\`\`\`ts
+async similaritySearch(query: string, k = 4, filter?, _callbacks?) {
+  const results = await this.similaritySearchVectorWithScore(
+    await this.embeddings.embedQuery(query), k, filter);
+  return results.map((result) => result[0]);
+}
+
+async similaritySearchWithScore(query: string, k = 4, filter?, _callbacks?) {
+  return this.similaritySearchVectorWithScore(
+    await this.embeddings.embedQuery(query), k, filter);
+}
+\`\`\`
+
+*— langchain-core/src/vectorstores.ts:661-698（commit 7704471）*
+
+模板方法模式的标准示范：**「文本 → embedQuery → 向量检索 → 整理结果」的编排是基类固定的**，两个便捷方法的唯一差别是是否 map 掉分数。子类只管纯向量操作，永远不需要碰 embedQuery 的调用时机。留意两处默认值：\`k = 4\` 在这里出现一次，下一课 VectorStoreRetriever 的 \`k = 4\` 字段又出现一次——**两处默认值独立存在**，改默认行为时两处都要核对。
+
+还有一个观测语义上的边界：基类模板方法签名里的回调参数写成 \`_callbacks\`——**下划线开头，基类实现里不消费**。这意味着直接调 \`vectorStore.similaritySearch(...)\` 不会产生任何 run 事件；观测语义集中在 Retriever 层（下一课的 \`getChild("vectorstore")\` 传播），VectorStore 自身是「纯向量操作、不进 trace 树」的一层。子类如果实现了 MMR 等可选方法并想进 trace 树，需要自己消费收到的 callbacks。
+
+另一个冷知识：静态工厂 \`fromTexts/fromDocuments\` 的默认实现会抛一段很直白的错误——*the Langchain vectorstore implementation you are using forgot to override this, please report a bug*（vectorstores.ts:743-745）。如果你在运行时看到这句话，说明你用了一个没覆写静态工厂的实现，官方态度是「当 bug 报」。另外 \`SaveableVectorStore\`（866-901）定义了 save/load 的本地持久化契约，属于通用 lc 序列化（L95 会讲）之外的专用持久化通道。
+
+### 手写对照：一个 30 行的内存向量库
+
+把契约最小实现写出来，验证「三抽象够不够用」：
+
+\`\`\`ts
+import { VectorStore, DocumentInterface } from "@langchain/core/vectorstores";
+
+class InMemoryVectorStore extends VectorStore {
+  private rows: { vector: number[]; doc: DocumentInterface }[] = [];
+
+  _vectorstoreType() { return "in_memory_demo"; }
+
+  async addVectors(vectors: number[][], docs: DocumentInterface[]) {
+    if (vectors.length !== docs.length) throw new Error("vectors/docs length mismatch");
+    vectors.forEach((v, i) => this.rows.push({ vector: v, doc: docs[i] }));
+    return this.rows.map((r) => crypto.randomUUID());
+  }
+
+  async addDocuments(docs: DocumentInterface[]) {
+    // 编排责任在子类：这里选「整批一次 embed」的简单策略
+    const vectors = await this.embeddings.embedDocuments(
+      docs.map((d) => d.pageContent)
+    );
+    return this.addVectors(vectors, docs);
+  }
+
+  async similaritySearchVectorWithScore(query: number[], k: number) {
+    const scored = this.rows.map(({ vector, doc }) => ({
+      doc,
+      score: 1 - cosine(query, vector),   // 距离越小 score 越小 = 越相似
+    }));
+    scored.sort((a, b) => a.score - b.score);
+    return scored.slice(0, k).map(({ doc, score }) => [doc, score] as [DocumentInterface, number]);
+  }
+}
+\`\`\`
+
+对照要点：addVectors/addDocuments/similaritySearchVectorWithScore 三个抽象必须实现；\`_vectorstoreType\` 必须实现；embed 编排写在 addDocuments 里（用了构造器注入的 \`this.embeddings\`）；delete 可以完全不写。这就是 1.x 存储环扩展的全部成本——**接入一个新向量库，本质是实现一个「存向量 + 按向量排序」的类**。
+
+### 边界与辨析：静态工厂的运行时报错、Retriever 的写通桥与 filter 泛型
+
+第一处边界：\`fromTexts/fromDocuments\` 这组静态工厂在基类里也有默认实现——直接抛错 *the Langchain vectorstore implementation you are using forgot to override this, please report a bug*（vectorstores.ts:736-764）。它们其实是**第二组抽象**，但 TS 的 abstract 关键字管不了 static 方法，所以只能用「运行时抛错 + 报 bug 提示」代替编译期约束。给自定义库补上这两个静态工厂（内部通常是 \`new this(...)\` 后调 addDocuments），才能走通 \`await MyStore.fromTexts(...)\` 的惯例入口。
+
+第二处容易被忽略的面：VectorStoreRetriever 不只是读口，它自己也有 \`addDocuments/addVectors\`，实现是直接委托给内部持有的 vectorStore（vectorstores.ts:358-426）。语义后果：**ingestion 管线可以只拿 retriever 一个句柄，写与读走同一个对象**——检索器是存储环在 LCEL 世界的全权代理，而不是只读视图。
+
+第三处是 filter 的类型形态。检索接口上的 filter 类型写作 \`V["FilterType"]\`——由具体向量库声明自己的过滤语言（pg 库用 SQL 片段、内存库用对象谓词），基类只留一个类型槽位不做结构约束。选型时 filter 的写法要与库文档对齐，跨库不可移植。
+
+*— langchain-core/src/vectorstores.ts:358-426, 736-764（commit 7704471）*
+
+### 本课小结
+
+- EmbeddingsInterface 双方法：embedDocuments（索引时批量）与 embedQuery（查询时单条）语义分离，TOutput 默认 number[] 但不强制。
+- Embeddings 基类内置 AsyncCaller，子类必须用 this.caller 发请求以获得并发/重试；EmbeddingsParams 就是 AsyncCallerParams。
+- VectorStore 三抽象：addVectors/addDocuments/similaritySearchVectorWithScore；addDocuments 的 embed 编排责任在子类；delete 可选。
+- similaritySearch/similaritySearchWithScore 是基类模板方法，k=4 默认值与 Retriever 侧各自独立存在。
+- 下一课把 VectorStore 变成 LCEL 可用件：BaseRetriever 骨架、asRetriever 桥与 MMR 能力协商。
+`,
+    null,
+    [
+      {
+        text: 'EmbeddingsInterface 的契约有几个方法？为什么分开？',
+        options: [
+          '一个 embed()；统一入口更简单',
+          '两个：embedDocuments（批量）与 embedQuery（单条）；索引时与查询时可能用不同端点或前缀',
+          '三个：embed/similarity/rank',
+          '两个：都是批量，只是参数不同',
+        ],
+        answer: 1,
+        explain:
+          'embeddings.ts:9-26 只有两个方法。语义分离的现实原因：很多 embedding 服务对「文档入库」与「查询」要求不同——例如 instruction-tuned embedding 要求查询侧加 query 前缀，或者索引用批量端点、查询用低延迟端点。合并成一个方法会锁死这些差异。',
+        concept: 'lc-embeddings-vectorstore',
+      },
+      {
+        text: 'Embeddings 抽象类内置的 caller 字段有什么约束？',
+        options: [
+          '装饰用的，可以不用',
+          '子类必须用 this.caller 发起异步调用，从而统一获得并发与重试逻辑',
+          '只用于缓存',
+          '在 1.x 已废弃',
+        ],
+        answer: 1,
+        explain:
+          'embeddings.ts:35-43 的 JSDoc 原话：The async caller should be used by subclasses to make any async calls, which will thus benefit from the concurrency and retry logic。EmbeddingsParams 就是 AsyncCallerParams（第 7 行）——限流配置直接复用调用器类型。绕过 caller 的子类会失去 maxRetries/maxConcurrency。',
+        concept: 'lc-embeddings-vectorstore',
+      },
+      {
+        text: 'VectorStore 子类必须实现哪几个方法？',
+        options: [
+          '只有 similaritySearch',
+          'addVectors、addDocuments、similaritySearchVectorWithScore 三个抽象方法（delete 可选）',
+          'add/delete/search/upsert 四个',
+          '全部方法都必须实现',
+        ],
+        answer: 1,
+        explain:
+          'vectorstores.ts:553-649：抽象方法三条——addVectors（已有向量直写）、addDocuments（先 embed 再写）、similaritySearchVectorWithScore（向量→带分检索）。delete 有默认实现但抛 Not implemented，属于可选能力。similaritySearch 这类便捷方法是基类模板方法，不需要子类实现。',
+        concept: 'lc-embeddings-vectorstore',
+      },
+      {
+        text: 'similaritySearch(query, k) 的模板编排是什么？',
+        options: [
+          '直接查库返回文档',
+          'embedQuery 得向量 → similaritySearchVectorWithScore → map 丢掉分数只留文档',
+          '先做 MMR 再返回',
+          '在子类里各自实现，基类不管',
+        ],
+        answer: 1,
+        explain:
+          'vectorstores.ts:661-674：await this.embeddings.embedQuery(query) 后调 similaritySearchVectorWithScore，再 results.map(r => r[0]) 丢掉分数。similaritySearchWithScore（687-698）唯一差别是不 map 掉 score。子类只管纯向量操作，文本→向量→查询的编排是基类固定的。',
+        concept: 'lc-embeddings-vectorstore',
+      },
+      {
+        text: 'addDocuments 的 embed 动作由谁完成？',
+        options: [
+          '基类统一先 embed 再调子类 addVectors',
+          '子类自己完成——基类不代劳，各 provider 可自选批量策略',
+          '用户必须预先算好向量',
+          '由 Embeddings 类的构造器自动完成',
+        ],
+        answer: 1,
+        explain:
+          'vectorstores.ts:619-622 中 addDocuments 是 abstract——基类只声明签名不提供编排。这是刻意设计：批量大小、分批节流、失败恢复策略因向量库而异（pgvector 与 pinecone 的批处理上限完全不同），基类不预设统一编排。',
+        concept: 'lc-embeddings-vectorstore',
+      },
+    ],
+    [
+      [
+        'EmbeddingsInterface',
+        '双方法契约：embedDocuments(string[]) 与 embedQuery(string)，泛型 TOutput 默认 number[]',
+      ],
+      ['AsyncCaller', '统一收口异步调用的并发上限与重试策略的调用器，Embeddings 基类内置'],
+      ['similaritySearchVectorWithScore', 'VectorStore 唯一的检索抽象：向量 → [Document, score][]'],
+      ['VectorStoreInterface', 'VectorStore 的接口形态，含 FilterType 类型槽位与 embeddings 实例'],
+    ],
+    [
+      '在自定义 Embeddings 子类里绕过 this.caller 直接 fetch——丢失并发上限与重试，高负载时打爆 embedding 端点',
+      '把 addDocuments 当基类代劳 embed 的方法——它是抽象方法，embed 与写库的编排责任全在子类',
+      '以为所有 VectorStore 都支持 delete——默认实现抛 Not implemented，选型时按能力清单核对',
+    ],
+  ),
+  'framework',
+)

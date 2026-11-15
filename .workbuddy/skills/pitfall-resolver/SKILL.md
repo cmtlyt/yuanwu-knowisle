@@ -28,7 +28,7 @@ agent_created: true
 | Nuxt 构建锁 / PID、Nitro 404 与运行时 500、hydration、composable 未定义、定时器残留、多课串数据、safe-delete 守卫 | `references/nuxt-build.md` |
 | 浏览器断点、CDP 探针假阳性、抽屉与会话异步、真实端点 CORS、意图路由与模型抽检 | `references/browser-viewport.md` |
 | 跨版本 API、目录化导入、草稿生成器、`Lesson.kind` 与体量闸门、题目与引用完整性、收官清理 | `references/course-content.md`（34 KB，先按关键词定位章节） |
-| 检索分片落盘、上下文压缩丢数字、输出截断恢复、slug 误配、prereqs 契约 | `references/research-notes.md` |
+| 检索分片落盘、上下文压缩丢数字、输出截断恢复、slug 误配、prereqs 契约、子代理 429 限频、取证串行兜底、gen-course 三位数 id、字典序排序、contentStats 字数口径、体量闸门扩写 | `references/research-notes.md` |
 | hooks 阻断、lint-staged 参数与 ignore、commitlint、大小写重命名、Python 模块名、VSCode 配置 | `references/git-hooks-editor.md` |
 | 验证时机与顺序、临时文件与端口清理、假阳性断言、管道吞退出码 | `references/verification.md` |
 | wrangler 部署、workerd、compatibilityDate、原生模块 | `references/cloudflare-deploy.md` |

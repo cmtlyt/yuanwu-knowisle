@@ -1,0 +1,300 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L121 = withKind(
+  L(
+    'L121',
+    32,
+    '走查①：RAG 问答应用迁移（RetrievalQAChain+BufferMemory → LCEL+checkpointer）',
+    3,
+    ['L108'],
+    ['lc-walkthrough-rag'],
+    [
+      '从零复原一个 0.x RAG 问答应用（RetrievalQAChain + BufferMemory + MemoryVectorStore 完整可运行版），并盘点它的隐式状态面',
+      '实现逐段迁移：检索装配改 LCEL 组合、对话历史改 messages + MemorySaver checkpointer、跑通迁移前后同问同答的行为对照',
+      '构建迁移验收断言套件：输入键变化（query→input/messages）、上下文通道变化（sourceDocuments→context）、多轮对话记忆等价三组断言',
+    ],
+    `### 一、走查对象盘点：一个 0.x RAG 问答应用的完整形状
+
+三堂走查课开始。走查①的对象是最常见的存量应用：RAG 问答，且带多轮对话记忆。先复原旧应用的完整可运行形状——所有零件在前面的课里都解剖过，这里组装起来看它的隐式状态面：
+
+\`\`\`ts
+// ── before/app.ts：0.x RAG 问答（classic 全家桶）─────────────
+import { RetrievalQAChain } from "langchain/chains/retrieval_qa";
+import { BufferMemory } from "langchain/memory";
+import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { OpenAIEmbeddings } from "@langchain/openai";
+import { ChatOpenAI } from "@langchain/openai";
+import { DirectoryLoader } from "langchain/document_loaders/fs/directory";
+import { TextLoader } from "langchain/document_loaders/fs/text";
+
+// 1. 装配检索层：loader → 向量库 → retriever
+const loader = new DirectoryLoader("./kb", { ".txt": (p) => new TextLoader(p) });
+const rawDocs = await loader.load();
+const vectorStore = await MemoryVectorStore.fromDocuments(rawDocs, new OpenAIEmbeddings());
+const retriever = vectorStore.asRetriever();
+
+// 2. 装配对话记忆：BufferMemory 把 history 渲染成字符串塞进 prompt
+const memory = new BufferMemory({ memoryKey: "chat_history" });
+
+// 3. 组装 RetrievalQAChain：注意 memory 需要穿过 combine 链
+const model = new ChatOpenAI({ model: "gpt-4o", temperature: 0 });
+const qaChain = RetrievalQAChain.fromLLM(model, retriever);
+
+// 4. 多轮问答：状态藏在 chain 对象里（saveContext 隐式写入）
+const r1 = await qaChain.call({ query: "EV5 的续航是多少？" });
+const r2 = await qaChain.call({ query: "那充电要多久？" }); // 依赖 r1 的记忆
+\`\`\`
+
+跑通这份代码后盘它的隐式状态面（迁移清单的第一步）：其一，**记忆藏在 chain 对象里**——\`qaChain.call\` 的每次调用经 BaseChain 协议隐式触发 memory.loadMemoryVariables/saveContext（L104），外部看不到状态进出；其二，**检索是黑盒步骤**——retrieval_qa.ts:101 的 retriever.invoke 与 :106 的 combineDocumentsChain.call 封装在 \`_call\` 内部（:93-110），中间产物文档数组只在 returnSourceDocuments 打开时泄露（该开关的声明见 retrieval_qa.ts:22 与 :81，构造时经 :88-89 注入；打开后输出键在 :72-73 处 \`combineDocumentsChain.outputKeys.concat(["sourceDocuments"])\` 拼接而成）；其三，**输入键是 query**（:65 的 \`inputKey = "query"\`），与后续所有新形态的 input/messages 键名都不同。这三点就是迁移要逐条消除的「隐式」。注意第三个细节的取证方式：sourceDocuments 不是独立返回通道，而是把文档数组塞进旧 call/values 字典的一个额外键——1.x 的 context 通道（显式字段）与它的本质区别在于类型契约：前者是返回类型的一部分，后者只是运行时字典里多了一个键，TS 无法防护。
+
+### 二、迁移第一步：检索装配改 LCEL 组合
+
+新形态里不再有 RetrievalQAChain 这个「检索+生成」的二合一类；组合关系升级为显式 LCEL 管线。两种落法：用 classic 里已 LCEL 化的官方桥 createRetrievalChain（retrieval.ts:70，返回 Runnable、输入 \`{ input, chat_history }\`、输出 \`{ context, answer }\`），或者完全自组。走查示范自组版，因为它把每一步摆在明面上，也正是 1.x 主线推荐的世界观：
+
+\`\`\`ts
+// ── after/retrieval.ts：检索装配 LCEL 化 ────────────────────
+import { DirectoryLoader } from "@langchain/classic/document_loaders/fs/directory"; // loader 仍留 classic（L118）
+import { TextLoader } from "@langchain/classic/document_loaders/fs/text";
+import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";         // 实现留 classic（L119）
+import { OpenAIEmbeddings } from "@langchain/openai";
+import { ChatPromptTemplate } from "@langchain/core/prompts";   // core prompts/chat.ts:924
+import { RunnableLambda, RunnablePassthrough } from "@langchain/core/runnables";
+import { initChatModel } from "langchain";
+import type { DocumentInterface } from "@langchain/core/documents";
+
+// 检索步骤：一条普通 RunnableLambda——检索器就是 Runnable（L118 的世界观）
+const retrieve = new RunnableLambda({
+  func: async (input: { question: string }) => {
+    const store = await getVectorStore();   // MemoryVectorStore.asRetriever() 后 invoke
+    const retriever = store.asRetriever(4);
+    return retriever.invoke(input.question);
+  },
+});
+
+const model = await initChatModel("openai:gpt-4o", { temperature: 0 });
+
+const answerPrompt = ChatPromptTemplate.fromMessages([
+  ["system",
+   "根据上下文回答问题。上下文没有的信息直接说不知道。\\n\\n<context>\\n{context}</context>"],
+  ["human", "{question}"],
+]);
+
+// 显式组合：并行扇出（问题同时流向检索与透传）→ 格式化 → 生成
+const formatDocs = new RunnableLambda({
+  func: (docs: DocumentInterface[]) => docs.map((d) => d.pageContent).join("\\n\\n"),
+});
+
+const ragChain = RunnablePassthrough.assign({
+  context: retrieve.pipe(formatDocs),
+}).pipe(answerPrompt).pipe(model);
+
+// 调用：输入形状即所见
+const res = await ragChain.invoke({ question: "EV5 的续航是多少？" });
+\`\`\`
+
+对照旧版的三个「黑盒」逐一显式化：检索从 \`_call\` 内部变成 named 步骤（LCEL 每个节点在流式与追踪里都可见）；文档拼接从 StuffDocumentsChain 类变成 \`formatDocs\` 的三行 Lambda（L107 的类→函数公式）；输入键从 query 变成 question（自组版可自定，官方桥约定 input——走查第三节统一验收键名契约）。\`RunnablePassthrough.assign\` 是新引入的组合原语：并行地把问题透传给生成、把检索结果挂到 context 通道——这正是旧链 input_documents 拼装逻辑的 LCEL 对应物。
+
+### 三、迁移第二步：对话记忆改 checkpointer + thread
+
+旧版的多轮记忆靠 BufferMemory 的隐式协议；新形态把记忆变成**显式的消息状态 + 检查点持久化**。完整改造（从「链」升级为「带状态的小 agent 图」，用 createAgent 承载 messages 状态）：
+
+\`\`\`ts
+// ── after/app.ts：createAgent + MemorySaver ─────────────────
+import { createAgent } from "langchain";
+import { MemorySaver } from "@langchain/langgraph-checkpoint";  // 或经 @langchain/langgraph 导出
+// MemorySaver 定义于 langgraphjs libs/checkpoint/src/memory.ts:106
+
+const checkpointer = new MemorySaver();   // 开发态；生产换 Postgres/Redis saver
+
+const agent = createAgent({
+  model: "openai:gpt-4o",
+  tools: [kbSearchTool],                  // 把检索包成工具（见下）
+  checkpointer,                           // ← 状态持久化入口
+});
+
+// 把 LCEL 检索管线包成工具：检索从「前置黑盒步骤」变成「模型自主调用的工具」
+import { tool } from "@langchain/core/tools";
+import { z } from "zod";
+const kbSearchTool = tool(
+  async ({ query }) => {
+    const retriever = (await getVectorStore()).asRetriever(4);
+    const docs = await retriever.invoke(query);
+    return docs.map((d) => d.pageContent).join("\\n\\n");
+  },
+  { name: "kb_search", description: "在产品知识库里检索资料",
+    schema: z.object({ query: z.string().describe("检索查询词") }) }
+);
+
+// 多轮问答：thread 取代「chain 对象里的隐式记忆」
+const thread = { configurable: { thread_id: "user-42" } };
+const a1 = await agent.invoke(
+  { messages: [{ role: "user", content: "EV5 的续航是多少？" }] }, thread);
+const a2 = await agent.invoke(
+  { messages: [{ role: "user", content: "那充电要多久？" }] }, thread);
+// a2 的模型请求自动带上 thread 内完整 messages 状态——「那」的指代由消息历史承接
+
+import { expect, it } from "vitest";
+it("多轮指代被消息历史承接", () => {
+  const last = a2.messages.at(-1)!;
+  expect(last.getType()).toBe("ai");
+  expect(JSON.stringify(last.content)).toMatch(/充电|分钟|小时/);
+});
+\`\`\`
+
+对照旧版记忆机制的三点本质差异：**存储层**从 BaseChatMessageHistory（追加消息）换成 BaseCheckpointSaver（图状态版本快照，langgraphjs checkpoint/src/base.ts:180-239 的 put/getTuple/putWrites 契约）；**寻址层**从「chain 实例即会话」换成显式 thread_id——同一进程可以并发服务任意多个会话线程，这正是旧架构做不到的；**读写层**从 saveContext 隐式写换成图状态自动持久化，历史对开发者完全可见（\`await agent.getState(thread)\` 可查）。若你的存量应用需要「摘要式长对话」，在 createAgent 里追加 \`middleware: [summarizationMiddleware({...})]\` 即可（L110 逐参数对照过，走查②将实战）。
+
+### 四、迁移验收：三组断言闭环
+
+走查的最后一环是验收断言，覆盖输入契约、通道契约、行为等价三条线：
+
+\`\`\`ts
+// ── after/acceptance.ts：迁移验收断言 ───────────────────────
+import { expect, it, describe } from "vitest";
+
+describe("RAG 迁移验收", () => {
+  // 断言组一：输入契约——旧 query 键已退役
+  it("新组合的输入不含 query 键", async () => {
+    const res = await ragChain.invoke({ question: "EV5 续航" } as never);
+    expect(res).toBeDefined();
+    // 旧写法 ragChain.invoke({ query }) 在 TS 下直接类型报错，运行时模板变量缺失
+  });
+
+  // 断言组二：检索通道显式化——context 可观测
+  it("官方桥输出含 context: Document[]", async () => {
+    const { context, answer } = await bridgedChain.invoke({ input: "EV5 续航是多少？" });
+    expect(Array.isArray(context)).toBe(true);
+    expect(context[0].pageContent.length).toBeGreaterThan(0);  // DocumentInterface（core 类型）
+    expect(answer).toBeDefined();
+  });
+
+  // 断言组三：多轮记忆等价——旧 saveContext 的行为被 thread 状态承接
+  it("同 thread 第二问可解析指代", async () => {
+    const t = { configurable: { thread_id: "acc-" + Date.now() } };
+    await agent.invoke({ messages: [{ role: "user", content: "EV5 续航多少？" }] }, t);
+    const follow = await agent.invoke(
+      { messages: [{ role: "user", content: "那充电时间呢？" }] }, t);
+    const text = String(follow.messages.at(-1)!.content);
+    expect(text).toMatch(/20\\s*分钟|快充|30|40/);   // 知识库事实：20 分钟快充
+  });
+
+  it("不同 thread 互不串台", async () => {
+    const t1 = { configurable: { thread_id: "solo-1" } };
+    const r = await agent.invoke(
+      { messages: [{ role: "user", content: "IONIQ 5 续航多少？" }] }, t1);
+    expect(String(r.messages.at(-1)!.content)).toContain("580");
+  });
+});
+\`\`\`
+
+三组断言对应走查的三条改造线：键名契约（query→input/question）、通道显式化（隐藏的 input_documents→context）、状态外置（隐式 memory→thread 快照）。全部转绿后，这个 RAG 应用就完成了从 0.x 到 1.x 的整体换代——而且获得了旧架构没有的三样东西：检索步骤可流式观测、会话可并发寻址、记忆可换生产级 checkpointer。下一堂走查处理另一个高频形态：不带检索的对话助手，重点在 summarization middleware 的参数级迁移。
+
+### 五、checkpointer 快照结构走读：MemorySaver 里到底存了什么
+
+第三节用 MemorySaver 替换了 BufferMemory，这里打开 checkpointer 的快照结构看持久化的真正粒度。langgraphjs 侧 Checkpoint 接口（libs/checkpoint/src/base.ts:18）的三个字典：
+
+\`\`\`ts
+// :37  channel_values: Record<C, unknown>       —— 每个通道的当前值（messages 等）
+// :41  channel_versions: Record<C, ChannelVersion> —— 每个通道的版本号（版本时钟）
+// :45  versions_seen: Record<N, Record<C, ChannelVersion>> —— 每个节点已消费的版本
+// :77  emptyCheckpoint 的 v: 4 —— 结构版本号
+\`\`\`
+
+*— langgraphjs libs/checkpoint/src/base.ts:37-77（commit fa426b2，行号索引）*
+
+对照旧持久层就能看清粒度差异：BaseChatMessageHistory 的契约只有 \`addMessage(message)\`（core chat_history.ts:13），\`addMessages\` 也只是循环调用单条 addMessage（chat_history.ts:27-31）——旧持久化只认识「消息追加」这一种操作。checkpointer 存的则是**整张图的通道值 + 版本时钟**：messages 只是 channel_values 里的一个通道，恢复执行时按 channel_versions/versions_seen 的差集决定哪些通道需要重算（模块六 L90/L91 的三字典主题）。这解释了走查里的两个行为：为什么 \`agent.getState(thread)\` 能返回类型化全量状态（读的就是 channel_values），为什么 thread 是寻址单位（MemorySaver 的 storage 按 threadId 分桶，memory.ts:106）——持久化模型从「消息日志」升级为「图状态版本快照」，记忆等价只是这次换代顺带得到的红利。迁移评审时若有人问「为什么不直接留着 BufferMemory + 新 agent」，答案就是粒度：新执行体读写的不是消息列表，是通道状态，BaseMemory 协议根本没有对应物。
+
+### 六、边界条件：三种不必照搬的情形
+
+走查模板不是万能公式，三种情形要调整打法。**情形一：纯单轮检索、无对话历史**——旧代码若根本没配 memory，checkpointer 可以不接：invoke 不传 thread 配置即可，图照跑、状态不存。给无记忆的应用硬加 checkpointer 只会引入快照存储的维护成本，迁移要按存量行为对齐而不是「新形态全家桶」。**情形二：检索时机固定**——旧应用里检索永远在生成前跑一次（RetrievalQAChain 的语义），第二节的前置管线形态（ragChain）就是它的忠实对译；kbSearchTool 工具化形态适合「模型自主决定查不查、查几轮」的场景，把固定管线改成工具化会让每轮多出一次模型决策的延迟与费用。两形态的选择标准是「检索时机是否需要模型判断」，小结里的那句话展开就是这条。**情形三：长文档超窗**——知识库单文档超过模型上下文时，Stuff 塞入策略失效，MapReduce/Refine 的自组路线（quiz 提到）在这里落地：分段摘要用 RunnableEach + RunnableLambda 并行扇出，逐段归并按 Refine 语义串行 reduce——自组成本集中在归并函数，检索装配层不受影响。
+
+三种情形合起来是一个判断框架：走查①给的是「带记忆的检索问答」完整样板，落地时要按存量应用的记忆面、检索时机、文档规模三个维度裁剪——迁移不是把样板抄全，是把样板裁到与旧行为等价。
+
+### 本课小结
+
+- 旧 RAG 的三个隐式面：记忆藏在 chain 对象、检索封在 \`_call\`（retrieval_qa.ts:93-110）、输入键 query——迁移就是把三者全部显式化。
+- 检索装配的 LCEL 化：检索器即 Runnable，RunnablePassthrough.assign 重建「问题+上下文」并行组合；Stuff 类合并策略被三行 Lambda 替代，MapReduce/Refine 需自组。
+- 记忆换代：BufferMemory 隐式协议 → messages 状态 + MemorySaver checkpointer + thread 寻址（checkpoint/src/memory.ts:106、base.ts:180-239）。
+- 检索进 agent 的两种形态：前置管线（ragChain）或工具化（kbSearchTool）——按「模型是否需要自主决定检索时机」选择。
+- 验收三组断言：输入契约、context 通道、多轮记忆等价——这套断言模板在后面两堂走查里复用。
+`,
+    null,
+    [
+      {
+        text: 'RetrievalQAChain._call 的执行序列（classic chains/retrieval_qa.ts:93-110）是？',
+        options: [
+          '先调模型再检索',
+          'retriever.invoke(question) 拿文档 → 拼成 input_documents → combineDocumentsChain.call() 出答案',
+          '并行检索和生成',
+          '只调 retriever 不调模型',
+        ],
+        answer: 1,
+        explain:
+          '源码序列：retrieval_qa.ts:101 `await this.retriever.invoke(question, ...)` → :103 附近组装 `{ question, input_documents: docs, ...values }` → :106 `await this.combineDocumentsChain.call(inputs, ...)`。检索在前、生成在后、串行接力。A 错：顺序相反；C 错：旧链是同步编排没有并行扇出；D 错：combineDocumentsChain 内部必调 LLM。',
+        concept: 'lc-walkthrough-rag',
+      },
+      {
+        text: '旧 RAG 链的输入键是 query（retrieval_qa.ts:63），迁移到 LCEL 组合后输入形状变成什么？',
+        options: [
+          '仍是 { query: string }',
+          '{ input: string }（LCEL 组合的约定输入键），检索产物挂在 { context } 通道',
+          '{ messages: BaseMessage[] } 且无其他字段',
+          '{ question: string }',
+        ],
+        answer: 1,
+        explain:
+          'classic 里已 LCEL 化的桥 createRetrievalChain（chains/retrieval.ts:70-80）返回的 Runnable 输入类型就是 `{ input: string; chat_history?: ... }`、输出 `{ context: Document[]; answer: ... }`——官方把旧 query 键规范化为 input，检索文档从隐藏的 input_documents 变成显式的 context 通道。C 错：带对话历史的 RAG 还有 chat_history/messages 字段；B 里输入键 input 是官方桥与自组 LCEL 的通行约定。',
+        concept: 'lc-walkthrough-rag',
+      },
+      {
+        text: '走查里的对话记忆为什么用 MemorySaver（langgraphjs libs/checkpoint/src/memory.ts:106）而不是继续用 BufferMemory？',
+        options: [
+          'BufferMemory 性能差',
+          'checkpointer 保存的是整个 agent/图状态的版本快照（BaseCheckpointSaver 契约，langgraphjs checkpoint/src/base.ts:180），thread 概念取代 sessionId 惯例；BufferMemory 的隐式读写协议（loadMemoryVariables/saveContext）在新架构无消费方',
+          'MemorySaver 支持向量检索',
+          'BufferMemory 已被删除',
+        ],
+        answer: 1,
+        explain:
+          'L106 的核心结论：持久化粒度从「消息列表」升级为「图状态快照」，BaseCheckpointSaver 的 put/getTuple/putWrites 契约（base.ts:180-239）服务于可重放的中断恢复，thread 是其寻址单位。BufferMemory 类本身还在 classic，但 1.x 的新执行体不消费 BaseMemory 协议。C 错：向量检索是 VectorStore 的事；D 错：类还在，只是无新消费方。',
+        concept: 'lc-walkthrough-rag',
+      },
+      {
+        text: '走查中 MapReduce/Refine 这类长文档合并策略在迁移时该怎么处理？',
+        options: [
+          '换成 createStuffDocumentsChain 即可',
+          '无官方同名替代：Stuff 策略有 LCEL 桥（classic combine_documents/stuff.ts:37），MapReduce/Refine 要用 RunnableEach/RunnableLambda 自组',
+          '直接删除功能',
+          '由 summarizationMiddleware 自动替代',
+        ],
+        answer: 1,
+        explain:
+          '台账证据 10：三个合并策略在旧架构各是一个类（combine_docs_chain.ts:29/131/306），1.x 只有 Stuff 策略有官方 LCEL 函数（stuff.ts:37），MapReduce/Refine 的官方口径是自组——按并行扇出（RunnableEach/RunnableMap）与迭代归并（RunnableLambda + reduce）的 LCEL 形状手写。A 错：Stuff 只覆盖塞入策略；D 错：summarization 管对话上下文不管文档合并。',
+        concept: 'lc-walkthrough-rag',
+      },
+    ],
+    [
+      [
+        'RetrievalQAChain',
+        '0.x RAG 的标准形态（retrieval_qa.ts:57）：retriever + combineDocumentsChain 的 BaseChain 组合，输入键 query',
+      ],
+      [
+        'createRetrievalChain',
+        'classic 里已 LCEL 化的过渡桥（retrieval.ts:70）：返回 Runnable，输入 { input, chat_history }、输出 { context, answer }',
+      ],
+      [
+        'MemorySaver',
+        'langgraphjs 的内存 checkpointer（checkpoint/src/memory.ts:106）：BaseCheckpointSaver 的内存实现，thread 为寻址单位',
+      ],
+      [
+        'thread',
+        'checkpointer 的会话标识维度：一次对话线程对应一串版本快照，取代旧 memory 的 sessionId 惯例',
+      ],
+    ],
+    [
+      '迁移后还按 { query } 传参——LCEL 组合与官方桥的输入键是 input，键名错位会静默拿到 undefined 并触发模板变量缺失错误',
+      '忘了把 sourceDocuments 的调试需求改成显式 context——旧链 returnSourceDocuments 把文档塞进输出；新组合里 context 通道就在返回值上，不要再去旧字段里找',
+      'MemorySaver 直接上生产——它是开发态内存实现（null-prototype 防污染设计，memory.ts:106-120），生产要换 Postgres/Redis saver，thread 命名也要提前规划而不是用随机数',
+    ],
+  ),
+  'practice',
+)

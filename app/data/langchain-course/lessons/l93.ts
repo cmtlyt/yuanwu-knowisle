@@ -1,0 +1,282 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L93 = withKind(
+  L(
+    'L93',
+    26,
+    'callback 消费端：configure 双层合并、handler 报错不中断主流程',
+    3,
+    ['L92'],
+    ['lc-callback-consumer'],
+    [
+      '还原 CallbackManager.configure 的 inheritable + local 双层合并语义，并解释 copy 的继承标记差异',
+      '手写验证 handler 抛错不中断主流程的容错路径与 raiseError 逃生舱',
+      '打通 configure 侧 langchain↔langsmith 的 parent run id 交接机制',
+    ],
+    `### 消费端机制：handler 怎么被装进每层 run、出错怎么办
+
+上一课讲了 tracer 的上报路径；本课下探消费端的两个机械问题：**handler 如何在嵌套 Runnable 之间逐层传播（configure 双层合并），以及 handler 自己出错时为什么不会拖垮业务**。framework 课型，callbacks/manager.ts 逐段走读（commit 7704471）。
+
+### 走读：Callbacks 三态与 configure 双层合并
+
+\`\`\`ts
+// 行 41：Callbacks 类型三态
+export type Callbacks =
+  | (BaseCallbackHandler | HandlerObject)[]
+  | HandlerObject
+  | undefined;
+
+// 行 1337-1355 / 1358-1442
+static configure(
+  inheritableHandlers?: Callbacks,
+  localHandlers?: Callbacks,
+  inheritableTags?: string[],
+  localTags?: string[],
+  inheritableMetadata?: Record<string, unknown>,
+  localMetadata?: Record<string, unknown>,
+  options?: CallbackManagerOptions
+): CallbackManager | undefined {
+  return this._configureSync(inheritableHandlers, localHandlers, inheritableTags, localTags, inheritableMetadata, localMetadata, options);
+}
+
+static _configureSync(...): CallbackManager | undefined {
+  let callbackManager: CallbackManager | undefined;
+  if (inheritableHandlers || localHandlers) {
+    if (Array.isArray(inheritableHandlers) || !inheritableHandlers) {
+      callbackManager = new CallbackManager();
+      callbackManager.setHandlers(inheritableHandlers?.map(ensureHandler) ?? [], true);   // true = inheritable
+    } else {
+      callbackManager = inheritableHandlers;   // 传入的已是 manager
+    }
+    callbackManager = callbackManager.copy(
+      Array.isArray(localHandlers) ? localHandlers.map(ensureHandler) : localHandlers?.handlers,
+      false                                    // false = local 层不继续继承
+    );
+  }
+  // ...
+}
+\`\`\`
+
+*— langchain-core/src/callbacks/manager.ts:41, 1337-1385（commit 7704471）*
+
+逐段读。**类型三态**：handler 数组 / 单个「按事件名分派方法」的普通对象 / undefined。普通对象形态（HandlerObject）是便捷写法——\`configure\` 里的 \`ensureHandler\`（以及 \`CallbackManager.fromHandlers\`）会动态生成一个 BaseCallbackHandler 子类、\`Object.assign(this, handlers)\` 把方法贴上去、name 用 uuidv7 兜底。**双层合并语义**：inheritable 层先装进新 manager（\`setHandlers(handlers, true)\` 的第二参数就是 inheritable 标记），local 层经 \`copy(handlers, false)\` 附加——\`false\` 意味着 local handler **止步于当前 run**，getChild 派生的更深层拿不到它。tags 与 metadata 完全同构（inheritableTags/localTags 两层）。
+
+这个设计的用户面语义：\`model.invoke(input, { callbacks: myHandler })\` 里的 handler 是 **local** 还是 inheritable 取决于传播路径上的标记；要「贯穿整条 LCEL 链」的观测 handler 应该走 inheritable（如 withConfig 传入的会沿链下发），只在某一层调试用的 handler 用 local 即可——**观测作用域本身就是个作用域问题**。
+
+### run 树的构造现场：getChild
+
+\`\`\`ts
+// CallbackManagerForXxxRun.getChild —— 四种 run 类型（LLM/Chain/Tool/Retriever）各有一份同构实现
+getChild(tag?: string): CallbackManager {
+  const manager = new CallbackManager(this.runId);
+  manager.setHandlers(this.inheritableHandlers);   // 只带可继承层
+  manager.addTags(this.inheritableTags);
+  manager.addMetadata(this.inheritableMetadata);
+  if (tag) { manager.addTags([tag], false); }      // tag 不可继承
+  return manager;
+}
+\`\`\`
+
+*— langchain-core/src/callbacks/manager.ts（commit 7704471）*
+
+getChild 是 L36 执行树视角的机械实现：\`new CallbackManager(this.runId)\`——**父 run 的 id 变成子 manager 的 parentRunId**，这就是 run 树父子指针的诞生现场。handler 集只从 \`inheritableHandlers\` 复制（local 层止步，与上节对应）；可选 tag 参数（如 VectorStoreRetriever 里传的 "vectorstore"）以不可继承方式附加——给子 run 打个一次性标签。每个 Runnable 在 invoke 里 configure 合成自己层的 manager，执行到子组件时再 getChild——逐层下发，树就长出来了。四个专用 run manager（CallbackManagerForLLMRun/ChainRun/ToolRun/RetrieverRun）都提供同构 getChild，派生时还会派生专属类型（handleRetrieverEnd 那组方法只存在于 Retriever 版）。
+
+### 容错哲学：观测错误不打断业务
+
+\`\`\`ts
+// handleLLMStart 的 handler 调度片段
+return consumeCallback(async () => {
+  try {
+    await handler.handleLLMStart?.(llm, [prompt], runId_, this._parentRunId, ...);
+  } catch (err) {
+    const logFunction = handler.raiseError ? console.error : console.warn;
+    logFunction(\`Error in handler \${handler.constructor.name}, handleLLMStart: \${err}\`);
+    if (handler.raiseError) { throw err; }
+  }
+}, handler.awaitHandlers);
+\`\`\`
+
+*— langchain-core/src/callbacks/manager.ts:866-889（commit 7704471）*
+
+核心哲学在这五行的 try/catch 里：**handler 抛错默认被捕获，打一条 \`Error in handler X, handleLLMStart: ...\` 日志（默认 warn 级，raiseError 为 true 升级为 error），主流程继续**。理由很直白：观测是旁路，遥测系统的故障（比如 langsmith 网络抖动、自定义 handler 里写了 bug）不应该让用户的业务请求失败。\`raiseError\` 是给少数场景的逃生舱——「handler 本身承载了业务语义」（如 handler 里做审计写入，失败必须告警）时显式打开。\`consumeCallback\` 的第二参数 \`handler.awaitHandlers\` 决定是否 await 这个 handler：多数 handler 异步 fire-and-forget，需要时序保证的 tracer（如 EventStreamCallbackHandler 构造时传 \`_awaitHandler: true\`）才同步等待。设计取舍一句话总结：**默认宽松（不中断、不等待），代价显式声明（raiseError/awaitHandlers）**。
+
+### 走读：configure 里的 langsmith 交接与 verbose 闸门
+
+_configureSync 的后半段还有两条自动化路径（manager.ts:1387-1442）：
+
+\`\`\`ts
+const verboseEnabled =
+  getEnvironmentVariable("LANGCHAIN_VERBOSE") === "true" || options?.verbose;
+
+const traceableRunTree = LangChainTracer.getTraceableRunTree();
+const tracingV2Enabled = traceableRunTree?.tracingEnabled ?? isTracingEnabled();
+
+// 父级显式关闭追踪 → 移除继承的 langchain_tracer
+if (traceableRunTree?.tracingEnabled === false && callbackManager) {
+  const inheritedTracers = callbackManager.handlers.filter((h) => h.name === "langchain_tracer");
+  for (const tracer of inheritedTracers) { callbackManager.removeHandler(tracer); }
+}
+
+if (verboseEnabled || tracingEnabled) {
+  // LANGCHAIN_VERBOSE → 自动加 ConsoleCallbackHandler（去重：已有则不加）
+  // LANGCHAIN_TRACING/traceable 开启 → 自动加 LangChainTracer（去重：已有则不加）
+  if (tracingV2Enabled && traceableRunTree && callbackManager._parentRunId === undefined) {
+    callbackManager._parentRunId = traceableRunTree.id;   // langchain ↔ langsmith/traceable 的 parent run id 交接
+    // ...并在 handlers 里找到新加的 tracerV2 接管该树
+  }
+}
+\`\`\`
+
+*— langchain-core/src/callbacks/manager.ts:1387-1442（commit 7704471）*
+
+三个自动化行为。其一，**环境变量闸门**：\`LANGCHAIN_VERBOSE=true\` 自动注入 ConsoleCallbackHandler（带去重——按 name 检查已存在则跳过），\`LANGCHAIN_TRACING\` 或 traceable 上下文开启时自动注入 LangChainTracer。**开启追踪从来不需要手动 new tracer**——configure 在每次 invoke 的配置合成时自动完成。其二，**显式关闭的传播**：父级 \`@traceable({ tracingEnabled: false })\` 时，configure 主动剔除继承来的 langchain_tracer——「关追踪」也是一个可继承的决定。其三，**parent run id 交接**：traceableRunTree 存在且当前 manager 无 parent 时，\`callbackManager._parentRunId = traceableRunTree.id\`——langchain 的 run 树直接挂到 traceable 的树上，两套观测体系在此完成拼接，呼应 L92 讲的双入口互认。
+
+_configureSync 的结尾还有第四条通道：\`_getConfigureHooks()\` 返回的钩子列表被逐个消费（manager.ts:1437-1470）——handler 还能经**上下文变量**（contextVar，AsyncLocalStorage 体系）注入，或由环境变量命中时新建（createIfNotInContext），全部按 name 去重、继承性由钩子声明的 inheritable 决定。这是「隐式配置注入」（L35 的 AsyncLocalStorage 轨）在回调体系里的落点：不传任何 callbacks 的深层 Runnable 也能被上下文变量捕获到事件。
+
+### 补读：copy 的继承保留与 ensureHandler 的包装
+
+configure 里两次出现 \`copy\`，它的完整语义值得补读。\`copy(additionalHandlers, inherit)\` 搬家时**逐个 handler 判断「是否在 inheritableHandlers 数组里」来决定继承标记**（manager.ts:1290-1305）——继承性不是 manager 级的开关，而是 per-handler 的属性，搬到新 manager 上每个 handler 各自保留原标记；tags 与 metadata 同样按各自的 inheritable 集合逐项判断。附加 additionalHandlers 时还有一个特例去重：**console_callback_handler 不重复加**（manager.ts:1308-1315，注释原文 Prevent multiple copies of console_callback_handler）——verbose 反复触发 configure 不会堆出一摞控制台 handler。
+
+\`ensureHandler\`（manager.ts:1561-1570）负责把三态输入的第一种形态之外的普通对象包成真 handler：判断条件是 \`"name" in handler\`——**有 name 字段的对象被直接当作 BaseCallbackHandler 使用**，没有的走 \`BaseCallbackHandler.fromMethods(handler)\` 动态生成子类实例，并额外用 \`Object.defineProperty\` 记下 HANDLER_SOURCE 指回原对象。\`fromHandlers\`（manager.ts:1322-1330）生成的包装类 name 取 \`uuidv7()\`——这就呼应了 pitfalls 里「对象字面量忘写 name 会导致 uuid 名」的调试问题：包装能跑，但按 name 过滤观测事件的调试手段失效了。
+
+*— langchain-core/src/callbacks/manager.ts:1290-1330, 1561-1570（commit 7704471）*
+
+### 手写对照：验证双层与容错
+
+\`\`\`ts
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import { RunnableLambda } from "@langchain/core/runnables";
+
+// 一个会在 start 时抛错的 handler
+const explodingHandler = new (class extends BaseCallbackHandler {
+  name = "exploding_handler";
+  handleChainStart() { throw new Error("boom from handler"); }
+})();
+
+const inner = RunnableLambda.from((x: string) => \`processed:\${x}\`);
+const outer = RunnableLambda.from(async (x: string) => {
+  // 内层用 local handler（只影响这一层及其 getChild 派生）
+  return await inner.invoke(x, { callbacks: [explodingHandler] });
+});
+
+// 1. handler 抛错，主流程照常返回
+const result = await outer.invoke("test", { callbacks: [explodingHandler] });
+console.log(result);              // "processed:test" —— 没有被 boom 中断
+// 控制台出现：Error in handler <name>, handleChainStart: boom from handler（warn 级）
+
+// 2. raiseError = true 的逃生舱
+const strictHandler = Object.assign(explodingHandler, { raiseError: true });
+try {
+  await inner.invoke("test", { callbacks: [strictHandler] });
+} catch (e) {
+  console.log("interrupted:", (e as Error).message);   // interrupted: boom from handler
+}
+
+// 3. 双层作用域：inheritable 沿链传播、local 止步
+const tracer = new (class extends BaseCallbackHandler {
+  name = "counting_handler";
+  seen: string[] = [];
+  handleChainStart(chain: any, inputs: any, runId: string, parentRunId?: string) {
+    this.seen.push(parentRunId ? "child" : "root");
+  }
+})();
+await outer.invoke("x", { callbacks: [tracer] });    // 以配置传入 → 沿 invoke 链传播到 inner
+console.log(tracer.seen);                            // ["root", "child"] —— 两层都被观测
+\`\`\`
+
+验收断言三条：断言一，explodingHandler 抛错后 outer.invoke 正常返回 processed:test，且控制台出现 handler 错误警告——容错路径生效；断言二，raiseError 打开后同样的错误中断 invoke——逃生舱生效；断言三，经配置传入的 handler 在两层 run 上都触发 handleChainStart（root 与 child 各一次）——inheritable 传播生效。若把 handler 换成在 inner.invoke 的调用点以 \`{ callbacks: [...] }\` 局部传入并再嵌一层、外层观测不到它，就能亲手验证 local 止步语义。
+
+### 本课小结
+
+- Callbacks 三态：数组 / 按事件名分派的对象（ensureHandler 包装成实例）/ undefined。
+- configure 双层合并：inheritable 层 setHandlers(true) 起底、local 层 copy(false) 止步当前 run；tags/metadata 同构。
+- getChild = run 树生长现场：父 runId 转 parentRunId、只复制 inheritable 层、tag 一次性附加。
+- 容错哲学：handler 报错默认 catch + warn、主流程继续；raiseError/awaitHandlers 两个显式声明的代价开关。
+- configure 还负责 verbose/tracing 闸门注入与 langsmith↔traceable 的 parent run id 交接——观测的自动装配中心。
+- 下一课转向外部连接：MCP 适配器——外部协议工具如何归一成 DynamicStructuredTool。
+`,
+    null,
+    [
+      {
+        text: 'Callbacks 类型的三态是？',
+        options: [
+          'string / number / object',
+          '处理器数组、单个 handler 对象（按事件名分派的方法集合）、undefined',
+          '只能是数组',
+          '同步函数 / 异步函数 / Promise',
+        ],
+        answer: 1,
+        explain:
+          'callbacks/manager.ts:41：export type Callbacks = (BaseCallbackHandler | HandlerObject)[] | HandlerObject | undefined。可以传 handler 数组、也可以传一个「按事件名分派方法」的普通对象（configure 里的 ensureHandler/fromHandlers 会包装成 BaseCallbackHandler 子类实例）、或不传。',
+        concept: 'lc-callback-consumer',
+      },
+      {
+        text: 'configure 双层合并的语义是什么？',
+        options: [
+          'local 覆盖 inheritable',
+          'inheritableHandlers 作为新 manager 的基础并标记可继承，localHandlers 经 copy 附加且不继续向下继承',
+          '两边都不可继承',
+          '随机合并',
+        ],
+        answer: 1,
+        explain:
+          'manager.ts:1358-1385：_configureSync 先把 inheritableHandlers 装进新 CallbackManager（setHandlers(handlers, true)），再用 callbackManager.copy(localHandlers, false) 附加本地层——第二参数 false 表示本地 handler 不随 getChild 继续传播。tags/metadata 同理双层。',
+        concept: 'lc-callback-consumer',
+      },
+      {
+        text: 'handler 的 handleLLMStart 抛出异常时主流程会怎样？',
+        options: [
+          '直接中断模型调用',
+          '被 catch 后用 console.error/warn 记录 Error in handler ... handleLLMStart，主流程继续；只有 handler.raiseError 为 true 时才重抛',
+          '静默吞掉不记录',
+          '抛出后由 Promise.all 传播',
+        ],
+        answer: 1,
+        explain:
+          'manager.ts:866-888：consumeCallback 内 try/catch 包住 await handler.handleLLMStart?.(...)，错误打日志（raiseError 决定 error 还是 warn 级别），unless raiseError 不重抛——观测不能拖垮业务。raiseError 是给「观测错误本身就是事故」场景的逃生舱。',
+        concept: 'lc-callback-consumer',
+      },
+      {
+        text: 'configure 里 traceableRunTree.tracingEnabled === false 会发生什么？',
+        options: [
+          '无影响',
+          '遍历移除继承来的 langchain_tracer handler——父级 @traceable 显式关追踪时子级不再上报',
+          '强制开启追踪',
+          '抛错',
+        ],
+        answer: 1,
+        explain:
+          'manager.ts:1398-1405：filter 出 handler.name === "langchain_tracer" 的继承 tracer 并 removeHandler。这是「traceable({ tracingEnabled: false }) 关闭追踪」的实现路径——名字识别 + 移除，与 isStreamEventsHandler 的识别手法同款。',
+        concept: 'lc-callback-consumer',
+      },
+      {
+        text: 'getChild(tag?) 派生子 manager 时继承什么？',
+        options: [
+          '全部 handlers 包括 local',
+          '只继承 inheritableHandlers/inheritableTags/inheritableMetadata，当前 runId 成为新 manager 的 parentRunId，tag 以不可继承方式附加',
+          '什么都不继承',
+          '只继承 tags',
+        ],
+        answer: 1,
+        explain:
+          'manager.ts 里 CallbackManagerForXxxRun.getChild：new CallbackManager(this.runId)——父 runId 变成子的 parentRunId；setHandlers(this.inheritableHandlers) 只带可继承层；tag 用 addTags([tag], false) 不可继承附加。这就是 run 树生长 + handler 逐层下发的构造现场。',
+        concept: 'lc-callback-consumer',
+      },
+    ],
+    [
+      [
+        'CallbackManager.configure',
+        '回调配置合成静态工厂：inheritable 层 + local 层双层合并，tags/metadata 同理',
+      ],
+      ['inheritable 标记', 'handler 是否随 getChild 继续向下传播的布尔属性，local 层为 false'],
+      ['raiseError', 'handler 的逃生舱属性：true 时观测错误重抛中断主流程，默认 false 只告警'],
+      ['consumeCallback', 'handler 调用的统一包装：错误捕获 + awaitHandlers 决定是否等待异步 handler'],
+    ],
+    [
+      '以为 local handler 会传到所有嵌套 Runnable——copy(handlers, false) 后 local 层止步于当前 run，深层嵌套拿不到；要传深层的必须走 inheritable',
+      '在 handler 里抛错并假设会中断业务——默认只 console 警告；真的需要 fail-fast 要显式设 raiseError',
+      '用对象字面量传 Callbacks 时忘写 name——ensureHandler 包装会生成 uuid 名，但调试时无法按 name 过滤定位',
+    ],
+  ),
+  'framework',
+)

@@ -1,0 +1,254 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L03 = withKind(
+  L(
+    'L03',
+    1,
+    '主包导出面清单：从 index.ts 读出 1.x 的产品重心',
+    2,
+    ['L01'],
+    ['lc-export-surface'],
+    [
+      '能背出主包 index.ts 的六组导出并说出每组来自哪个模块',
+      '能区分「主包自有导出」与「core 转发导出」两类导出的意义',
+      '能数清主包 package.json 的 12 个子路径导出及其用途',
+    ],
+    `### 78 行代码定义一个包的雄心
+
+L02 从依赖表看穿了主包「依赖谁」，本课从导出面看穿主包「提供什么」。取证对象只有一个文件：\`libs/langchain/src/index.ts\`，实测 **78 行**。这 78 行就是 1.x 主包的全部产品宣言——对比 classic 的 100 个子路径导出（L07），主包的克制本身就是结论：**1.x 把「agent harness」做成主包的几乎全部，其余一切要么下沉 core 要么进博物馆**。
+
+### 第一组导出：从 core 转发来的消息白名单
+
+\`\`\`ts
+/**
+ * LangChain Messages
+ */
+export {
+  BaseMessage,
+  BaseMessageChunk,
+  AIMessage,
+  AIMessageChunk,
+  SystemMessage,
+  SystemMessageChunk,
+  HumanMessage,
+  HumanMessageChunk,
+  ToolMessage,
+  ToolMessageChunk,
+  type ContentBlock,
+  filterMessages,
+  trimMessages,
+} from "@langchain/core/messages";
+\`\`\`
+
+*— libs/langchain/src/index.ts:1-17（commit 7704471）*
+
+注意两个设计细节。**其一**，这是手写白名单而非 \`export *\`——core 的 messages 模块里还有 RemoveMessage、FunctionMessage、ChatMessage 等成员，主包只挑了五个最常用的类与两个消息工具函数。**其二**，Chunk 类与基础类成对出现：流式场景下你几乎总要同时 import AIMessage 与 AIMessageChunk（合并规则见 L15）。这份白名单的挑选标准是「写一个标准 agent 对话循环需要什么」，冷门成员去 core 子路径自取。
+
+### 第二组：主包仅有的两处自有新增
+
+\`\`\`ts
+/**
+ * Universal Chat Model
+ */
+export { initChatModel } from "./chat_models/universal.js";
+
+/**
+ * LangChain Tools with support for headless tools
+ */
+export {
+  tool,
+  type HeadlessTool,
+  type HeadlessToolFields,
+  type HeadlessToolImplementation,
+} from "./tools/headless.js";
+\`\`\`
+
+*— libs/langchain/src/index.ts:19-30（commit 7704471）*
+
+整个主包对 core 没有的能力做的新增，从根导出面看只有两个：**initChatModel**（按字符串动态装载任意 provider 的模型）与 **headless tool**（不带实现函数的 \`tool({ name, description, schema })\`，把执行权交给客户端）。L09 会把这两处的实现逐行拆开。这是模块一里「主包唯二的新增面」这个说法的源码出处。
+
+### 第三组到第五组：工具原语、上下文与 store/document
+
+\`\`\`ts
+export {
+  Tool,
+  type ToolRuntime,
+  DynamicTool,
+  StructuredTool,
+  DynamicStructuredTool,
+} from "@langchain/core/tools";
+
+export { context } from "@langchain/core/utils/context";
+
+export { InMemoryStore } from "@langchain/core/stores";
+export { type DocumentInput, Document } from "@langchain/core/documents";
+\`\`\`
+
+*— libs/langchain/src/index.ts:32-56（commit 7704471，三段合并摘录）*
+
+这三组延续「转发白名单」模式：工具层转发五个最常用原语并带上 ToolRuntime 类型（中间件与 tool() 第二参数注入的关键类型，L23 展开）；\`context\` 是 AsyncLocalStorage 封装的隐式上下文工具；InMemoryStore 与 Document 是 RAG 与持久化场景的最小入口。注意 ToolRuntime 以 \`type\` 形态转发——它只是类型，运行时对象由框架在工具执行时注入，主包不构造它。
+
+### 第六组：两条 export *，重心所在
+
+\`\`\`ts
+/**
+ * LangChain Agents
+ */
+export * from "./agents/index.js";
+
+/**
+ * \`createAgent\` pre-built middleware
+ */
+export * from "./agents/middleware/index.js";
+\`\`\`
+
+*— libs/langchain/src/index.ts:58-66（commit 7704471）*
+
+全文件仅有的两条 \`export *\` 都给了 agents——这就是产品重心的直接证据。\`./agents/index.js\` 里有 createAgent 的 14 个重载、ReactAgent 类型、createMiddleware 工厂、MIDDLEWARE_BRAND、toolStrategy/providerStrategy 等结构化输出原语；\`./agents/middleware/index.js\` 则把 20 个内置中间件全部倒进根面。**你从 "langchain" 根入口 import 到的绝大部分符号，运行时都来自这两个文件**。最后还有一组测试工具导出（langchainMatchers、fakeModel，来自 @langchain/core/testing），供断言 agent 行为使用。
+
+### 子路径导出面：12 个条目与 browser 镜像
+
+package.json 的 exports 字段实测共 **12 个子路径**：
+
+| 子路径 | 用途 |
+|---|---|
+| \`.\` | 根入口（browser 条件指向 browser.js） |
+| \`./browser\` | 浏览器镜像面（browser.ts） |
+| \`./chat_models/universal\` | initChatModel 的独立入口 |
+| \`./hub\`、\`./hub/node\` | Hub 拉取（node 版含文件系统能力） |
+| \`./load\`、\`./load/serializable\` | 序列化加载 |
+| \`./storage/*\` 三个 | 存储后端（in_memory / file_system / encoder_backed） |
+| \`./tools\` | headless tool 独立入口 |
+| \`./package.json\` | 自描述条目 |
+
+每个子路径都声明了 \`browser\`/\`input\`/\`require\`/\`import\` 四组条件——\`require\` 指向 \`.cjs\` 产物、\`import\` 指向 \`.js\` 产物（双格式机制在 L06 拆解）。\`browser.ts\` 是根导出面的浏览器镜像：同样的消息白名单、initChatModel、tool、agents 与 middleware 转发，只是文档注释与个别细节不同。**维护两份导出面是有意为之的成本**：浏览器条件解析不需要运行时嗅探，打包器直接按条件选文件。
+
+### 对照：一个根入口的三种哲学
+
+| 包 | 根入口内容 | 子路径数 | 哲学 |
+|---|---|---|---|
+| langchain | 78 行精选白名单 + 2 条 export * | 12 | 精选面：主推 createAgent 流 |
+| @langchain/core | \`export {}\`（空） | 74 | 强制子路径：按模块精确导入 |
+| @langchain/classic | 一句 console.warn | 100 | 拒绝根导入：每个旧 API 必须显式表态 |
+
+core 根入口源码是一行 \`export {};\`（libs/langchain-core/src/index.ts:1），classic 根入口是一句警告——三个包用三种截然不同的根入口策略表达同一件事：**1.x 的一切公共 API 都经由显式声明的面暴露，没有隐式全量导出**。主包的白名单是「方便」与「克制」的折中：常用消息类零成本可得，其余原语引导你去 core 子路径。
+
+### 内层转发面的心脏：createAgent 的重载链与一行实现体
+
+第六组那两条 \`export *\` 的上游文件 \`agents/index.ts\` 值得单独取一段证——它是整个导出面里唯一「体量与地位不成比例」的地方：十几份类型重载堆出长长的参数矩阵，而实现体只有一行。摘录最后一份签名（即实现签名）：
+
+\`\`\`ts
+export function createAgent<
+  StructuredResponseFormat extends Record<string, any>,
+  TStateSchema extends StateDefinitionInit,
+  ContextSchema extends AnyAnnotationRoot | InteropZodObject,
+  TMiddleware extends readonly AnyAgentMiddleware[] =
+    readonly AnyAgentMiddleware[],
+  TTools extends readonly (ClientTool | ServerTool)[] = readonly (
+    | ClientTool
+    | ServerTool
+  )[],
+  TStreamTransformers extends ReadonlyArray<() => StreamTransformer<any>> =
+    readonly [],
+>(
+  params: CreateAgentParams<
+    StructuredResponseFormat,
+    TStateSchema,
+    ContextSchema,
+    any
+  >
+): ReactAgent<
+  AgentTypeConfig<
+    StructuredResponseFormat,
+    TStateSchema,
+    ContextSchema,
+    TMiddleware,
+    CombineTools<TTools, TMiddleware>,
+    CombineStreamTransformers<TStreamTransformers, TMiddleware>
+  >
+> {
+  return new ReactAgent(params);
+}
+\`\`\`
+
+*— libs/langchain/src/agents/index.ts:672-701（commit 7704471，最后一份重载即实现体）*
+
+逐段读。**六个泛型参数**各管一摊：StructuredResponseFormat 对应 responseFormat 的 Zod 对象形态、TStateSchema/ContextSchema 对应双 schema、TMiddleware 收集中间件数组、TTools 收集工具数组、TStreamTransformers 收集流变换器。**返回类型不是 ReactAgent 裸类型**，而是把六个泛型全部灌进 AgentTypeConfig 做类型级组装——这就是为什么 \`createAgent({ model, tools })\` 的返回值能自动推导出工具名联合类型（模块八 L99/L100 讲泛型推导时正面拆）。**实现体 \`return new ReactAgent(params)\` 是全文件最短也最重的一句话**：前面十几份重载（本文件 :594 起）全部是类型层的分派表演，运行时只做一次构造委托。导出面清单课看到这里就够了——重载矩阵与 ReactAgent 的编译细节是 L37/L41 的地盘，此处只取「重载数量与实现体大小成反比」这个架构信号。
+
+还有一个导出面之外的观察：实现签名之后紧跟 \`export * from "./types.js"\`、\`./errors.js\`、\`./nodes/types.js\`（agents/index.ts:703-705 起）——内层转发面在实现体后面继续铺开，把类型与错误类一起倒进根面。L03 开头说「78 行定义一个包的雄心」，现在可以补全后半句：**这 78 行的分量集中在两条 export * 上，而两条 export * 的分量又集中在 agents/index.ts 的这一条重载链上**。产品重心在导出面、内层转发面、实现体三个层级上是同一个方向，没有一丝错位。
+
+### 本课小结
+
+- 主包 index.ts 实测 78 行：六组命名导出 + 两条 export *（全部给 agents），无一条多余。
+- core 转发是白名单模式：消息五类 + Chunk、工具五原语、InMemoryStore、Document、context；Runnable 原语刻意不转发。
+- 主包自有新增仅两处：initChatModel 与 headless tool（L09 详拆）——「唯二的新增面」有源码实据。
+- exports 子路径 12 个，全部四条件声明（browser/input/require/import）；browser.ts 是根面的浏览器镜像。
+- 下一课转向 core 的 dependencies：zod v4、mustache、p-queue、js-tiktoken 这七个依赖各管什么，以及 core 为什么把 langsmith 设为硬依赖。
+`,
+    null,
+    [
+      {
+        text: '主包 src/index.ts 一共多少行？其中 agents 与 middleware 各占一条什么语句？',
+        options: [
+          '约 2000 行，agents 占 1900 行',
+          '78 行；agents 与 middleware 各用一条 export * 转发',
+          '3 行，只有一句 console.warn',
+          '约 500 行，逐个列出 createAgent 的重载',
+        ],
+        answer: 1,
+        explain:
+          'libs/langchain/src/index.ts 实测 78 行，主体是六组命名导出加两条 `export *`（分别指向 ./agents/index.js 与 ./agents/middleware/index.js）。createAgent 的 14 个重载长在 agents/index.ts 里而非包根。A 量级错误；C 是 classic 的根入口；D 把重载位置记错了。',
+        concept: 'lc-export-surface',
+      },
+      {
+        text: '主包从 @langchain/core/messages 转发了哪些消息类？',
+        options: [
+          '全部消息类，用 export *',
+          '精选清单：BaseMessage/AIMessage/SystemMessage/HumanMessage/ToolMessage 及其 Chunk，外加 filterMessages、trimMessages 与 ContentBlock 类型',
+          '只有 BaseMessage 和 AIMessage',
+          '一个都不转发，必须自己 import core',
+        ],
+        answer: 1,
+        explain:
+          'index.ts 的第一组导出是一份手写白名单：五个基础消息类 + 各自 Chunk + filterMessages/trimMessages 两个工具函数 + ContentBlock 类型。它刻意不用 export *（core 根入口本来就是空的），挑选的是「绝大多数 agent 应用需要」的子集——FunctionMessage/ChatMessage 等冷门类不在清单里，需要时直接 import core 子路径。',
+        concept: 'lc-export-surface',
+      },
+      {
+        text: '主包 package.json 的 exports 字段共有多少个子路径？',
+        options: ['12 个', '74 个', '100 个', '2 个（. 与 ./browser）'],
+        answer: 0,
+        explain:
+          '实测 exports 键为 .、./browser、./chat_models/universal、./hub、./hub/node、./load、./load/serializable、./storage/encoder_backed、./storage/file_system、./storage/in_memory、./tools、./package.json，共 12 个。74 是 core 的子路径数，100 是 classic 的——子路径数量本身就是产品重心的量化证据。',
+        concept: 'lc-export-surface',
+      },
+      {
+        text: '下列哪个 API 不在主包根导出面里？',
+        options: ['createAgent', 'initChatModel', 'RunnableSequence', 'summarizationMiddleware'],
+        answer: 2,
+        explain:
+          'RunnableSequence 住在 core 的 runnables/ 模块里，主包根导出面刻意不转发 Runnable 组合原语——组合管道走 @langchain/core/runnables 子路径导入。createAgent 与 middleware 经两条 export * 进入根面；initChatModel 是 index.ts 里唯一的函数级自有导出（下一组还有 tool/headless）。',
+        concept: 'lc-export-surface',
+      },
+    ],
+    [
+      [
+        '导出面',
+        '一个包允许被外部 import 的 API 全集：根入口 index.ts 的命名导出 + package.json exports 的子路径清单共同构成',
+      ],
+      [
+        '转发导出',
+        '用 export { X } from "..." 把依赖包的符号重新对外提供的写法；主包大量用它把 core 原语升格为主包 API',
+      ],
+      [
+        '子路径导出',
+        'package.json exports 字段里 "./xxx" 形式的条目，决定 import "pkg/xxx" 能否解析以及解析到哪个产物文件',
+      ],
+    ],
+    [
+      'import { RunnableSequence } from "langchain" 会编译报错——runnables 原语不在主包根导出面，要从 @langchain/core/runnables 导入',
+      '以为 export * 会把 core 全部符号倒进来——两条 export * 分别只指向主包自己的 agents/index.js 与 middleware/index.js，core 部分全是手写白名单',
+      '忽略 ./browser 子路径——浏览器环境解析到 browser.ts 产物，其导出面与 Node 版有细微差异（如 headless 工具注释不同），写跨端代码时要两边核对',
+    ],
+  ),
+  'framework',
+)

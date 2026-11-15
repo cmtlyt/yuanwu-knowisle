@@ -1,0 +1,243 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L97 = withKind(
+  L(
+    'L97',
+    28,
+    '错误哲学分野：parse 抛错可回喂 vs 返回 undefined；structuredOutput 能力协商',
+    3,
+    ['L96'],
+    ['lc-parse-error-philosophy'],
+    [
+      '能对照两条 parse 契约的失败路径（抛 StructuredOutputParsingError vs 静默返回 undefined）并说出各自背后的机制依据',
+      '能列出 handleError 四态（true/false/string/回调）各自的语义与默认值',
+      '能解释 hasSupportForJsonSchemaOutput 读 profile 元数据做能力协商的设计，以及 thought 块过滤的兼容目的',
+    ],
+    `### 同一个 Validator，两种失败语义
+
+L96 把两个策略类的外壳立了起来；本课进入它们的 parse 方法——结构化输出真正的风险面。核心结论：**同一个 JSON Schema Validator，在两条数据通道里衍生出相反的错误哲学——ToolStrategy 抛错，因为 tool 循环天然有「错误回喂」的通道；ProviderStrategy 返回 undefined，因为 content 通道一旦出错就无处安放错误消息**。此外本课补齐能力协商函数 \`hasSupportForJsonSchemaOutput\` 的判定细节，它是 L98 归一化管线里决定默认策略的那个开关。
+
+### ToolStrategy.parse：抛错，是为了能回喂
+
+\`\`\`ts
+parse(toolArgs: Record<string, unknown>): Record<string, unknown> {
+  const validator = new Validator(this.schema);
+  const result = validator.validate(toolArgs);
+  if (!result.valid) {
+    throw new StructuredOutputParsingError(
+      this.name,
+      result.errors.map((e) => e.error)
+    );
+  }
+  return toolArgs;
+}
+\`\`\`
+
+*— libs/langchain/src/agents/responses.ts:151-161（commit 7704471）*
+
+失败路径只有一条：抛 \`StructuredOutputParsingError\`，错误对象携带工具名（\`this.name\`，即 extract-N 或 schema title）与逐条校验错误。抛错不是缺陷而是设计——**tool calling 通道里，模型的产出是一轮 tool call，错误可以变成一条 ToolMessage 写回对话历史**，模型在下一轮读到「你给的参数缺了 email 字段」后自我修正。这依赖 \`handleError\` 的四态语义（responses.ts:452-476）：
+
+\`\`\`ts
+export interface ToolStrategyOptions {
+  toolMessageContent?: string;
+  handleError?:
+    | boolean
+    | string
+    | ((error: ToolStrategyError) => Promise<string> | string);
+}
+\`\`\`
+
+*— libs/langchain/src/agents/responses.ts:452-476（裁剪，commit 7704471）*
+
+JSDoc 逐条写明：\`true\` 重试工具调用（默认值）；\`false\` 抛出错误；\`string\` 用给定消息重试；回调函数返回消息则重试、抛错则终止。触发场景也是两-specific 的：多个结构化输出 schema 时模型调了多个 extract 工具（\`MultipleStructuredOutputsError\`），或工具参数不匹配 schema（\`StructuredOutputParsingError\`）。\`toolMessageContent\` 则定制结构化输出生成后写进历史的消息内容（responses.ts:457）。**注意 false 的语义是 throw 而非忽略**——把「不自动重试」和「吞掉错误」混为一谈是最常见的误读。
+
+### ProviderStrategy.parse：undefined，因为无处回喂
+
+\`\`\`ts
+parse(response: AIMessage) {
+  let textContent: string | undefined;
+  if (typeof response.content === "string") {
+    textContent = response.content;
+  } else if (Array.isArray(response.content)) {
+    for (const block of response.content) {
+      if (
+        typeof block === "object" && block !== null &&
+        "type" in block && block.type === "text" &&
+        !("thought" in block && block.thought === true) &&
+        "text" in block && typeof block.text === "string"
+      ) {
+        textContent = block.text;
+        break; // Use the first non-thought text block found
+      }
+    }
+  }
+  if (!textContent || textContent === "") { return; }
+  try {
+    const content = JSON.parse(textContent);
+    const validator = new Validator(this.schema);
+    const result = validator.validate(content);
+    if (!result.valid) { return; }
+    return content;
+  } catch {
+    // no-op
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/responses.ts:238-288（裁剪，commit 7704471）*
+
+失败路径有三条且殊途同归：找不到合规文本块返回 undefined（responses.ts:272-274）、JSON.parse 抛异常被 no-op catch 吞掉（responses.ts:285-287）、Validator 校验不通过返回 undefined（responses.ts:280-282）。**为什么选择静默降级**：content 是模型的最终回答，不是一次可重试的中间调用——没有「工具循环」可以回去，回喂错误意味着调用方自己发起新一轮对话并做提示词工程，框架无法替用户决定。所以设计上把失败表达为 \`undefined\`（\`structuredResponse\` 缺失），把「要不要重试、怎么重试」上移给调用方。这是错误处理位置的经典权衡：**能循环的通道抛错，不能循环的通道返回空值**。
+
+thought 块过滤是另一处兼容取证：思维链模型（注释点名 Gemini）会把推理摘要以 \`{ type: "text", thought: true }\` 混进 content 数组，这些块不是结构化响应，不过滤就会污染 JSON.parse。循环取**第一个**非 thought 文本块即 break（responses.ts:266）。
+
+### 能力协商：读 profile 元数据，不是查厂商名单
+
+\`\`\`ts
+export function hasSupportForJsonSchemaOutput(
+  model?: LanguageModelLike
+): boolean {
+  if (
+    !model ||
+    !isBaseChatModel(model) ||
+    !("profile" in model) ||
+    typeof model.profile !== "object" ||
+    !model.profile
+  ) {
+    return false;
+  }
+  return (
+    "structuredOutput" in model.profile &&
+    model.profile.structuredOutput === true
+  );
+}
+\`\`\`
+
+*— libs/langchain/src/agents/responses.ts:697-714（commit 7704471）*
+
+判定完全建立在模型实例自带的 \`profile\` 元数据对象上：三个前置守卫（model 存在、\`isBaseChatModel\`、profile 是对象）任一失败即 false，最终判定是 \`profile.structuredOutput === true\` 的纯属性检查。JSDoc 明确了两件事：其一，这是「读模型 profile 元数据」的机制；其二，调用方有义务先解析字符串模型名与 ConfigurableModel 包装再传入（responses.ts:693-695）——**能力协商失败往往不是模型不行，而是传进来的是没解析的字符串**。这种设计让新 provider 无需改框架代码，只要在 profile 里声明 \`structuredOutput: true\` 就能被选中走 ProviderStrategy。
+
+### 回喂的现场：错误如何变成一条 ToolMessage
+
+上面说的「错误回喂」不是概念修辞，在 AgentNode 里有逐行实现。\`#handleSingleStructuredOutput\`（AgentNode.ts:806-834，commit 7704471）先在 try 里调 \`tool.parse(toolCall.args)\`，成功则产出三件套写入状态：原 AIMessage、一条 \`ToolMessage({ content: JSON.stringify(structuredResponse), tool_call_id })\`、一条收尾 AIMessage（内容取 toolMessageContent 或默认 "Returning structured response: ..."）。parse 抛错则进入 \`#handleToolStrategyError\`（AgentNode.ts:841-930），四态语义的图语义实现如下：
+
+\`\`\`ts
+if (errorHandler === false) {
+  throw error;
+}
+// errorHandler === undefined || true：
+return new Command({
+  update: {
+    messages: [
+      response,
+      new ToolMessage({ content: error.message, tool_call_id: toolCallId }),
+    ],
+  },
+  goto: AGENT_NODE_NAME,
+});
+\`\`\`
+
+*— libs/langchain/src/agents/nodes/AgentNode.ts:875-903（commit 7704471，有裁剪）*
+
+关键在 \`goto: AGENT_NODE_NAME\`——**重试不是循环调用，而是图上的回边**：把错误消息追加进历史后跳回 agent 节点再跑一轮模型调用，模型在下一轮读到自己的 tool_call 与携带错误信息的 ToolMessage，自我修正。string 态用给定文本、回调态 \`await errorHandler(error)\` 后同构处理。这也把 handleError 默认值 true 的机制讲透了：不是框架替你吞错，而是默认开启「错误→ToolMessage→回边」的自我修正环。
+
+native 通道还有一个容易误读的边界（AgentNode.ts:416-440）：ProviderStrategy.parse 返回 undefined 后，运行时会检查这条 AIMessage 是否携带 tool_calls——**若无 tool_calls（模型已给出终端回答但不符合 schema），直接抛 StructuredOutputParsingError**（错误消息 "Model output did not satisfy the provided response schema."），而不是静默带着 undefined 结束；若有 tool_calls 则循环继续，后续轮次还有机会产出合法输出。所以两个策略的完整失败图景是：tool 通道失败可回喂重试，provider 通道 parse 层静默、但终端步有个兜底 throw——「静默返回 undefined」描述的是 parse 方法本身，不是 agent 的最终行为，迁移时两层语义都要心里有数。
+
+### 本课小结
+
+- ToolStrategy.parse 校验失败抛 StructuredOutputParsingError——tool 循环支持把错误作为消息回喂，handleError 四态（true 默认重试 / false 抛错 / string / 回调）控制重试语义。
+- ProviderStrategy.parse 三条失败路径全部静默返回 undefined——content 通道没有循环可回，重试决策上移给调用方。
+- thought: true 块过滤是对思维链模型的兼容：只取第一个非 thought 文本块，防止推理摘要污染 JSON 解析。
+- hasSupportForJsonSchemaOutput 是纯元数据检查（profile.structuredOutput === true），能力协商不依赖厂商清单，但要求传入已解析的模型实例。
+- 下一课进入归一化管线 transformResponseFormat：三类 schema 输入 × 双策略 × 数组约束，看能力协商在整条管线里的位置。
+`,
+    null,
+    [
+      {
+        text: 'ToolStrategy.parse 在校验失败时的行为是？',
+        options: [
+          '返回 undefined',
+          '返回所有校验错误组成的数组',
+          '抛出 StructuredOutputParsingError，携带 Validator 报出的错误列表',
+          '返回原始 toolArgs 让调用方自行处理',
+        ],
+        answer: 2,
+        explain:
+          'responses.ts:151-161：validator.validate 失败即 throw new StructuredOutputParsingError(this.name, result.errors.map(e => e.error))。A 是 ProviderStrategy 的行为；B 在源码中不存在（错误列表进了异常对象而不是返回值）；D 也不存在——校验失败绝不返回未验证的数据。',
+        concept: 'lc-parse-error-philosophy',
+      },
+      {
+        text: 'ToolStrategyOptions.handleError 的默认值及 true 的语义是？',
+        options: [
+          '默认 false，true 表示忽略错误继续执行',
+          '默认 true，true 表示把错误作为消息回喂给模型自动重试',
+          '默认 undefined，true 表示直接抛出异常',
+          '默认 true，true 表示换一个模型重新生成',
+        ],
+        answer: 1,
+        explain:
+          'responses.ts:452-476 的 JSDoc 定义了四态：true 重试工具调用（默认）、false 抛错、string 用给定消息重试、回调函数自定义（返回消息重试或抛错）。注意 false 的语义是 throw 而不是静默忽略——A 恰好把这个陷阱写成了正确项的反面。',
+        concept: 'lc-parse-error-philosophy',
+      },
+      {
+        text: 'ProviderStrategy.parse 遇到 content 文本无法 JSON.parse 时会怎样？',
+        options: [
+          '抛出 SyntaxError 让上层捕获',
+          '返回空对象',
+          '静默返回 undefined（catch 块是 no-op）',
+          '自动重试一次解析',
+        ],
+        answer: 2,
+        explain:
+          'responses.ts:276-287：JSON.parse 与 Validator.validate 都包在 try/catch 里，catch 块注释写明 no-op，校验失败同样 return undefined。这与 ToolStrategy 的抛错形成对照——content 通道没有错误回喂的位置（详见正文论证）。',
+        concept: 'lc-parse-error-philosophy',
+      },
+      {
+        text: 'ProviderStrategy.parse 从 content 数组里取文本块时，对 thought: true 的块如何处理？',
+        options: [
+          '当作普通文本一起拼接',
+          '优先取 thought 块，因为思维链更完整',
+          '跳过，取第一个非 thought 的文本块',
+          '直接报错，要求模型关闭思维链',
+        ],
+        answer: 2,
+        explain:
+          'responses.ts:252-268：循环里显式排除 `"thought" in block && block.thought === true` 的块，注释点名 Gemini 用 { type: "text", thought: true } 表示推理摘要——这些块不是结构化响应，混进去会导致 JSON.parse 失败。取到第一个合规文本块即 break。',
+        concept: 'lc-parse-error-philosophy',
+      },
+      {
+        text: 'hasSupportForJsonSchemaOutput 判定模型能力的依据是什么？',
+        options: [
+          '硬编码的厂商/模型名清单',
+          '对模型发一次试探请求看返回格式',
+          'instanceof 判断模型类的类型',
+          '读模型实例的 profile 元数据，要求 profile.structuredOutput === true',
+        ],
+        answer: 3,
+        explain:
+          'responses.ts:697-714：三个前置守卫（model 存在、isBaseChatModel、profile 是对象）之后，判定 structuredOutput in model.profile 且值严格等于 true。这是运行时能力协商而非厂商清单——新 provider 只要声明元数据即可接入；JSDoc 还提醒调用方需先解析字符串模型名与 Configurable 包装（responses.ts:693-695）。',
+        concept: 'lc-parse-error-philosophy',
+      },
+    ],
+    [
+      [
+        'StructuredOutputParsingError',
+        'ToolStrategy 校验失败时抛出的错误类型，携带工具名与 Validator 错误列表（errors.ts 导出）',
+      ],
+      [
+        'handleError',
+        'ToolStrategyOptions 的错误处理四态开关：true 自动重试 / false 抛错 / string 带消息重试 / 回调自定义',
+      ],
+      [
+        '错误回喂',
+        '把结构化输出校验错误作为对话消息写回上下文、让模型读到后自我修正重试的机制，仅 tool calling 通道天然具备',
+      ],
+      ['能力协商', '运行时依据模型 profile.structuredOutput 元数据（而非硬编码清单）决定默认策略的机制'],
+    ],
+    [
+      '以为两个策略类的 parse 失败行为一致——ToolStrategy 抛错（可回喂重试），ProviderStrategy 静默返回 undefined，混用会导致错误处理逻辑失效',
+      '把 handleError: false 理解成忽略错误——它的语义是 throw，把错误暴露给调用方；静默路径只在 ProviderStrategy 里',
+      '以为能力协商会发探针请求或维护厂商白名单——它只读模型实例上的 profile 元数据对象，判定是纯属性检查',
+    ],
+  ),
+  'theory',
+)

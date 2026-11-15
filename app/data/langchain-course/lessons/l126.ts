@@ -1,0 +1,330 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L126 = withKind(
+  L(
+    'L126',
+    33,
+    '数据层迁移：Chain/Memory → LCEL+messages 状态改写',
+    3,
+    ['L107'],
+    ['lc-capstone-data-migration'],
+    [
+      '实现工单助手数据层的 LCEL 改写：把 LLMChain/RetrievalQAChain 的 call/values 协议改写成 prompt.pipe(llm) 组合与检索+合并的自组 Runnable，产出可运行的迁移后数据层',
+      '构建 messages 显式状态层：用 BaseMessage 数组取代 memoryKey 变量注入，接入 trimMessages/summarizationMiddleware 与 MemorySaver，打通同一 thread 的跨轮记忆',
+      '写出数据层等价断言并跑通：buffer-string 渲染等价断言、消息序列包含性断言、摘要触发断言三层验证',
+    ],
+    `### 定锚：数据层迁移的本质是「隐式协议 → 显式状态」
+
+L125 产出了盘点清单与映射表，本课处理映射表里工作量最大的两行：Chain 族与 Memory 族。它们合称数据层，因为共同点鲜明——**旧架构的对话状态藏在 chain 对象里，靠 memory 的隐式读写协议进出；新架构把状态摊平成 messages 数组，持久化交给 checkpointer**。本课交付物：数据层改写的关键节点提示（不逐步喂完整代码，那是 L121/L122 走查课的事）与三层等价断言的落地写法。
+
+一句话核心结论：**数据层迁移 = BaseChain 的 call/values 协议改成 Runnable 组合，BaseMemory 的 load/saveContext 协议改成 messages 状态 + checkpointer；其余都是细节。**
+
+### 旧数据层解剖：三套协议咬合在一起
+
+改写前先看清旧协议的全貌。旧 memory 的抽象只有三成员：
+
+\`\`\`ts
+export abstract class BaseMemory {
+  abstract get memoryKeys(): string[];
+  abstract loadMemoryVariables(values: InputValues): Promise<MemoryVariables>;
+  abstract saveContext(inputValues, outputValues): Promise<void>;
+}
+\`\`\`
+
+*— langchain-core/src/memory.ts:28-54（commit 7704471，有裁剪）*
+
+注意它住在 core 里，但消费方只有 classic 的 chain——1.x 主线包没有任何 import 它（L37 的证据：core 保留 memory.ts 只是给 classic 供类型）。这条协议与 BaseChain 的 call/values 协议、LLMChain 的 inputKeys/outputKeys 三元组咬合成一台机器：chain 每次执行前读 memory 变量、塞进 prompt 的占位变量（如 {history}）、执行后把输入输出回写 memory。**三套协议互相依赖，改写必须一次拆完，留任何一套都会让其余两套悬空。**
+
+BufferMemory 的本质前面已钉过：chatHistory + getBufferString（buffer_memory.ts:50-96）。改写时把它拆成两半——**存储半交给 checkpointer**（MemorySaver，libs/checkpoint/src/memory.ts:106），**渲染半按需保留**（getBufferString 在 core messages 仍然可用）。工单助手的 ConversationChain 改写节点提示：模板里的 {history} 占位变量删除，改为把完整 messages 数组作为状态传入；如果确有下游消费者需要字符串形态（如日志），在边界处单独调 getBufferString，不进主链路。
+
+### 持久层的两代接口：chatHistory 与 checkpointer 各管什么
+
+「存储半交给 checkpointer」这句话要落到接口级才站得住。旧存储半的分层是两层：BufferMemory 继承 BaseChatMemory，后者持有一个 chatHistory 字段——\`chatHistory: BaseChatMessageHistory\`，没传时默认 \`new ChatMessageHistory()\`（内存实现）（langchain-classic/src/memory/chat_memory.ts:29-53）。而 BaseChatMemory 的 saveContext 是**顺序追加**两条消息：
+
+\`\`\`ts
+async saveContext(
+  inputValues: InputValues,
+  outputValues: OutputValues
+): Promise<void> {
+  // this is purposefully done in sequence so they're saved in order
+  await this.chatHistory.addUserMessage(
+    getInputValue(inputValues, this.inputKey)
+  );
+  await this.chatHistory.addAIMessage(/* ... */);
+\`\`\`
+
+*— langchain-classic/src/memory/chat_memory.ts:60-77（commit 7704471，有裁剪）*
+
+注释里那句 "purposefully done in sequence so they're saved in order" 值得读三遍——旧持久层的核心动作就是「按序追加」，接口契约也印证这一点：BaseChatMessageHistory 抽象只有 getMessages/addMessage/addUserMessage/addAIMessage/addMessages/clear 六个成员（langchain-core/src/chat_history.ts:10-40），addMessages 的默认实现还是逐条循环调 addMessage，注释明说子类应覆写以批量落库省往返。**旧持久层的词汇表里只有「消息的追加与清空」**。
+
+对照新持久层：BaseCheckpointSaver 的五方法契约（getTuple/list/put/putWrites/deleteThread，libs/checkpoint/src/base.ts:180-239）里没有任何一个方法的名字带 message——put 存的是整个 checkpoint 快照，getTuple 取的是带版本时钟的元组。两代接口的词汇表差异就是迁移的本质差异：**从「追加消息日志」到「版本化状态快照」**。改写时的落点：BufferMemory 实例连同它内部的 chatHistory 一起删除，会话持久职责整体移交 checkpointer；旧 chatHistory 里已有的存量对话若要保留，写一次性迁移脚本把消息序列塞进新 thread 的初始状态（invoke 传入 messages 即可），而不是模拟一套「兼容层」把旧接口接到新内核上——兼容层会同时违反两代语义。
+
+Chain 侧的改写提示按族走：LLMChain → \`prompt.pipe(llm)\`，outputParser 挂管道尾（llm_chain.ts:78-87 的官方示例就是模板）；SequentialChain/TransformChain → RunnableSequence/RunnableLambda（core runnables/base.ts:1944/2572，精确替代）；RetrievalQAChain → 检索与合并自组 LCEL，输入键从 query 改为 input + context（retrieval.ts:70-80 的返回类型签名是键名权威）。RetrievalQAChain 的改写节点提示值得单独展开，先看旧编排的本质：
+
+\`\`\`ts
+export class RetrievalQAChain extends BaseChain implements RetrievalQAChainInput {
+  inputKey = "query";
+  retriever: BaseRetrieverInterface;
+  combineDocumentsChain: BaseChain;
+  // ...
+  async _call(values, runManager) {
+    const docs = await this.retriever.invoke(question, runManager?.getChild("retriever"));
+    const inputs = { question, input_documents: docs, ...values };
+    const result = await this.combineDocumentsChain.call(inputs, ...);
+\`\`\`
+
+*— langchain-classic/src/chains/retrieval_qa.ts:57-117（commit 7704471，有裁剪）*
+
+它的编排就三步：检索（retriever.invoke）→ 组输入（input_documents 键名拼接）→ 合并链执行（combineDocumentsChain.call）。而 classic 里已经存在 LCEL 化的桥接版本，返回类型签名直接给出了新输入/输出键：
+
+\`\`\`ts
+export async function createRetrievalChain<RunOutput>({ retriever, combineDocsChain }): Promise<
+  Runnable<{ input: string; chat_history?: BaseMessage[] | string } & {...},
+             { context: Document[]; answer: RunOutput } & {...}>
+>
+\`\`\`
+
+*— langchain-classic/src/chains/retrieval.ts:70-80（commit 7704471，有裁剪）*
+
+对照读：输入键 \`query\` → \`input\`，输出键多出 \`context\`（Document 数组）与 \`answer\`——**键名迁移清单直接从类型签名抄**，这是改写提示里唯一可以「照抄不改」的部分。1.x 自组方案就是把这三步摊平成 LCEL：检索器经 asRetriever 桥成 Runnable、文档格式化用 RunnableLambda、组合用 RunnableSequence，每个旧步骤都有对应原语（L107 已逐项对照过）。
+
+### memory 注入时机：从 LLMChain 的 call 全链路看协议正交性
+
+为什么「三套协议必须一次拆完」？看 LLMChain 的执行全链路就明白了。旧链的 memory 读写不发生在 _call 内部，而是发生在外层包装：
+
+\`\`\`ts
+/**
+ * Wraps _call and handles memory.
+ */
+call(values, config?) {
+  return super.call(values, config);   // memory 读写挂在 BaseChain 的包装层
+}
+
+/** @ignore */
+async _call(values, runManager?) {
+  const valuesForPrompt = { ...values };
+  const valuesForLLM = { ...this.llmKwargs } as CallOptionsIfAvailable<Model>;
+  // ...callKeys 分流：模型调用选项从 values 里剥离
+  const promptValue = await this.prompt.formatPromptValue(valuesForPrompt);
+  if ("generatePrompt" in this.llm) {
+    const { generations } = await this.llm.generatePrompt(
+      [promptValue], valuesForLLM, runManager?.getChild()
+    );
+\`\`\`
+
+*— langchain-classic/src/chains/llm_chain.ts:175-215（commit 7704471，有裁剪）*
+
+JSDoc 那句 "Wraps _call and handles memory" 是协议正交性的直接证据：memory 的 loadMemoryVariables 发生在 BaseChain.call 的包装逻辑里（读取结果合并进 values）、saveContext 发生在 _call 返回之后（输出回写）——**_call 本体对 memory 一无所知**。这个设计在旧架构里是优雅的（编排逻辑与状态读写正交），但它的代价在迁移时暴露：因为正交，memory 读写点不在任何业务方法里，grep 业务代码找不到协议触点；因为正交，拆掉 BaseChain 包装层的同时必须整体替换掉 memory 协议，否则 values 里那些隐式合并进来的变量（如 history）会静默消失，prompt.formatPromptValue 因缺输入变量直接报错。
+
+改写提示由此细化一条：数据层改写完成后，跑一遍「变量溯源」自查——把旧 prompt 模板的全部输入变量列出来，逐个标注新栈来源。history 类变量来自 messages 状态；业务输入变量来自 invoke 的入参；**任何标注不出来源的变量，就是一个被协议拆解漏掉的隐式注入点**。这个自查能抓住绝大多数「迁移后 prompt 报缺变量」或更糟的「静默渲染出 undefined」问题。
+
+### 新数据层组装：messages 状态 + middleware 裁剪 + checkpointer
+
+新数据层的组装要点在 createAgent 的参数面上：stateSchema 声明非消息状态、middleware 声明裁剪策略、checkpointer 声明持久化。摘要能力不用自写——summarizationMiddleware 的 import 列表就是「旧能力被吸收」的直接证据：
+
+\`\`\`ts
+import {
+  BaseMessage, AIMessage, SystemMessage, ToolMessage,
+  RemoveMessage, trimMessages, HumanMessage, getBufferString,
+} from "@langchain/core/messages";
+// ...
+import { REMOVE_ALL_MESSAGES } from "@langchain/langgraph";
+\`\`\`
+
+*— langchain/src/agents/middleware/summarization.ts:4-13、22（commit 7704471，有裁剪）*
+
+getBufferString、trimMessages、RemoveMessage——L109/L110 讲过的对应关系在这里物理合体。参数对照提示：BufferWindowMemory 的滑窗 → trimMessages（token 计数裁剪，langchain/src/index.ts:16-17 导出）；ConversationSummaryMemory 的摘要 → summarizationMiddleware；CombinedMemory 的多变量组合 → stateSchema 多字段。摘要中间件的默认参数取值要写进改写笔记——常量一共有五个，逐个列出：
+
+| 常量（summarization.ts 行号） | 值 | 旧 memory 世界的对应物 |
+|---|---|---|
+| DEFAULT_SUMMARY_PREFIX（:64） | "Here is a summary of the conversation to date:" | ConversationSummaryMemory 自拼的摘要注入前缀 |
+| DEFAULT_MESSAGES_TO_KEEP（:65） | 20 | BufferWindowMemory 的窗口条数 k |
+| DEFAULT_TRIM_TOKEN_LIMIT（:66） | 4000 | ConversationTokenBufferMemory 的 maxTokenLimit |
+| DEFAULT_FALLBACK_MESSAGE_COUNT（:67） | 15 | 无直接对应——token 计数失败时的条数兜底 |
+| SEARCH_RANGE_FOR_TOOL_PAIRS（:68） | 5 | 无对应——摘要时把配对的工具消息纳入搜索范围 |
+
+**DEFAULT_MESSAGES_TO_KEEP=20、DEFAULT_TRIM_TOKEN_LIMIT=4000**（summarization.ts:65-66）是最常被引用的两个——旧应用若配了不同的窗口大小，必须显式传参覆盖默认值，否则触发条件静默漂移。后两个常量则是旧世界**没有**的新设计：fallback 条数解决「token 计数器不可用时的降级」，工具配对搜索解决「摘要把 tool_call 与 ToolMessage 拆散导致协议断裂」——这两条正好对应 L125 风险清单里「摘要切割破坏消息序列」的预判，改写笔记里要标注它们是免费的默认保护。
+
+checkpointer 接入的关键节点是 thread 模型。BaseCheckpointSaver 的抽象契约五个方法（getTuple/list/put/putWrites/deleteThread，libs/checkpoint/src/base.ts:180-239）里，deleteThread 直接对应「删除一个会话」——旧 memory 世界的 sessionId 惯例被 thread_id 取代。改写提示：invoke 时把会话标识放进 \`configurable.thread_id\`，MemorySaver 起步、生产换 Postgres/Redis saver，接口不变。
+
+把新数据层的组装面收拢成一段可运行的形态，方便对照自查：
+
+\`\`\`ts
+import { createAgent, MemorySaver } from "langchain";
+import { summarizationMiddleware } from "langchain";
+import { trimMessages } from "@langchain/core/messages";
+
+const agent = createAgent({
+  model: "openai:gpt-4o",
+  tools: [searchTicket, createTicket],
+  stateSchema: z.object({           // 取代 CombinedMemory 的多变量组合
+    currentTicketId: z.string().default(""),
+  }),
+  middleware: [
+    summarizationMiddleware({       // 取代 ConversationSummaryMemory
+      model: "openai:gpt-4o-mini",
+      keep: { messages: 10 },       // 覆盖默认 20（summarization.ts:65）
+    },
+  )],
+  checkpointer: new MemorySaver(),  // 取代 BaseChatMemory.chatHistory 持久层
+});
+
+// 会话调用：thread_id 取代旧 sessionId 惯例
+await agent.invoke(
+  { messages: [{ role: "user", content: "查 T-1024" }] },
+  { configurable: { thread_id: "sess-42" } }
+);
+\`\`\`
+
+*— 组装骨架，依据 langchain/src/agents/index.ts:672-702 与 middleware/index.ts 导出面（commit 7704471）*
+
+这段组装的每一行都对应旧数据层的一件遗物：stateSchema 对 CombinedMemory、summarizationMiddleware 对 ConversationSummaryMemory、checkpointer 对 chatHistory、thread_id 对 sessionId。改写评审时按行核对，遗物清零即数据层完成。
+
+### 数据层等价断言：三层落地写法
+
+数据层的行为等价断言分三层，按确定度从高到低排列。第一层**渲染等价**：旧栈 getBufferString 的产物与新栈边界处调用同一函数的产物应当逐字符相等——这是数据层里唯一可以做全等断言的地方：
+
+\`\`\`ts
+// —— 数据层等价断言（迁移前定稿，迁移后执行）——
+// 前置：两侧各跑同一 golden 剧本（三轮对话：查单/追问/收尾）
+
+// 断言一：渲染等价（全等，唯一可全等处）
+// 旧栈：BufferMemory 的 loadMemoryVariables 产物
+const oldStackHistory = bufferMemoryResult.history;
+// 新栈：同一组 BaseMessage 经 core getBufferString 渲染
+const newStackBufferString = getBufferString(
+  newStackMessages, "Human", "AI"      // 前缀对齐 buffer_memory.ts:54-55
+);
+// expect(oldStackHistory).toBe(newStackBufferString);
+
+// 断言二：消息序列包含性（跨轮记忆）
+// 同一 thread 第二轮 invoke 前抓取图状态：
+const snap = await agent.getState({ configurable: { thread_id: "t1" } });
+// expect(snap.values.messages.map(m => m.type))
+//   .toEqual(expect.arrayContaining(["human", "ai", "tool"]));
+// 且第一轮的用户原文在状态里（内容包含性，非全等）：
+// expect(snap.values.messages.some(
+//   m => m.type === "human" && m.text.includes("T-1024")
+// )).toBe(true);
+
+// 断言三：摘要触发（结构断言）
+// 把 keep 调成极小值 + 长剧本，断言摘要后状态形状：
+// - 恰好一条携带摘要前缀（"Here is a summary of the conversation to date:"
+//   —— summarization.ts 的 DEFAULT_SUMMARY_PREFIX）的消息
+// - messages 总数 <= keep.messages + 摘要消息
+// - 旧消息已被 RemoveMessage 清理（不在状态里）
+// expect(summaryMsgs).toHaveLength(1);
+// expect(state.messages.length).toBeLessThanOrEqual(keepCount + 1);
+\`\`\`
+
+三层断言的哲学差异值得写进复盘表：断言一是**实现等价**（同函数同参数必然同产物），断言二三是**行为等价**（允许实现不同、只约束可观察状态）。模型生成的摘要文本不做任何文本断言——LLM 措辞天然不确定，能确定的是触发条件、保留数量与状态形状（quiz 辨析）。断言二的实现依赖一个新栈特有能力：\`agent.getState\` 是 ReactAgent 的图级 API 透传（L44），旧栈没有等价物——旧栈侧的对应断言改用 BufferMemory.chatHistory.getMessages() 取消息序列，两侧断言「同样的消息都在」，取数通道不同但断言对象一致。
+
+断言还要补两个边界用例才完整。**边界一：首轮空历史**——首轮 invoke 前旧栈 loadMemoryVariables 对空 chatHistory 返回空串 history（getBufferString 对空数组产出空字符串），新栈 messages 状态以空数组起步——两侧在「无历史」时的行为等价性要单独断言一次，避免「首轮注入了 undefined 或多余占位」这类只在第一轮出现的错误逃过常规剧本（常规剧本通常从第二轮才有跨轮语义）。**边界二：前缀渲染的转义**——若用户消息文本里恰好包含 "Human:" 字样，getBufferString 渲染出的字符串里会出现歧义前缀；旧栈对此无防护（字符串直接进模板），新栈 messages 数组天然按对象携带角色、无此歧义——这是「行为等价断言允许新栈更正确」的例子，两侧断言各自成立即可，不强行对齐缺陷。边界用例的剧本开销极小（各加一轮），但对「断言套件的判别力」贡献很大——常规剧本验证 happy path，边界剧本验证等价定义本身。
+
+### 改写验收：数据层交付物清单
+
+数据层改写完成的判定标准，对照本课三份产出逐条自查。**产出一：改写后的数据层模块**——LLM 段是纯 LCEL Runnable、状态段是 messages + stateSchema、持久段是 checkpointer 配置，三段无旧 API 残留（grep 验证：\`grep -rn "BaseMemory\\|BufferMemory\\|memoryKey" src/\` 应为空）。**产出二：参数对照表**——旧 memory 构造参数（humanPrefix/aiPrefix/memoryKey/maxTokenLimit 等）逐项标注新家：前缀类参数进模板或边界渲染、窗口类参数进 trimMessages/summarization 配置、存储类参数进 checkpointer。**产出三：断言套件**——三层断言全部通过，且断言三在「摘要关闭」与「摘要开启」两种配置下分别跑过。一个常见的翻车点值得点名：改写后忘了把 RetrievalQAChain 的输入键 query 改成 input，检索链拿到 undefined 静默失败——断言二的消息序列里会出现「无 tool 调用、AI 直接胡答」的异常形状，这正是结构断言的价值：**键名错误不需要真实模型就能暴露**。
+
+### 本课小结
+
+- **三套协议一次拆完**：BaseMemory 的 load/saveContext、BaseChain 的 call/values、LLMChain 的 inputKeys/outputKeys 互相咬合，只改任何一套都会让其余悬空；memory 读写挂在 call 包装层（"Wraps _call and handles memory"），业务方法本体对它一无所知——改写后要跑「prompt 变量溯源」自查。
+- **持久层词汇表换代**：旧 BaseChatMessageHistory 六成员只有「消息追加与清空」，新 BaseCheckpointSaver 五方法全是「版本化快照」——从追加消息日志到状态快照是本质差异，不写兼容层。
+- **BufferMemory 拆两半**：存储交给 checkpointer（thread 取代 sessionId），渲染按需保留（getBufferString 在 core 仍可用）。
+- **旧记忆能力被 middleware 吸收**：summarization.ts:4-13 的 import 就是证据；五个默认常量（20/4000/15/5 + 摘要前缀）写进参数对照表，后两个是旧世界没有的免费保护。
+- **断言三层 + 两边界**：渲染全等（唯一可全等处）、序列包含性（跨轮记忆）、摘要结构（触发条件 + 状态形状）；首轮空历史与前缀歧义两个边界用例补判别力。摘要文本永不逐字断言。
+- 下一课进入 Agent 层迁移：AgentExecutor 的主循环所有权交给编译图，协议族退役，行为对齐断言用同一剧本在两侧验证。
+`,
+    null,
+    [
+      {
+        text: '旧 memory 隐式读写协议的核心是哪两个方法？',
+        options: [
+          'get/set',
+          'loadMemoryVariables 与 saveContext（BaseMemory 抽象定义在 core memory.ts:28-54）',
+          'load/save',
+          'readState/writeState',
+        ],
+        answer: 1,
+        explain:
+          'core 的 BaseMemory 抽象只定义了 memoryKeys、loadMemoryVariables(values)、saveContext(inputValues, outputValues) 三成员（langchain-core/src/memory.ts:28-54）——chain 在每次 call 前隐式读、call 后隐式写，状态藏在 chain 对象里。选项 A/C 是臆造的方法名；选项 D 是 LangGraph 状态视角的词，不属于旧 memory 协议。',
+        concept: 'lc-capstone-data-migration',
+      },
+      {
+        text: 'BufferMemory.loadMemoryVariables 返回的 { history } 变量是什么形态？',
+        options: [
+          'BaseMessage[] 数组',
+          'getBufferString 渲染出的字符串，带 Human:/AI: 前缀',
+          'JSON 序列化的对话对象',
+          '数据库行的游标',
+        ],
+        answer: 1,
+        explain:
+          'buffer_memory.ts:80-96 的实现是 [this.memoryKey]: getBufferString(messages, this.humanPrefix, this.aiPrefix)，humanPrefix="Human"、aiPrefix="AI"——历史对话被渲染成一条带前缀的字符串注入 prompt。选项 A 正是 1.x 的新形态（消息数组直接进状态），恰恰说明这是格式漂移点；选项 C/D 无据。',
+        concept: 'lc-capstone-data-migration',
+      },
+      {
+        text: 'summarizationMiddleware 的 import 列表说明了什么设计事实？',
+        options: [
+          '它完全重写了摘要逻辑，不依赖旧世界积木',
+          '它直接复用 core 的 trimMessages/RemoveMessage/getBufferString 等积木，并从 @langchain/langgraph 引入 REMOVE_ALL_MESSAGES——旧记忆能力被吸收为 middleware 而非重造',
+          '它依赖 classic 包的 memory 实现',
+          '它只支持 OpenAI 模型',
+        ],
+        answer: 1,
+        explain:
+          'langchain/src/agents/middleware/summarization.ts:4-13 的 import 里赫然列着 trimMessages、RemoveMessage、HumanMessage、getBufferString（来自 @langchain/core/messages）与 REMOVE_ALL_MESSAGES（来自 @langchain/langgraph）——摘要记忆没被删除，而是变成 middleware 组合旧积木。选项 A 与源码相反；选项 C 错在新包不依赖 classic；选项 D 无此限制，摘要模型经 initChatModel 初始化（summarization.ts 导入了 initChatModel）。',
+        concept: 'lc-capstone-data-migration',
+      },
+      {
+        text: 'RemoveMessage 在新数据层里承担什么角色？',
+        options: [
+          '删除用户的敏感消息以合规',
+          'LangGraph 状态修订专用消息：配合 REMOVE_ALL_MESSAGES 在状态里移除旧消息，旧 memory 世界没有对应概念',
+          '标记消息为已读',
+          '替代 ToolMessage 的错误分支',
+        ],
+        answer: 1,
+        explain:
+          'RemoveMessage extends BaseMessage（langchain-core/src/messages/modifier.ts:22），它在 LangGraph 状态修订中表达「从 messages 数组里删掉这些条目」，summarization 中间件摘要后清历史用的就是 RemoveMessage + REMOVE_ALL_MESSAGES 组合。选项 A 混淆了 pii 脱敏中间件的职责；选项 C/D 无据。',
+        concept: 'lc-capstone-data-migration',
+      },
+      {
+        text: '数据层的「摘要等价断言」为什么只能断结构而不能逐字比对摘要文本？',
+        options: [
+          '因为摘要文本是加密的',
+          '因为摘要由 LLM 生成、措辞天然不确定，能确定断言的是触发条件与状态形状（messages 被压缩成 system 摘要 + 保留尾部消息），文本比对会把正常差异判为失败',
+          '因为摘要不落盘',
+          '因为新旧摘要格式不同协议',
+        ],
+        answer: 1,
+        explain:
+          '摘要内容是模型输出，逐字比对必然脆弱。可确定的等价面是：触发阈值（token/messages 条件到达才摘要，常量 DEFAULT_MESSAGES_TO_KEEP=20、DEFAULT_TRIM_TOKEN_LIMIT=4000 在 summarization.ts:65-66）、摘要后状态形状（一条摘要消息 + 尾部保留消息）、以及 RemoveMessage 已清理旧消息。选项 A/D 编造协议差异；选项 C 与断言问题无关。',
+        concept: 'lc-capstone-data-migration',
+      },
+    ],
+    [
+      [
+        '隐式变量协议',
+        '旧架构心智模型：chain 在 call 前经 loadMemoryVariables 读、call 后经 saveContext 写，状态藏在 chain 对象的 memory 字段里',
+      ],
+      [
+        '显式 messages 状态',
+        '新架构心智模型：对话状态就是 agent 输入输出里的 messages: BaseMessage[] 数组，持久化由 checkpointer 按 thread 落盘',
+      ],
+      [
+        'getBufferString',
+        'core messages 提供的消息→字符串渲染函数，BufferMemory 用它生成 history 变量；新栈在需要字符串形态时仍可复用',
+      ],
+      [
+        'stateSchema',
+        'createAgent 的自定义状态声明：数据层需要的非消息字段（如当前工单 id）经 stateSchema 进图状态，取代旧 CombinedMemory 的多变量组合',
+      ],
+    ],
+    [
+      '把 memoryKey 变量（history 字符串）原样塞进 1.x 的 prompt——新栈状态载体是 BaseMessage[]，字符串注入会造成双重渲染（模板前缀 + buffer 前缀），要么改模板要么在边界处调 getBufferString',
+      '以为换掉 BufferMemory 就完事——BufferMemory 底层还有 chatHistory 持久层（BaseChatMemory → BaseChatMessageHistory），持久化职责必须显式交给 checkpointer（thread 模型），否则跨进程重启丢记忆',
+      'RetrievalQAChain 改写时沿用旧输入键 query——新 LCEL 组合的输入键是 input 与 context（createRetrievalChain 的返回类型签名，chains/retrieval.ts:70-80），键名不改会拿到 undefined',
+    ],
+  ),
+  'capstone',
+)

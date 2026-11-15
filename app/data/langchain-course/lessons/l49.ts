@@ -1,0 +1,219 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L49 = withKind(
+  L(
+    'L49',
+    14,
+    'state/context 双 schema：内置状态与运行时上下文',
+    2,
+    ['L40'],
+    ['lc-state-context-schema'],
+    [
+      '说出 agent 内置状态的两个字段（messages/structuredResponse）与三份 schema（state/input/output）的差异',
+      '解释下划线前缀私有状态在 graph 状态、input/output 通道与 hook 输入三条路径上的不同待遇',
+      '解释 context 的三个特性（只读、按 schema 形状过滤、不跨 invoke 持久）及其与 stateSchema 的分工',
+    ],
+    `模块四的最后一课把镜头从节点转向数据：这些节点共享什么状态、中间件如何声明自己的状态、context 与 state 为什么必须分成两个 schema。核心结论：**agent 的图状态是「内置两字段 + 用户 schema + 各中间件 schema」的合并结果，且被装配成 state/input/output 三份视图；context 则是另一维度的只读运行时配置，不进状态机**。
+
+### 内置状态：两个字段撑起一切
+
+runtime.ts 给出内置状态的完整定义：
+
+\`\`\`ts
+export type AgentBuiltInState = {
+  messages: BaseMessage[];
+  structuredResponse?: Record<string, unknown>;
+};
+
+export type InternalAgentState<StructuredResponseType...> = {
+  messages: BaseMessage[];
+} & (StructuredResponseType extends ResponseFormatUndefined
+  ? Record<string, never>
+  : { structuredResponse: StructuredResponseType });
+\`\`\`
+
+*— libs/langchain/src/agents/runtime.ts:17-44, 73-82（commit 7704471）*
+
+内置状态只有 messages 与 structuredResponse 两个字段——**没有 steps、没有临时变量**；L45 里的 remainingSteps 是 Pregel 可配置层注入的簿记字段，不属于状态 schema。InternalAgentState 用条件类型把「未配置 responseFormat」的形态收敛成只剩 messages。这是 1.x 相对 0.x 的一个哲学转变：不再有独立的 Memory 对象，对话历史就是状态里的一条通道（L88 会回头对照旧世界）。
+
+### 三份 schema 的装配：state/input/output
+
+annotation.ts 的 \`createAgentState\` 是装配中枢。它从一个只有 jumpTo 的字段表出发，依次吸收用户 stateSchema 与各中间件 stateSchema，最后按三份视图导出：
+
+\`\`\`ts
+const stateFields: Record<string, any> = {
+  // jumpTo is used for internal navigation control
+  jumpTo: new UntrackedValue<JumpToTarget>(),
+};
+const inputFields: Record<string, any> = {};
+const outputFields: Record<string, any> = {};
+...
+if (isZodSchemaV4(fieldSchema)) {
+  const meta = schemaMetaRegistry.get(fieldSchema);
+  if (meta?.reducer) {
+    stateFields[key] = new ReducedValue(fieldSchema, {
+      inputSchema: meta.reducer.schema,
+      reducer: meta.reducer.fn,
+    });
+    if (!isPrivate) {
+      inputFields[key] = meta.reducer.schema;
+      outputFields[key] = fieldSchema;
+    }
+  }
+  ...
+}
+...
+return {
+  state: new StateSchema({ messages: MessagesValue, ...stateFields }),
+  input: new StateSchema({ messages: MessagesValue, ...inputFields }),
+  output: new StateSchema({ messages: MessagesValue, ...outputFields }),
+};
+\`\`\`
+
+*— libs/langchain/src/agents/annotation.ts:35-168（commit 7704471，有裁剪）*
+
+三份视图的分工：**state 是图内部全量**（含私有字段与通道行为），**input 是 invoke 时允许提供的键**（reducer 字段用 inputSchema——例如消息追加类 reducer 只接受单条输入），**output 是 invoke 返回暴露的键**。Zod v4 的 reducer 元数据经 schemaMetaRegistry 读出后包成 ReducedValue，让「用 Zod 写 reducer」的体验与 LangGraph 原生 Annotation 等价——这就是 L66 schema 归一化的 agents 侧入口。jumpTo 用 UntrackedValue：它是路由信号不是数据，不该污染 checkpoint 历史。
+
+私有字段（下划线前缀）的处理是本文件的点睛之笔：stateFields 照常保留（私有状态持久化在图状态里，多轮循环不丢），但 inputFields/outputFields 里 \`if (!isPrivate)\` 的守卫把它挡在两个对外视图之外。**「持久但不可从外部注入或读取」——这就是中间件私有状态的完整契约。**
+
+structuredResponse 的注入是条件化的，开关在 ReactAgent 构造器：
+
+\`\`\`ts
+const hasDynamicStructuredResponse = Boolean(
+  this.options.middleware?.some((middleware) => middleware.wrapModelCall)
+);
+const { state, input, output } = createAgentState(
+  this.options.responseFormat !== undefined || hasDynamicStructuredResponse,
+  ...
+);
+\`\`\`
+
+*— libs/langchain/src/agents/ReactAgent.ts:245-255（commit 7704471）*
+
+只要有 wrapModelCall 中间件就预铺通道——因为 L45 讲过 request.responseFormat 可被中间件运行时改写，框架必须在编译期为这种动态性预留结构化输出槽位。outputFields 里它同样是 UntrackedValue，呼应 AgentNode 注释里的 guard=true 单写语义。
+
+### context：另一维度的只读配置
+
+context 不走状态机。Runtime 类型把它定义为 LangGraph 运行时的裁剪视图：
+
+\`\`\`ts
+export type Runtime<TContext = unknown> = Partial<
+  Omit<LangGraphRuntime<TContext>, "context" | "configurable">
+> & WithMaybeContext<TContext> & {
+  configurable?: { thread_id?: string; [key: string]: unknown };
+};
+\`\`\`
+
+*— libs/langchain/src/agents/runtime.ts:63-71（commit 7704471）*
+
+接口文档给两条 schema 的分工写下了一锤定音的对照（middleware/types.ts:444-459）：**stateSchema——persisted between multiple invocations；contextSchema——read-only and not persisted**。消费侧的三道关卡在 L47 已经见过：MiddlewareNode 按 contextSchema 形状过滤键（各中间件只见自己的切片）、interopParse 应用默认值与必填校验、\`Object.freeze\` 冻结实例。还有一个类型层的体贴：WithMaybeContext 按 schema 形态决定 invoke 时 context 是否必传——z.optional() 或 z.default() 包裹的 schema 让 context 变为可选，纯必填 schema 则强制提供（runtime.ts:49-58）。
+
+### 私有状态的初始化与 StateManager
+
+两个运行时组件补完状态生命周期。其一是 \`initializeMiddlewareStates\`（nodes/utils.ts:26-104）：invoke 开始时逐中间件 safeParse 状态初值，私有字段先被 \`interopZodObjectMakeFieldsOptional(schema, key => key.startsWith("_"))\` optional 化——因为用户无法在 invoke 输入里提供私有字段；公开必填字段缺值时抛出的错误模板会列出缺失字段并给出三条修复建议（.default()、.optional()、invoke 时传值），是刻意的开发者体验投资。其二是 state.ts 的 StateManager：
+
+\`\`\`ts
+getState(name: string) {
+  const middlewareNodes = this.#nodes.get(name) ?? [];
+  const state = middlewareNodes.reduce((prev, node) => ({
+    ...prev, ...((node.getState() as Record<string, unknown>) ?? {}),
+  }), {} as Record<string, unknown>);
+  // we internally reset the jumpTo property and shouldn't propagate this value
+  delete state.jumpTo;
+  return state;
+}
+\`\`\`
+
+*— libs/langchain/src/agents/state.ts:35-54（commit 7704471）*
+
+同一中间件的多个 hook 节点（比如既写了 beforeModel 又写了 afterModel）各持有局部状态切片，StateManager 按中间件名分组归并；jumpTo 在出口被显式删除——路由信号消费完就消失，绝不漏进 hook 可见的输入。加上 L47 提过的 \`derivePrivateState\`（把私有字段 optional 化并入 hook 输入 schema），私有状态的完整链路闭环：**invoke 不可注入 → 图内持久 → hook 输入可见且可更新 → 对外 input/output 不可见**。
+
+### 本课小结
+
+- 内置状态仅 messages + structuredResponse 两字段；图状态 = 内置字段 + 用户 stateSchema + 各中间件 stateSchema，装配成 state/input/output 三份视图。
+- 下划线私有字段：图内持久、不进 input/output、hook 输入自动 optional——「持久但对外不可见」是它的完整契约。
+- reducer 元数据经 schemaMetaRegistry 转 ReducedValue，Zod 化的 reducer 体验与 LangGraph 原生 Annotation 等价；jumpTo 与 structuredResponse 都用 UntrackedValue。
+- context 只读、不持久、按中间件 schema 切片过滤并冻结；state 跨 invoke 持久——两者分工由接口文档明文锚定。
+- 下一课（模块四收官）进入实践：JumpToTarget 如何让 hook 与路由器协作完成节点跳转。
+`,
+    null,
+    [
+      {
+        text: 'middleware stateSchema 里以下划线开头的字段（如 _steps）在三份 schema 里的待遇是？',
+        options: [
+          '与其他字段完全相同',
+          '保留在 graph 状态里持久化，但不进 input/output 通道，hook 输入里自动变 optional',
+          '被完全丢弃',
+          '只出现在 output 里',
+        ],
+        answer: 1,
+        explain:
+          'annotation.ts 的 applySchema 对 isPrivate 字段 continue 掉 inputFields/outputFields 的写入但保留 stateFields（注释：Private state persists in the graph state but is not exposed as input/output channels）；derivePrivateState 又把它们 .optional() 化后并入 hook 输入 schema，因为用户无法在 invoke 时提供私有字段初值。选项 A 忽略了三条路径的差异化处理；选项 C 与 D 都与源码注释相反。',
+        concept: 'lc-state-context-schema',
+      },
+      {
+        text: 'structuredResponse 通道在什么条件下被加进 output schema？',
+        options: [
+          '永远都会加',
+          '仅当用户配置了 responseFormat，或有中间件定义了 wrapModelCall（可能动态产出结构化响应）',
+          '仅当使用 ProviderStrategy 时',
+          '仅当配置了 checkpointer',
+        ],
+        answer: 1,
+        explain:
+          'ReactAgent 构造器里 hasDynamicStructuredResponse = middleware.some(m => m.wrapModelCall)，然后 createAgentState(responseFormat !== undefined || hasDynamicStructuredResponse, ...)——wrapModelCall 意味着中间件可以在运行时改写 responseFormat，所以通道提前备好。选项 A 会浪费一个 UntrackedValue 通道；选项 C 混淆了策略与形态；选项 D 无关。',
+        concept: 'lc-state-context-schema',
+      },
+      {
+        text: '关于 context 与 state 的分工，哪个说法正确？',
+        options: [
+          '两者都会持久化到 checkpoint',
+          'state 跨 invoke 持久（配合 checkpointer），context 只读、不持久、每个中间件只看到自己 schema 声明的键',
+          'context 可写，用于中间件间通信',
+          'state 是只读的，写入要走 Command',
+        ],
+        answer: 1,
+        explain:
+          '接口文档对 contextSchema 的原话是 Middleware context is read-only and not persisted between multiple invocations，而 stateSchema 的文档是 Middleware state is persisted between multiple invocations；MiddlewareNode.invokeMiddleware 还会按 schema 形状过滤 context 键。选项 A 把两者混为一谈；选项 C 与只读语义相反（要通信请用 stateSchema）；选项 D 错——state 通过节点返回的状态更新合并写入，无需 Command。',
+        concept: 'lc-state-context-schema',
+      },
+      {
+        text: 'middleware 的 stateSchema 含必填字段且没有默认值，invoke 时也没提供，会发生什么？',
+        options: [
+          '字段静默为 undefined',
+          'initializeMiddlewareStates 抛错，错误信息给出三条修复建议（.default()/.optional()/invoke 时传值）',
+          '自动用 null 填充',
+          '整个中间件被跳过',
+        ],
+        answer: 1,
+        explain:
+          'initializeMiddlewareStates 用 interopSafeParseAsync 解析（私有字段先被 optional 化），失败时抛出的 Error 模板逐条列出必填字段，并给出三条修复路径——这是刻意的开发者体验设计。选项 A 与 safeParse 语义矛盾；选项 C、D 都不是源码行为。',
+        concept: 'lc-state-context-schema',
+      },
+    ],
+    [
+      [
+        'AgentBuiltInState',
+        'agent 内置状态类型：messages: BaseMessage[] 与可选的 structuredResponse，是所有中间件状态与类型推导的公共基底',
+      ],
+      [
+        'createAgentState',
+        'annotation.ts 里的装配函数：合并用户 stateSchema 与各中间件 stateSchema，产出 state/input/output 三份 StateSchema',
+      ],
+      [
+        'UntrackedValue',
+        'LangGraph 通道类型：值不进 checkpoint 版本时钟；jumpTo 与 structuredResponse 通道都用它',
+      ],
+      [
+        'StateManager',
+        'state.ts 里 55 行的内部类：按中间件名分组归集各 hook 节点的私有状态，getState 时合并并删除 jumpTo',
+      ],
+    ],
+    [
+      '在 contextSchema 里声明必填字段但期望 invoke 不传时能跑—— MiddlewareNode 的 interopParse 会对缺必填直接抛错；要可缺省请用 .optional() 或 .default()',
+      '把跨 invoke 的计数器写进 context——context 不持久，每轮 invoke 从头构造；跨轮次的状态必须走 stateSchema',
+      '以为私有字段要自己在 hook 里判空——derivePrivateState 已把它们全部 .optional() 化，真正要防的是公开必填字段缺默认值导致的构造期报错',
+    ],
+  ),
+  'theory',
+)

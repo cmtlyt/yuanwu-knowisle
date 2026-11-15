@@ -1,0 +1,238 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L74 = withKind(
+  L(
+    'L74',
+    21,
+    'isResuming：五种 resume 信号与 channel_versions 前提',
+    2,
+    ['L68'],
+    ['lc-is-resuming'],
+    [
+      '说出 isResuming 的五种信号及各自的触发场景（config 标记、空输入、Command.resume、内部符号、run_id 匹配）',
+      '解释 channel_versions 前提为什么能区分「新 run」与「续跑」，以及它如何与 skipDoneTasks/isReplaying 联动',
+      '追踪 CONFIG_KEY_RESUMING 的一次性生命周期：谁设置、谁消费、谁删除、重试时为何再注入',
+    ],
+    `### 判定链全景：resume 不是配置，是推断
+
+模块六前四阶段（L65–L73）讲完了「图的静态形状」——节点、通道、屏障；从本课起进入 **Pregel 运行时**：一张编译好的通道网络如何一步步跑起来、断掉、再接上。运行时的第一个问题是：**这次 invoke 是新跑，还是续跑？** 这个判定决定了 \`_first\` 是否加载 pending writes、已完成任务是否跳过、interrupt 答案如何回填。核心结论先给出：**isResuming 不是一个布尔配置项，而是「版本前提 ∧ 五信号或运算」的推断链**，任何一环理解错，生产里就会出现「明明传了 resume 却从头跑」或「没传 resume 却跳过了节点」两类幽灵 bug。
+
+### 源码走读：getter 里的推断链
+
+\`\`\`ts
+get isResuming() {
+  let hasChannelVersions = false;
+  if (START in this.checkpoint.channel_versions) {
+    // For common channels, we can short-circuit the check
+    hasChannelVersions = true;
+  } else {
+    for (const chan in this.checkpoint.channel_versions) {
+      if (Object.prototype.hasOwnProperty.call(this.checkpoint.channel_versions, chan)) {
+        hasChannelVersions = true;
+        break;
+      }
+    }
+  }
+  const configHasResumingFlag =
+    this.config.configurable?.[CONFIG_KEY_RESUMING] !== undefined;
+  const configIsResuming =
+    configHasResumingFlag && this.config.configurable?.[CONFIG_KEY_RESUMING];
+  const inputIsNullOrUndefined =
+    this.input === null || this.input === undefined;
+  const inputIsCommandResuming =
+    isCommand(this.input) && this.input.resume != null;
+  const inputIsResuming = this.input === INPUT_RESUMING;
+  const runIdMatchesPrevious =
+    !this.isNested &&
+    this.config.metadata?.run_id !== undefined &&
+    (this.checkpointMetadata as { run_id?: unknown })?.run_id !== undefined &&
+    this.config.metadata.run_id ===
+      (this.checkpointMetadata as { run_id?: unknown })?.run_id;
+  return (
+    hasChannelVersions &&
+    (configIsResuming || inputIsNullOrUndefined || inputIsCommandResuming ||
+      inputIsResuming || runIdMatchesPrevious)
+  );
+}
+\`\`\`
+
+*— pregel/loop.ts:633-678（commit fa426b2）*
+
+逐行读有三个细节。**第一**，版本前提的短路顺序：先查 \`START\` 键——任何跑过至少一个超步的 checkpoint 必然给 START 通道记过版本，这是 O(1) 快路径；只有没跑过才退化到全表扫描。**第二**，configIsResuming 分两步写：先判 \`!== undefined\` 再取真值，意味着「显式传 false」是合法的否定信号——用户可以用 \`configurable: { [CONFIG_KEY_RESUMING]: false }\` 关掉其他信号（尤其空输入）触发的 resume。**第三**，\`inputIsResuming\` 比较的是 \`Symbol.for("INPUT_RESUMING")\`（loop.ts:135 附近的常量），它是内部调用方（子图恢复、重试注入）不携带真实输入时的哨兵，外部用户永远不会构造它。
+
+### 五信号对照表
+
+| 信号 | 触发场景 | 备注 |
+|---|---|---|
+| configIsResuming | 用户显式传 \`configurable\` 标记 | 显式 false 可否定 |
+| inputIsNullOrUndefined | Python 线约定：不传输入即续跑 | 受版本前提保护 |
+| inputIsCommandResuming | \`new Command({ resume: ... })\` | resume 为 null 不算 |
+| inputIsResuming | 内部哨兵（子图/重试） | 外部不可构造 |
+| runIdMatchesPrevious | 顶层 run 的 run_id 与 checkpoint metadata 相同 | 仅 \`!isNested\` 生效 |
+
+第五个信号最容易被忽视：它服务的是「**同一次 invoke 内的多次 tick**」——第一次 tick 完成后 checkpoint metadata 里记下了 run_id，下一次 tick 复用同一 config 时不需要任何显式标记就能自然延续。这也解释了为什么它必须排除嵌套图：子图的 config 与 metadata 都继承自父图，run_id 恒等，不排除则子图每步都被误判为 resume。
+
+### 前提与兄弟判定：skipDoneTasks / isReplaying
+
+isResuming 决定「按续跑语义准备任务」，但还有一个正交维度：**已完成任务要不要跳过**。\`_first\` 里的关键代码：
+
+\`\`\`ts
+const isTimeTraveling =
+  this.addressed &&
+  ((this.isNested &&
+    configurable?.[CONFIG_KEY_CHECKPOINT_NS] !== undefined &&
+    configurable?.[CONFIG_KEY_CHECKPOINT_NS] !== "" &&
+    configurable?.[CONFIG_KEY_CHECKPOINT_MAP] !== undefined &&
+    configurable[CONFIG_KEY_CHECKPOINT_NS] in
+      configurable[CONFIG_KEY_CHECKPOINT_MAP]) ||
+    !(
+      (inputIsCommand && (this.input as Command).resume != null) ||
+      configurable?.[CONFIG_KEY_RESUMING] === true ||
+      this.resumeAtHead
+    ));
+this.skipDoneTasks = !(
+  isTimeTraveling || this.addressedCheckpointSuperseded
+);
+\`\`\`
+
+*— pregel/loop.ts:1654-1675（commit fa426b2）*
+
+普通 resume（指向线程最新 checkpoint、或带 Command.resume）\`skipDoneTasks = true\`：已写完的任务直接把 checkpoint 里的 writes 领回去，不重跑。而**时间旅行**（checkpoint_id 指向历史点）与「checkpoint 已被线程越过」（addressedCheckpointSuperseded）会翻转为重跑模式，此时 \`isReplaying\` getter（\`!this.skipDoneTasks\`，loop.ts:680-682）变 true。两个 getter 组合出四种运行姿态：新 run（不 resume、不 replay）、续跑（resume、不 replay）、时间旅行（replay）、resume 到已越过的 checkpoint（resume 且 replay）。
+
+### 信号的生命周期：一次性标志与重试再注入
+
+\`CONFIG_KEY_RESUMING\` 有一套精确的生命周期：**用户/调用方设置 → isResuming 读取 → tick 收尾删除**。tick() 在应用写入与 interruptAfter 检查之后有一行显式清理：
+
+\`\`\`ts
+// unset resuming flag
+if (this.config.configurable?.[CONFIG_KEY_RESUMING] !== undefined) {
+  delete this.config.configurable?.[CONFIG_KEY_RESUMING];
+}
+\`\`\`
+
+*— pregel/loop.ts:1303-1306（commit fa426b2）*
+
+删除的意义：标志只授权「这一个超步按 resume 语义执行」，不能无限期污染后续超步。但重试是一个例外——\`_runWithRetry\` 在每次重试前重新注入：
+
+\`\`\`ts
+// signal subgraphs to resume (if available)
+config = patchConfigurable(config, { [CONFIG_KEY_RESUMING]: true });
+// A retry reruns the node from its first line, so its interrupt() calls
+// count from the first again to reuse the answers its task already has
+const scratchpad: PregelScratchpad | undefined =
+  config.configurable?.[CONFIG_KEY_SCRATCHPAD];
+if (scratchpad !== undefined) scratchpad.interruptCounter = -1;
+\`\`\`
+
+*— pregel/retry.ts:198-205（commit fa426b2）*
+
+重试会把节点从头重跑，节点内部的子图调用（比如 \`interrupt()\`）会再次触发；注入 RESUMING 标志让子图复用已有答案，\`interruptCounter = -1\` 让 interrupt 计数从第一行重新数起——否则重试后的 interrupt 会拿到新 id，下一次 resume 无法与旧答案匹配。这个细节在 L80 容错矩阵里还会展开。
+
+### 两个易混判定：resumeAtHead 与「resume 到已越过点」
+
+五信号之外还有一个绕不开的判定字段：\`resumeAtHead\`。它在 \`_first\` 的构造段里被计算：
+
+\`\`\`ts
+let resumeAtHead = false;
+let addressedCheckpointSuperseded = false;
+if (params.checkpointer && hasPersistedParent) {
+  const superseded = await checkpointSuperseded(
+    params.checkpointer, addressedConfig, saved
+  );
+  const isUpdateOrFork =
+    checkpointMetadata.source === "update" ||
+    checkpointMetadata.source === "fork";
+  resumeAtHead =
+    addressedConfig.configurable?.checkpoint_id !== undefined &&
+    !superseded && !isUpdateOrFork;
+  addressedCheckpointSuperseded = superseded;
+}
+\`\`\`
+
+*— pregel/loop.ts:884-898（commit fa426b2）*
+
+字段语义在声明处写得很直白：**「True when an explicit checkpoint_id targets the latest saved checkpoint」**（loop.ts:563-567）——你带着 checkpoint_id 去取线程头部，这算 resume（isResuming 为 true），且不算时间旅行（skipDoneTasks 保持 true）。三个条件缺一不可：checkpoint_id 必须显式给了、目标没被线程越过（\`checkpointSuperseded\` 返回 false）、来源不是 update/fork（这两种 source 本身就是新写入，领回 writes 即可）。与它成对的是 \`addressedCheckpointSuperseded\`：目标 checkpoint 已经被后续运行「盖过」，此时 resume 会翻转成 replay 姿态——这就是前文四种运行姿态表里「resume 且 replay」那一格的来源。易混淆点在这：**「是不是 resume」由 isResuming 的五信号判定，「完成后跳不跳过」由 skipDoneTasks/isReplaying 判定，而 resumeAtHead 只是前者与后者之间的一个中间量**——把三个布尔当一个用，就会出现「传了 checkpoint_id 却重跑了已完成节点」或「指向历史点却没重跑」两种反直觉行为。理解了这三个量，L76 的写重放排序（重跑模式下存量 writes 如何与重跑任务的写入交错）与 L79 的 checkpoint 寻址才有正确的心智模型。
+
+### 本课小结
+
+- isResuming = **channel_versions 前提** ∧ 五信号或运算；前提防住「空 checkpoint 的新 run 被当续跑」，START 键是 O(1) 快路径。
+- 五信号分别服务显式调用、Python 线约定、Command.resume、内部哨兵、同 run 多 tick 五种场景；run_id 匹配仅限顶层图。
+- isReplaying（\`!skipDoneTasks\`）与 isResuming 正交：时间旅行是「replay 的 resume」，已完成任务要重跑。
+- CONFIG_KEY_RESUMING 一次性消费，tick 收尾删除；重试路径由 \`_runWithRetry\` 再注入并复位 interruptCounter。
+- 下一课把判定结果交给 \`tick()\`：一次 BSP 超步从收写、checkpoint 到派发的完整旅程。
+`,
+    null,
+    [
+      {
+        text: 'isResuming 返回 true 的完整条件是？',
+        options: [
+          '只要 config.configurable 里有 CONFIG_KEY_RESUMING 就行',
+          'checkpoint 里存在 channel_versions，且五种信号（config 标记 / input 为空 / Command.resume / INPUT_RESUMING 符号 / 顶层 run_id 匹配）至少命中一个',
+          'input 必须是 Command 且带 resume 字段',
+          '只要配了 checkpointer 就一定是 resume',
+        ],
+        answer: 1,
+        explain:
+          '源码是 AND 关系：hasChannelVersions 与五种信号的 OR 缺一不可。A 错在漏了版本前提且 CONFIG_KEY_RESUMING 为 false 时不算；C 只覆盖 Command.resume 一种信号；D 完全错误——每次全新 invoke 也配有 checkpointer，此时 channel_versions 可能存在但五个信号全不命中，仍判定为新 run。',
+        concept: 'lc-is-resuming',
+      },
+      {
+        text: '「checkpoint 里存在 channel_versions」这个前提防住了什么？',
+        options: [
+          '防止子图误判为 resume',
+          '防止空 checkpoint 的新 run 被当成续跑——比如传 null input 调用一个从未跑过的线程',
+          '防止 interrupt 答案丢失',
+          '防止步数超限',
+        ],
+        answer: 1,
+        explain:
+          '「input 为 null/undefined」本身就是 resume 信号之一（这是 Python 线约定：不传输入即续跑），但若 checkpoint 是全新的、channel_versions 为空，这个 null 就不能解释为 resume。B 正确。A 与子图无关（子图还有 isNested 专门排除 run_id 匹配）；C 是 RESUME 写路由的问题（L80）；D 是 stop/DEFAULT_LOOP_LIMIT 的事。',
+        concept: 'lc-is-resuming',
+      },
+      {
+        text: 'runIdMatchesPrevious 信号为什么要求 !this.isNested？',
+        options: [
+          '子图没有 run_id',
+          '嵌套子图总是共享父 run 的 metadata，若不排除，每次子图调用都会被误判成 resume',
+          '子图不支持 checkpointer',
+          '这是 TypeScript 类型系统的限制',
+        ],
+        answer: 1,
+        explain:
+          '子图的 config 由父图下发，metadata.run_id 与 checkpointMetadata.run_id 天然同源，若让该信号在子图生效，子图每个超步都会把自己当 resume。所以源码明确加上 !this.isNested 才比较 run_id。A 错——子图也有 run_id，只是不能用同一判据；C 错——子图可以共享 checkpointer；D 与类型系统无关。',
+        concept: 'lc-is-resuming',
+      },
+      {
+        text: '一个已完成一个超步的 resume 运行里，CONFIG_KEY_RESUMING 标志的生命周期是？',
+        options: [
+          '整个运行期间一直保留在 config 里',
+          '每个超步收尾时被 delete，重试时由 _runWithRetry 重新注入 true',
+          '只在 _first 里读取一次，之后由垃圾回收处理',
+          '由 checkpointer 持久化进 checkpoint metadata',
+        ],
+        answer: 1,
+        explain:
+          'tick() 在 applyWrites 与 interruptAfter 检查之后显式 delete config.configurable[CONFIG_KEY_RESUMING]，保证标志只影响一个超步；_runWithRetry 在每次重试前重新 patchConfigurable 注入 true 并把 scratchpad.interruptCounter 重置为 -1，让子图 interrupt 复用既有答案。A 错——标志是一次性的；C 的「读取一次」描述不准，标志由 getter 反复读取；D 它是运行时 config 键，不进 checkpoint。',
+        concept: 'lc-is-resuming',
+      },
+    ],
+    [
+      [
+        'isResuming',
+        'PregelLoop 的 getter：以 channel_versions 存在为前提，对五种 resume 信号做或运算的布尔判定',
+      ],
+      [
+        'INPUT_RESUMING',
+        'loop 内部 Symbol.for("INPUT_RESUMING") 哨兵，子图等内部调用方用它替代真实输入表达「我要续跑」',
+      ],
+      ['CONFIG_KEY_RESUMING', 'config.configurable 上的运行时键，显式 resume 标志；一个超步后即被删除'],
+      ['isReplaying', 'isResuming 的兄弟 getter：!skipDoneTasks，表示「已完成任务要重跑」的时间旅行模式'],
+    ],
+    [
+      '以为传 null input 一定 resume——空 checkpoint（channel_versions 为空）时 null 只是「无输入」，判定结果仍是新 run',
+      '在子图里依赖 run_id 匹配做 resume 判定——源码用 !isNested 明确排除了这条路径，子图 resume 只走 config 标记/Command.resume/INPUT_RESUMING 三条信号',
+      '把 CONFIG_KEY_RESUMING 当持久配置手动塞进 config 复用——它在一个超步收尾时就被 delete，跨超步复用要靠 checkpointer 与 resume 语义而非这个临时标志',
+    ],
+  ),
+  'theory',
+)

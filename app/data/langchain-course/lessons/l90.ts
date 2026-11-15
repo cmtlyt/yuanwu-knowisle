@@ -1,0 +1,216 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L90 = withKind(
+  L(
+    'L90',
+    25,
+    'checkpoint（一）：Checkpoint 三字典与版本时钟',
+    3,
+    ['L68'],
+    ['lc-checkpoint-structure'],
+    [
+      '还原 Checkpoint 接口的三个字典各自职责，并解释 versions_seen 如何终止图循环无限重跑',
+      '手写推导一次 superstep 后 channel_versions 与 versions_seen 的变化过程',
+      '辨析 CheckpointTuple 的 parentConfig 检查点链表与 pendingWrites 的用途',
+    ],
+    `### 三字典与版本时钟：langgraph 状态恢复的数学结构
+
+进入 checkpoint 主题。模块六讲了 tick() 与 _applyWrites 的运行时机制；本课下探到持久化数据结构：**一次超步结束后，图到底把什么写进了 checkpointer**。核心结论：**Checkpoint 是「状态快照 + 双侧版本账本」——channel_values 记账面余额，channel_versions 记每笔写入的流水号，versions_seen 记每个节点读到的流水号；恢复执行时，差值决定谁要重跑**。framework 课型，langgraphjs 仓库（commit fa426b2）逐字段走读。
+
+### 走读：Checkpoint 接口全字段
+
+\`\`\`ts
+export interface Checkpoint<N extends string = string, C extends string = string> {
+  /** The version of the checkpoint format. Currently 4 */
+  v: number;
+  /** Checkpoint ID {uuid6} */
+  id: string;
+  /** Timestamp {new Date().toISOString()} */
+  ts: string;
+  channel_values: Record<C, unknown>;
+  channel_versions: Record<C, ChannelVersion>;
+  versions_seen: Record<N, Record<C, ChannelVersion>>;
+}
+
+export interface CheckpointTuple {
+  config: RunnableConfig;
+  checkpoint: Checkpoint;
+  metadata?: CheckpointMetadata;
+  parentConfig?: RunnableConfig;
+  pendingWrites?: CheckpointPendingWrite[];
+}
+\`\`\`
+
+*— langgraphjs/libs/checkpoint/src/base.ts:18-104（commit fa426b2）*
+
+逐字段读。标量三件套：\`v: 4\` 是 checkpoint 格式版本号（\`emptyCheckpoint()\` 同样写死 v: 4，base.ts:75-84）——结构本身有版本号意味着存储格式可以演进而不破坏旧数据；\`id\` 用 **uuid6**（时间有序的 UUID 变体，与 uuid4 的关键差异是前缀含时间戳），检查点排序、list 遍历都依赖这个时间序；\`ts\` 是 ISO 时间戳，与人可读的审计信息对应。
+
+三个字典才是主角。\`channel_values\` 是图状态本体——模块六讲过的每条通道（LastValue、Topic、BinaryOperatorAggregate……）的当前值都存在这里，恢复执行就是把这组值灌回通道。\`channel_versions\` 是**写入侧时钟**：每条通道最后一次被写入时领取的版本号。\`versions_seen\` 是**消费侧书签**：二维嵌套 \`Record<节点名, Record<通道名, 版本号>>\`，记录每个节点上次执行时各自看到过哪些通道的哪些版本。
+
+### 版本时钟如何终止循环：一次推演
+
+用一个小循环图推演三字典的变化（这也是手写作业）。图结构：\`model → tools → model\`（工具循环），通道 M（messages）、通道 T（tool_results）。
+
+**初始 checkpoint**：channel_values = { M: [], T: null }，channel_versions = { M: 1, T: 1 }（空检查点创建时各通道领初始版本），versions_seen = {}。
+
+**超步 1（model 节点执行）**：model 读 M@v1，产出追加写 M → channel_values.M 更新，channel_versions.M 变为 2；写库时 versions_seen.model.M 记为 1（它消费过的版本）。
+
+**超步 2（tools 节点执行）**：tools 读到 M@v2（因为 2 > versions_seen.tools.M 即未见过），产出写 T → channel_versions.T = 2，versions_seen.tools.M = 2。
+
+**超步 3（model 再次执行）**：model 读 T@v2（T 的版本 2 > model 见过的 T 版本），产出写 M → channel_versions.M = 3，versions_seen.model.T = 2。同时 model 对 M 通道自己的旧写入（v2）**不再响应**——因为它见过自己的写入。
+
+**终止判定**：下一轮 tick 决定调度哪些节点时，比较 channel_versions 与各节点 versions_seen 的差值——若某节点的所有入边通道都「已见过当前版本」，它不再被调度。模型节点决定走 END 时，M 通道没有新写入、tools 节点对 M@v3 已消费、差值为零，循环终止。
+
+**恢复执行（进程崩溃后）**：从 checkpoint 灌回 channel_values，读 versions_seen 与 channel_versions 求差——**只有「有未消费新版本」的节点被重新调度**，已完成的节点不重跑。这就是「增量恢复」的全部数学：两个账本一减，得到待办集合。
+
+对照理解为什么二维嵌套是必须的：model 消费 {M, T}、tools 消费 {M}，各自的书签集合不同；「节点 X 是否需要重跑」是按 (节点, 通道) 对逐一判定的三元组谓词，一维全局版本号无法表达。
+
+### CheckpointTuple：读取侧的五个字段
+
+CheckpointTuple 是 getTuple/list 的返回单元（base.ts:98-104）。\`checkpoint\` 是数据本体；\`config\` 是「取这个检查点用的地址」（含 thread_id 与 checkpoint_ns）；\`parentConfig\` 指向上一个检查点的 config——**检查点不是数组而是链表**，list 从最新沿 parent 指针回溯；\`pendingWrites\` 是「已记录但尚未归并进 channel_values 的写入」（interrupt 期间的写入停在 pending 状态，resume 时按序归并）。fork（从历史检查点长出新分支）的实现正是：取历史 tuple → copyCheckpoint 复制三字典 → 新 id 写入，parentConfig 指回原点——time travel 的数据基础就是这条链表。
+
+两个支撑推演的底层数值细节值得钉住。其一，版本号默认是**整数自增**：\`getNextVersion(current)\` 返回 \`current + 1\`（无值时从 1 起，base.ts:349-357），注释明确「可以覆写成字符串等任何单调递增类型，但字符串必须覆写」——\`compareChannelVersions\` 对非数字退化为 \`localeCompare\`（base.ts:359-365），自定义 saver 换版本号体系时要保证与这个比较函数兼容。其二，\`copyCheckpoint\` 的拷贝深度是**混合**的：\`channel_values\` 与 \`channel_versions\` 用浅展开、\`versions_seen\` 用 \`deepCopy\`（base.ts:87-96）——因为只有它是二维嵌套结构，浅拷贝会让新旧检查点共享内层节点账本，fork 出的分支改一处、原点跟着变。这就是前面说 fork「copyCheckpoint 复制三字典」时隐含的正确性成本。
+
+顺带一个实战向细节：\`BaseCheckpointSaver.toJSON()\` 返回 \`[ClassName]\`（base.ts:187-193），注释解释是防止 \`JSON.stringify\` 遍历 checkpointer 时深入 pg Pool 等客户端对象（内含定时器、socket）导致序列化爆炸——**持久化器被放进 RunnableConfig.configurable 传播时，这个 toJSON 是防线**。
+
+### 手写推演作业：三字典变化表
+
+把上面的小循环推演写成代码验证（用 MemorySaver + 真实图，或直接手工列表）：
+
+| 步骤 | 动作 | channel_versions 变化 | versions_seen 新增 |
+|---|---|---|---|
+| 0 | 创建空检查点 | M:1, T:1 | — |
+| 1 | model 写 M | M:1→2 | model.M=1 |
+| 2 | tools 读 M@2 写 T | T:1→2 | tools.M=2 |
+| 3 | model 读 T@2 写 M | M:2→3 | model.T=2 |
+| 4 | 终止判定 | M:3, T:2 | 差值为零的节点不再调度 |
+
+验证方法：用 MemorySaver 编译一个循环图，跑完一轮工具循环后直接取出三字典核对：
+
+\`\`\`ts
+import { StateGraph, Annotation, MemorySaver } from "@langchain/langgraph";
+
+// 循环图：model → tools → model（tools 后决定回到 model 或 END）
+const State = Annotation.Root({
+  messages: Annotation<BaseMessage[]>({
+    reducer: (a, b) => a.concat(b),
+    default: () => [],
+  }),
+  toolRound: Annotation<number>({ reducer: (a, b) => b, default: () => 0 }),
+});
+
+const checkpointer = new MemorySaver();
+const graph = workflow.compile({ checkpointer });
+
+// 第一次执行：走完 model → tools → model → END 的完整循环
+await graph.invoke(
+  { messages: [new HumanMessage("查一下天气")] },
+  { configurable: { thread_id: "t1" } }
+);
+
+// 取出最新检查点，核对三字典
+const tuple = await checkpointer.getTuple({ configurable: { thread_id: "t1" } });
+const cp = tuple!.checkpoint;
+console.log("format version:", cp.v);            // 4
+console.log("channels:", Object.keys(cp.channel_versions));  // __start__ / messages / toolRound ...
+console.log("model seen:", cp.versions_seen["model"]);
+console.log("tools seen:", cp.versions_seen["tools"]);
+
+// 恢复验证：同 thread 再 invoke 一条消息，图增量续跑而非从头重算
+await graph.invoke(
+  { messages: [new HumanMessage("再查一下上海")] },
+  { configurable: { thread_id: "t1" } }
+);
+const history: CheckpointTuple[] = [];
+for await (const t of checkpointer.list({ configurable: { thread_id: "t1" } })) {
+  history.push(t);   // 沿 parentConfig 链回溯，长度 ≥ 2 个超步的检查点
+}
+\`\`\`
+
+验收点三条：\`cp.v === 4\`（格式版本钉死）；\`versions_seen\` 是按节点分桶的二维字典——model 与 tools 各自有独立的通道版本书签（不是单一全局版本号）；\`list\` 产出的 tuple 依次带 parentConfig——检查点链表可整链遍历。把你手工推演的表逐行对照 \`channel_versions\` 数值，能对上就说明版本时钟的读法已经过关。
+
+### 本课小结
+
+- Checkpoint = 标量三件套（v:4 / uuid6 id / ts）+ 三字典（channel_values 状态、channel_versions 写入时钟、versions_seen 消费书签）。
+- versions_seen 按 (节点, 通道) 粒度记录消费，差值决定重跑集合——图循环终止与增量恢复共用同一套数学。
+- CheckpointTuple 的 parentConfig 把检查点串成链表，fork/list/time travel 都建在链上；pendingWrites 承接 interrupt 期间的中间写入。
+- toJSON() 返回 [ClassName] 防 stringify 深入存储客户端——持久化器进 configurable 的防线。
+- 下一课讲读写契约本身：BaseCheckpointSaver 五抽象方法、putWrites 排序语义与 JsonPlusSerializer 双态 serde。
+`,
+    null,
+    [
+      {
+        text: 'Checkpoint 接口的三个核心字典分别是什么？',
+        options: [
+          'messages, tools, outputs',
+          'channel_values（通道当前值）、channel_versions（版本时钟）、versions_seen（节点消费记录）',
+          'state, history, metadata',
+          'nodes, edges, channels',
+        ],
+        answer: 1,
+        explain:
+          'checkpoint/base.ts:18-46：channel_values: Record<C, unknown> 存每条通道当前值；channel_versions: Record<C, ChannelVersion> 是通道版本时钟；versions_seen: Record<N, Record<C, ChannelVersion>> 记录每个节点已消费过哪些版本的通道更新。加上 v（格式版本，当前 4）、id（uuid6）、ts（ISO 时间戳）构成完整结构。',
+        concept: 'lc-checkpoint-structure',
+      },
+      {
+        text: 'versions_seen 解决的核心问题是？',
+        options: [
+          '节省存储空间',
+          '让节点只响应「新版本」的通道更新——循环图中节点已处理过的更新不会触发重跑，图循环得以终止',
+          '加密通道数据',
+          '记录执行耗时',
+        ],
+        answer: 1,
+        explain:
+          'versions_seen[node][channel] 记录该节点上次执行时看到的版本号。下一轮 tick 时，节点只对 channel_versions[ch] > versions_seen[node][ch] 的更新响应。在「工具循环回写 state 再调模型」这类循环里，没有这个消费记录，模型节点会无限响应同一次工具结果更新——它是图循环终止机制的持久化基石。',
+        concept: 'lc-checkpoint-structure',
+      },
+      {
+        text: 'emptyCheckpoint() 里 v 字段的当前值是？',
+        options: ['1', '4', '7', '没有版本号'],
+        answer: 1,
+        explain:
+          'base.ts:75-84：emptyCheckpoint 返回 { v: 4, id: uuid6(0), ts: new Date().toISOString(), channel_values: {}, channel_versions: {}, versions_seen: {} }。v: 4 是 checkpoint 结构格式版本（L73 讲过 DeltaChannel 结构也标注 v:4 语境），id 用 uuid6（时间有序）。',
+        concept: 'lc-checkpoint-structure',
+      },
+      {
+        text: 'CheckpointTuple 里的 parentConfig 起什么作用？',
+        options: [
+          '并发执行锁',
+          '把检查点串成链表：沿 parentConfig 回溯可遍历一个 thread 的完整历史（list 与 fork 语义都依赖它）',
+          '加密密钥引用',
+          '指示模型版本',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:98-104：CheckpointTuple { config, checkpoint, metadata?, parentConfig?, pendingWrites? }。parentConfig 指向上一个检查点的 RunnableConfig，每个检查点都有父指针形成链表；list 按 time travel 顺序遍历、fork 分支时 parentConfig 决定「从哪个历史点长出来」。',
+        concept: 'lc-checkpoint-structure',
+      },
+      {
+        text: '为什么 versions_seen 是「节点 → 通道 → 版本」的二维嵌套字典，而不是每个节点一个全局版本号？',
+        options: [
+          '写起来方便',
+          '因为每个节点消费的通道集合不同，必须按通道粒度记录「看到过哪次更新」',
+          '为了兼容旧版本',
+          '其实就是一个数字',
+        ],
+        answer: 1,
+        explain:
+          '节点 A 可能只消费 messages 通道、节点 B 消费 messages 和 tools 两条。终止判定需要「节点 X 对通道 C 是否已见过版本 v」这种三元组精度——二维字典 Record<N, Record<C, ChannelVersion>> 正是这个三元组的物化。全局单版本号无法区分不同通道的更新序列。',
+        concept: 'lc-checkpoint-structure',
+      },
+    ],
+    [
+      ['channel_values', 'Checkpoint 三字典之一：每条通道的当前值，即「图状态」本体'],
+      ['channel_versions', '版本时钟：每条通道最后一次被写入时的版本号'],
+      ['versions_seen', '节点消费记录：每个节点已见过的各通道版本号，循环终止的持久化机制'],
+      ['CheckpointTuple', '检查点读取单元：config + checkpoint + metadata + parentConfig + pendingWrites'],
+    ],
+    [
+      '以为 checkpoint 只存「最新状态」——它存的是三字典 + 版本时钟，恢复执行时靠 versions_seen 决定哪些节点要重跑',
+      '混淆 channel_versions（通道被写到的版本）与 versions_seen（节点看过的版本）——前者是写入侧时钟，后者是消费侧书签',
+      '手动构造 checkpoint 时漏掉 v: 4 或用 uuid4 做 id——id 需时间有序（uuid6），时间序是检查点排序的依据',
+    ],
+  ),
+  'framework',
+)

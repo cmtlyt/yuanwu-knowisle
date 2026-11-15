@@ -1,0 +1,178 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L61 = withKind(
+  L(
+    'L61',
+    17,
+    'pii/piiRedaction：敏感信息检测与脱敏',
+    2,
+    ['L51'],
+    ['lc-pii-mw'],
+    [
+      '说出 piiMiddleware 的五种内置检测类型与四种处理策略，以及各策略的适用场景表',
+      '解释 credit_card 检测的 Luhn 校验与 mask 策略的两种特殊格式',
+      '辨析 piiMiddleware（按类型检测 + 四策略）与已废弃的 piiRedactionMiddleware（规则表 + 可逆标记地图）的机制差异',
+    ],
+    `### 定位：进出两端的安全闸
+
+上下文工程的最后一站是安全。pii 与 piiRedaction 是一对「同目标、异机制」的中间件：都在「消息发给模型前」动手术，都试图回答同一个问题——**怎么让模型帮忙干活，又不把用户的身份证号、信用卡、内网地址交给第三方 provider**。piiMiddleware 是现任（按类型检测 + 四种策略），piiRedactionMiddleware 是前任（规则表 + 可逆标记，已废弃但机制值得精读，因为「可逆脱敏」的需求永远存在）。
+
+一句话结论：**pii = 类型化检测器 × 不可逆处理策略；piiRedaction = 规则化检测 × 可逆标记地图（进模型前遮住、进工具前还原）。**
+
+### piiMiddleware：检测器与策略的正交组合
+
+内置检测器五种，全部基于正则 + 二次校验：
+
+\`\`\`ts
+export type BuiltInPIIType =
+  | "email" | "credit_card" | "ip" | "mac_address" | "url";
+
+const BUILT_IN_DETECTORS: Record<BuiltInPIIType, PIIDetector> = {
+  email: detectEmail,
+  credit_card: detectCreditCard,   // 正则 + 位数 13-19 + Luhn 校验
+  ip: detectIP,                    // 正则 + 每段 0-255 复核
+  mac_address: detectMacAddress,
+  url: detectUrl,
+};
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/pii.ts:47-52、246-252（commit 7704471，有裁剪）*
+
+自定义检测走 Detector 三形态：正则字符串（自动加 g 标志）、RegExp 实例（注意复用带 g 的正则要用副本避免 lastIndex 污染，源码为此每次 new RegExp）、或直接的 (content) => PIIMatch[] 函数（257-313）。piiType 不在内置表里又不给 detector 时构造期即抛错。
+
+四种策略按「保留多少信息」递减：
+
+\`\`\`ts
+case "block":
+  throw new PIIDetectionError(piiType, matches);   // 阻断：一个都不许过
+case "redact":
+  // 替换为 [REDACTED_EMAIL] 这类类型占位
+case "mask":
+  // credit_card → ****-****-****-1234（留末4位）
+  // email → j***@example.com（留首字符与域名）
+  // 其他 → 末 4 字符可见
+case "hash":
+  const hash = sha256(match.text).slice(0, 8);
+  // 替换为 <email_hash:a1b2c3d4>（确定性：同值同哈希）
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/pii.ts:408-419、337-393（commit 7704471，按分支重排）*
+
+JSDoc 给的选型表值得背下来：block 用于「PII 根本不该出现」的强合规；redact 用于日志消毒；mask 用于人工客服界面（人眼能对号）；hash 用于分析调试——**确定性哈希让同一个人的两次出现映射到同一个占位符，模型仍能做「同主体」推理**，这是 hash 独有的能力。
+
+四种策略的「可逆性光谱」还能再排一次序，作为 piiRedaction 对照的铺垫：block 无信息流动（最严）、redact/mask 不可逆但 mask 保留了部分字形线索（末 4 位、首字符+域名——这些残段本身有助记价值，也构成推断风险）、hash 不可逆但保关系（同主体可关联）、piiRedaction 的标记地图完全可逆（模型与工具两侧语义都对，但地图的持久化是死穴）。选型时先问两个问题：「这个值在本次对话里还需要被业务流程使用吗？」需要则只有 piiRedaction 类的可逆方案能同时满足模型隔离与工具可用；「不同主体的同类型值需要被区分吗？」需要则 hash 是唯一保留区分度的不可逆选项。两个问题都否，redact/mask 就是成本最低的默认。中间件实例的多开也遵循同一逻辑：三种类型三种策略并挂的 JSDoc 示例（524-528）之所以可行，是因为检测与策略都封在单实例里，实例之间互不知道对方的存在——**一个类型一种策略**，同一个 email 想既要 mask 给模型又要 hash 给分析，得拆两套 agent 或自写组合策略。
+
+### 执行面：beforeModel 与 afterModel 的窗口
+
+piiMiddleware 不用 wrap hook，走 before/afterModel 的 state 更新路径。beforeModel（输入侧）：applyToInput 只查**最后一条 HumanMessage**，applyToToolResults 只查**最后一条 AIMessage 之后的 ToolMessage**——窗口设计避免了对全历史的重复扫描。afterModel（输出侧）：applyToOutput 默认关闭，开启后检查最后一条 AIMessage，命中则重建消息替换进 state（666-718）。中间件名带上类型便于多实例共存：\`PIIMiddleware[credit_card]\`、\`PIIMiddleware[email]\`，JSDoc 示例正是三种类型三种策略并挂的用法（524-528）。
+
+block 策略的抛错发生在 beforeModel hook 里，会直接终止当次 invoke——这是四种策略里唯一「炸出去」的，错误处理方（调用层）拿到 PIIDetectionError 后可自行决定给用户什么提示。
+
+### piiRedaction：可逆标记地图的教科书
+
+虽然已废弃，piiRedaction 的机制是理解「模型隔离」与「功能完整性」矛盾的最佳教材。它的两阶段协议：
+
+\`\`\`ts
+// wrapModelCall：遮住
+processedText = processedText.replace(pattern, (match) => {
+  const id = generateRedactionId();
+  redactionMap[id] = match;                        // 真值进闭包地图
+  return \`[REDACTED_\${replacement}_\${id}]\`;        // 模型只见标记
+});
+// ...
+return handler({ ...request, messages: processedMessages });
+
+// afterModel：还原
+const restoredLastMessage = restoreMessage(lastMessage, redactionMap);
+// AI 消息里回显的 [REDACTED_SSN_abc123] 换回真值，
+// 结构化输出（extract- 前缀工具调用）的参数一并还原
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/piiRedaction.ts:52-70、397-492（commit 7704471，有裁剪）*
+
+这个协议的精妙处在数据流图（源码 JSDoc 原文）：用户输入「My SSN is 123-45-6789」→ 模型请求变「My SSN is [REDACTED_SSN_abc123]」→ 模型生成 tool_call({ ssn: \\"[REDACTED_SSN_abc123]\\" }) → **工具执行时拿到还原后的 123-45-6789**。模型全程不知道真值，但业务流程不受影响。afterModel 的还原还覆盖了结构化输出双路径：末消息是 JSON 字符串时解析还原 structuredResponse；倒数第二条是 extract- 前缀工具调用时按 RemoveMessage + 重建消息的方式替换（428-482）。
+
+代价同样写在文档里（Limitations 一节）：redactionMap 活在中间件闭包里，多进程/重启即失效；且防护只覆盖「发给 provider 的内容」——checkpoint、日志、trace、工具内部、最终输出都可能仍有 PII，文档原文列了五处盲区并建议「implement additional controls at the application, network, and storage layers」。废弃原因官方未细说，但可推断：闭包态地图与 checkpointer 持久化天然冲突，且标记还原依赖模型「忠实回显标记」这一脆弱假设。
+
+### 本课小结
+
+- piiMiddleware：5 内置检测器（credit_card 带 Luhn、ip 带段校验）× 4 策略（block/redact/mask/hash），策略选型按「信息保留度」递减，hash 保留同主体可关联性。
+- 处理窗口刻意收窄：输入只查最后一条 HumanMessage（+可选最近 ToolMessage），输出默认不查——避免重复扫描与过度改写。
+- piiRedaction 已废弃但机制经典：可逆标记 + 闭包地图实现「模型看不见、工具拿真值」；代价是地图不可持久化、依赖模型回显标记。
+- 合规是大工程：中间件只管 provider 隔离这一段，文档明示五处盲区需应用/网络/存储层补齐。
+- 下一课进入模块五最大单件 hitl（上）：interrupt 机制如何把「人」接进 agent 循环。
+`,
+    null,
+    [
+      {
+        text: 'piiMiddleware 的 applyToInput / applyToOutput / applyToToolResults 三个开关的默认值是？',
+        options: [
+          '全部默认 true',
+          'applyToInput 默认 true，applyToOutput 默认 false，applyToToolResults 默认 false',
+          'applyToInput 默认 false，其余默认 true',
+          '全部默认 false，必须显式开启',
+        ],
+        answer: 1,
+        explain:
+          'beforeModel 里 applyToInput 默认链是 runtime.context.applyToInput ?? options.applyToInput ?? true（pii.ts:569-570）；afterModel 里 applyToOutput ?? options.applyToOutput ?? false（667-668）；applyToToolResults 同为 false（571-574）。JSDoc 参数说明与之一致（496-498）。A 会把模型自己的输出也改写，过度干预；C/D 与默认链相反。',
+        concept: 'lc-pii-mw',
+      },
+      {
+        text: 'applyToInput 开启时，beforeModel 检查的是哪些消息？',
+        options: ['全部 HumanMessage', '只检查最后一条 HumanMessage', '最后一条 AIMessage', '全部消息'],
+        answer: 1,
+        explain:
+          'beforeModel 里从尾部向前找第一条 HumanMessage，只对 lastUserMsg 做检测与替换（pii.ts:589-618）——设计意图是处理「用户新输入」，历史消息已在前几轮处理过。applyToToolResults 同样限定「最后一条 AIMessage 之后的 ToolMessage」（621-658）。A 扩大范围浪费算力且重复处理；C/D 完全错误。',
+        concept: 'lc-pii-mw',
+      },
+      {
+        text: 'credit_card 的检测除了正则匹配，还有哪道校验？',
+        options: [
+          '长度必须恰好 16 位',
+          'Luhn 算法校验：正则命中后取出数字，位数 13-19 且通过 Luhn 求和校验才算命中',
+          '发卡行前缀白名单',
+          '没有额外校验',
+        ],
+        answer: 1,
+        explain:
+          'detectCreditCard 先用 CREDIT_CARD_PATTERN 匹配，再检查 cardNumber.length 在 13-19 之间且 luhnCheck 通过（pii.ts:167-185）；luhnCheck 是标准 Luhn 求和（116-136）。JSDoc 也标注「validated with Luhn algorithm」。A 错——13-19 位都可接受（很多卡种不足 16 位）；C 无此逻辑；D 错——纯正则会把任意 16 位数字当卡号，误报严重。',
+        concept: 'lc-pii-mw',
+      },
+      {
+        text: 'piiRedactionMiddleware（已废弃）与 piiMiddleware 的本质差异是？',
+        options: [
+          '前者用 LLM 检测，后者用正则',
+          '前者按规则名建可逆标记（[REDACTED_SSN_abc123] + 闭包地图），在工具执行前还原真值；后者按类型检测、策略不可逆（redact/mask/hash）或直接阻断',
+          '前者只能处理 email，后者覆盖五种类型',
+          '两者机制完全相同，只是名字不同',
+        ],
+        answer: 1,
+        explain:
+          'piiRedaction 的核心是可逆性：wrapModelCall 里把命中值替换成 [REDACTED_{RULE}_{ID}] 并把真值存进闭包 redactionMap（piiRedaction.ts:52-70、361），afterModel 里模型回显的标记被还原——这样模型生成的 tool_call 参数在真正执行工具时拿回原始值（如 SSN），实现「模型看不到真值、工具拿到真值」。piiMiddleware 的 redact/mask/hash 都不可逆，hash 仅保留伪名一致性。A 两者都是正则/函数检测；C 前者规则任意；D 差异巨大。',
+        concept: 'lc-pii-mw',
+      },
+    ],
+    [
+      [
+        'PIIStrategy',
+        '四种处理策略（pii.ts:42）：block 抛 PIIDetectionError / redact 替换为 [REDACTED_TYPE] / mask 部分遮蔽 / hash 替换为 <type_hash:8位>',
+      ],
+      ['Luhn 校验', '信用卡号码的模 10 校验算法；pii.ts:116-136 实现，正则命中后二次验证减少误报'],
+      [
+        'redactionMap',
+        'piiRedaction 的闭包字典：{ 生成id: 原始值 }；afterModel 按标记回查还原，是「模型隔离但工具可用」的关键',
+      ],
+      [
+        'PIIDetectionError',
+        'block 策略抛出的异常，携带 piiType 与全部 matches（pii.ts:29-37）；由调用方决定如何呈现给用户',
+      ],
+    ],
+    [
+      '把 piiMiddleware 的 redact 当成可逆脱敏——[REDACTED_EMAIL] 之后的原始值就没了，模型如果需要用这个 email 调工具（如发邮件），拿到的是残缺值；需要「工具拿真值」的场景用 piiRedaction（或自建可逆方案）',
+      '对多模态/数组内容指望 piiMiddleware 兜底——processContent 用 String(msg.content) 转换，content 是块数组时结果是序列化字符串，检测可能漏检；结构化内容要自定义 detector 前置处理',
+      '忽略 piiRedaction 文档里明示的局限——它只做「模型 provider 隔离」，checkpoints、日志、trace、工具参数响应、最终输出里的 PII 都不在防护范围（piiRedaction.ts:265-275），完整合规需要应用层/网络层/存储层各管一段',
+      '以为 piiRedaction 还能用——构造时立即 console.warn 并标注 @deprecated（piiRedaction.ts:363-365），官方指向 piiMiddleware 的 PII detection 文档',
+    ],
+  ),
+  'theory',
+)

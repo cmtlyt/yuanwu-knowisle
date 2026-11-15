@@ -1,0 +1,275 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L15 = withKind(
+  L(
+    'L15',
+    4,
+    'chunk 合并规则表：_mergeDicts/_mergeLists 的 index/id 匹配与 provider 特判',
+    3,
+    ['L12'],
+    ['lc-chunk-merge'],
+    [
+      '完整复述 _mergeDicts 的字段级规则表：type 不合并、id/name/output_version/model_provider 取后值、ignoreKeys 保留原值、其余字符串累加数字求和',
+      '解释 _findMergeTarget 的匹配优先级：index 优先（id 做平局裁决）→ 双无 index 时 id 兜底 → 否则追加',
+      '说明 Anthropic input_json_delta 特判与 AIMessageChunk.concat 里「有 chunks 就跳过 tool_calls 合并」的懒折叠策略',
+    ],
+    `### 流式聚合的底层 DSL
+
+L12/L14 都指向这里：AIMessageChunk 的 concat、块的 index 字段、tool_call_chunks 的折叠。本课把「流式增量如何变成完整消息」的最底层机制一次讲完——它不在模型层，而在消息层的两个通用函数 _mergeDicts 与 _mergeLists 里。**核心结论：流式聚合是一套精心设计的「字典/列表合并 DSL」，规则表精确到字段级别，provider 特判直接编码在通用逻辑里**。读懂这套 DSL，你就能解释并行工具调用流还原为什么可能错位、token 计数为什么会翻倍这类生产事故。
+
+### _mergeDicts 的字段级规则表
+
+\`\`\`ts
+  const merged = { ...left };
+  for (const [key, value] of Object.entries(right)) {
+    if (merged[key] == null) {
+      merged[key] = value;
+    } else if (value == null) {
+      continue;
+    } else if (
+      typeof merged[key] !== typeof value ||
+      Array.isArray(merged[key]) !== Array.isArray(value)
+    ) {
+      throw new Error(
+        \`field[\${key}] already exists in the message chunk, but with a different type.\`
+      );
+    } else if (typeof merged[key] === "string") {
+      if (key === "type") {
+        // Do not merge 'type' fields
+        continue;
+      } else if (
+        ["id", "name", "output_version", "model_provider"].includes(key)
+      ) {
+        if (value) {
+          merged[key] = value;
+        }
+      } else if (ignoreKeys.includes(key)) {
+        continue;
+      } else {
+        merged[key] += value;
+      }
+    } else if (typeof merged[key] === "number") {
+      if (ignoreKeys.includes(key)) {
+        continue;
+      }
+      merged[key] = merged[key] + value;
+    } else if (typeof merged[key] === "object" && !Array.isArray(merged[key])) {
+      merged[key] = _mergeDicts(merged[key], value, options);
+    } else if (Array.isArray(merged[key])) {
+      merged[key] = _mergeLists(merged[key], value, options);
+    }
+  }
+  return merged;
+\`\`\`
+
+*— langchain-core/src/messages/base.ts:498-546（commit 7704471，有裁剪）*
+
+规则表按分支顺序列全。**前置防御**：类型不一致直接抛错（字符串 vs 数组也算不同类型）——合并 DSL 宁可崩也不产生畸形数据。**字符串四档**：type 不合并（块的类型不可累加）；id/name/output_version/model_provider 取后值（身份字段以后到为准——为什么 id 不拼接？消息 id 是标识不是内容）；ignoreKeys 三键保留原值；其余字符串 += 拼接（文本与 JSON 参数片段的累积正落在这一档）。**数字两档**：ignoreKeys 保留原值，否则求和（token 计数的累加在消息层就完成了）。**复合递归**：对象递归 _mergeDicts，数组递归 _mergeLists——整个合并体系是自引用的。DEFAULT_MERGE_IGNORE_KEYS = ["index", "created", "timestamp"]（base.ts:446-450）：index 是定位标识，created/timestamp 是时间戳，三者求和或拼接都没有意义。
+
+### _mergeLists 与 _findMergeTarget：index 优先 id 兜底
+
+\`\`\`ts
+function _findMergeTarget<Content extends ContentBlock>(
+  merged: Content[],
+  item: Content
+): number {
+  const itemHasIndex = hasMergeableIndex(item);
+  const itemHasId = hasMergeableId(item);
+
+  if (!itemHasIndex && !itemHasId) return -1;
+
+  return merged.findIndex((leftItem) => {
+    const leftHasIndex = hasMergeableIndex(leftItem);
+    const leftHasId = hasMergeableId(leftItem);
+
+    if (itemHasIndex && leftHasIndex) {
+      const indicesMatch = leftItem.index === item.index;
+      if (!indicesMatch) return false;
+      if (hasMismatchedMergeableType(leftItem, item)) return false;
+      if (leftHasId && itemHasId) return leftItem.id === item.id;
+      return true; // indices match, one or both missing id
+    }
+
+    if (!itemHasIndex && !leftHasIndex && itemHasId && leftHasId) {
+      // Neither has index: fall back to id-only matching. Handles providers
+      // that don't include \`index\` on streaming tool call deltas.
+      return leftItem.id === item.id;
+    }
+
+    return false;
+  });
+}
+\`\`\`
+
+*— langchain-core/src/messages/base.ts:602-632（commit 7704471）*
+
+注释把三级优先级写得明明白白。**第一级：双方都有 index → index 匹配**，但有两道否决闸——类型族不匹配（hasMismatchedMergeableType）否决，双方 id 都存在且不相等否决（id 做平局裁决）。**第二级：双方都无 index 且都有 id → id-only 匹配**，注释点明服务对象是「不在流式 tool call delta 上带 index 的 provider」。**第三级：都不满足 → 返回 -1**，调用方追加为新项。_mergeLists 本体（base.ts:634-666）还有一个小规则值得记：匹配失败且 item 是 text: "" 的空文本块时直接跳过——空 delta 不产生垃圾项。
+
+### provider 特判：input_json_delta
+
+\`\`\`ts
+function getMergeableTypeBase(type: string): string {
+  return type.endsWith("_delta") ? type.slice(0, -"_delta".length) : type;
+}
+
+// Anthropic streams tool arguments as \`input_json_delta\` blocks that continue
+// the preceding \`tool_use\` / \`server_tool_use\` block at the same index.
+const INPUT_JSON_DELTA_TARGETS = new Set(["tool_use", "server_tool_use"]);
+
+function hasMismatchedMergeableType(left: unknown, right: unknown): boolean {
+  ...
+  if (
+    right.type === "input_json_delta" &&
+    INPUT_JSON_DELTA_TARGETS.has(left.type)
+  ) {
+    return false;
+  }
+
+  return getMergeableTypeBase(left.type) !== getMergeableTypeBase(right.type);
+}
+\`\`\`
+
+*— langchain-core/src/messages/base.ts:568-591（commit 7704471，有裁剪）*
+
+这是「provider 差异直接编码在通用逻辑里」的最佳标本。两个机制叠加：getMergeableTypeBase 把 xxx_delta 与 xxx 视为同族（text_delta 与 text 同族）；INPUT_JSON_DELTA_TARGETS 再放行 input_json_delta → tool_use/server_tool_use 这条显式组合——因为 Anthropic 的增量块类型名（input_json_delta）与目标块名（tool_use）根本不同族，光靠后缀剥离救不回来。补一句后缀规则的应用面：**它不只服务 Anthropic**——OpenAI 风格的流式 delta 块（text_delta、tool_call_chunk 等）与聚合后的标准块靠这条「剥尾巴」规则归入同族，否则每个 delta 都会被类型否决挡在匹配之外、退化成逐条追加。换句话说，getMergeableTypeBase 是 OpenAI 体系的通用桥，INPUT_JSON_DELTA_TARGETS 是给 Anthropic 开的特例门。设计上的评价要两面说：**优点**是 provider 适配零成本（不需要注册表）；**缺点**是通用层开始长出 provider 知识，每接入一个流式方言独特的 provider 就多一个 Set——这是技术债与扩展性的真实素材。
+
+### AIMessageChunk.concat：chunks 优先与懒折叠
+
+\`\`\`ts
+  concat(chunk: AIMessageChunk<TStructure>) {
+    const combinedFields: AIMessageChunkFields = {
+      content: mergeContent(this.content, chunk.content),
+      additional_kwargs: _mergeDicts(
+        this.additional_kwargs,
+        chunk.additional_kwargs
+      ),
+      response_metadata: mergeResponseMetadata(
+        this.response_metadata,
+        chunk.response_metadata
+      ),
+      tool_call_chunks: [],
+      tool_calls: [],
+      id: this.id ?? chunk.id,
+    };
+    if (
+      this.tool_call_chunks !== undefined ||
+      chunk.tool_call_chunks !== undefined
+    ) {
+      const rawToolCalls = _mergeLists(
+        this.tool_call_chunks as ContentBlock.Tools.ToolCallChunk[],
+        chunk.tool_call_chunks as ContentBlock.Tools.ToolCallChunk[]
+      );
+      if (rawToolCalls !== undefined && rawToolCalls.length > 0) {
+        combinedFields.tool_call_chunks = rawToolCalls as ToolCallChunk[];
+      }
+    }
+    // Skip when chunks exist: the constructor derives tool_calls, and reading here forces a collapse.
+    if (
+      (combinedFields.tool_call_chunks === undefined ||
+        combinedFields.tool_call_chunks.length === 0) &&
+      (this.tool_calls !== undefined || chunk.tool_calls !== undefined)
+    ) {
+      const rawToolCalls = _mergeLists(this.tool_calls, chunk.tool_calls);
+      if (rawToolCalls !== undefined && rawToolCalls.length > 0) {
+        combinedFields.tool_calls = rawToolCalls;
+      }
+    }
+\`\`\`
+
+*— langchain-core/src/messages/ai.ts:477-518（commit 7704471，有裁剪）*
+
+合并次序是有讲究的：**chunks 优先**——只要任何一侧有 tool_call_chunks，就只在 chunks 层归并（ToolCallChunk 的 args 是 JSON 子串，字符串拼接在 chunk 层天然完成），tool_calls 留空；只有两侧都没有 chunks 时才退回合并结构化 tool_calls。注释点破动机：构造函数会从 chunks 懒折叠出 tool_calls，此处读 tool_calls 会强制触发折叠。懒折叠的实现（ai.ts:376-406）用 Object.defineProperty 在实例与 lc_kwargs 上定义惰性 getter：首次读 tool_calls 才调 collapseToolCallChunks（utils.ts:580-620，按 id/index 分组拼接 args 再 JSON.parse），写入则替换 getter 恢复普通赋值。为什么这么费劲？**每个 delta 一个 chunk、一次响应几百个 chunk 的场景下，每次 concat 都全量折叠是 O(n²)**——用惰性 getter 把折叠推迟到「真正有人要读结构化结果」的那一次。另外注释明说选 defineProperty 而非原型 accessor 是为了让 spread/Object.entries 序列化仍能看到值。usage_metadata 的合并走 mergeUsageMetadata（ai.ts:523），token 三项求和语义与 _mergeDicts 的数字规则一致。
+
+### 本课小结
+
+- _mergeDicts 规则表：类型冲突抛错；字符串分四档（type 跳过 / 身份四键取后值 / ignoreKeys 保留 / 普通累加）；数字求和（ignoreKeys 除外）；对象与数组递归。
+- _findMergeTarget 三级匹配：index 优先（类型否决 + id 平局裁决）→ 双无 index 时 id 兜底 → 追加。
+- Anthropic input_json_delta → tool_use 的特判让 provider 方言免注册直通，代价是通用层累积 provider 知识。
+- AIMessageChunk.concat 的 chunks 优先 + 懒折叠是真实的性能工程：把 O(n²) 折叠推迟到首次读取。
+- 下一课进入模型调用面：BaseChatModel.invoke 的全链路——消息如何变成 PromptValue，再变成 ChatGeneration。
+`,
+    null,
+    [
+      {
+        text: '_mergeDicts 合并两个字符串字段时，key === "type" 与其他普通字符串字段的行为差异是？',
+        options: [
+          'type 会被拼接，其他字段取后值',
+          'type 不合并（continue），id/name/output_version/model_provider 取右值，其余普通字符串 += 拼接',
+          '所有字符串字段一律取后值',
+          'type 抛错，其余拼接',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:511-527：字符串分支里 type 直接 continue（块的类型不可能累加成新类型），id/name/output_version/model_provider 在右值真值时覆盖（身份字段以后到为准），再检查 ignoreKeys 保留原值，普通字符串才走 merged[key] += value。A/C 把规则搞反；D 错，type 冲突不是错误而是被静默跳过。',
+        concept: 'lc-chunk-merge',
+      },
+      {
+        text: 'DEFAULT_MERGE_IGNORE_KEYS 包含哪三个键？为什么 index 被忽略？',
+        options: [
+          'type/id/name——它们是身份字段',
+          'index/created/timestamp——index 是「定位标识」不是可累积量，两个 delta 的 index 相加没有意义',
+          'args/tool_calls/content——它们太大不值得合并',
+          'provider 自定义的一切字段',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:446-450：["index","created","timestamp"]，注释明确这些是 identification 与 timestamp 字段，不应被求和或拼接。流式 delta 各带 index 0/0/0……若按数字规则会累加成错误值，所以 ignoreKeys 保留原值。A 混淆了 ignore 与「取后值」两类规则——id/name 在字符串分支里有独立的取后值逻辑，不在 ignoreKeys 里；C/D 无依据。',
+        concept: 'lc-chunk-merge',
+      },
+      {
+        text: '_findMergeTarget 的匹配优先级是？',
+        options: [
+          'id 永远优先于 index',
+          '双方都有 index → 按 index 匹配（id 作平局裁决 + 类型不匹配否决）；双方都无 index 且都有 id → 按 id 匹配；否则视为新项追加',
+          '按数组位置对齐',
+          '按块文本内容相等匹配',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:602-632 的注释写明三级优先级：都有 index 时 index 匹配、两者 id 都存在时要求 id 相等、还有 hasMismatchedMergeableType 否决；双方都无 index 时才 id-only 兜底（应对不发 index 的 provider）；任何不满足条件都返回 -1 走追加。A 错，index 是第一优先；C 错，位置对齐正是这个函数要取代的脆弱做法；D 无依据。',
+        concept: 'lc-chunk-merge',
+      },
+      {
+        text: 'Anthropic 的 input_json_delta 块为什么能并入前面的 tool_use 块？',
+        options: [
+          '因为它们 id 相同，走通用 id 匹配',
+          '因为 hasMismatchedMergeableType 里有特判：right.type === "input_json_delta" 且 left.type ∈ {tool_use, server_tool_use} 时不视为类型不匹配，可以继续归并',
+          '因为 _mergeLists 会忽略所有类型差异',
+          '因为 Anthropic 翻译器提前把它们转成了 text 块',
+        ],
+        answer: 1,
+        explain:
+          'base.ts:572-591：INPUT_JSON_DELTA_TARGETS = new Set(["tool_use", "server_tool_use"])，匹配检查在类型一致性判断前放行这一组合。注释说明背景：Anthropic 把工具参数流成 input_json_delta 增量，续接同 index 的 tool_use 块。A 错，input_json_delta 的 id 可能缺席，特判才是保障；C 错，类型不匹配默认否决匹配；D 错，特判发生在通用合并层而非翻译器。',
+        concept: 'lc-chunk-merge',
+      },
+      {
+        text: 'AIMessageChunk.concat 合并 tool_call_chunks 后，为什么还要在 chunks 存在时跳过 tool_calls 的合并？',
+        options: [
+          'tool_calls 与 chunks 不能共存',
+          '因为构造函数会从 tool_call_chunks 懒折叠出 tool_calls/invalid_tool_calls；concat 时读取 tool_calls 会强制触发折叠，破坏懒语义',
+          '因为 tool_calls 已被废弃',
+          '因为合并 tool_calls 会触发网络请求',
+        ],
+        answer: 1,
+        explain:
+          'ai.ts:504-518 的分支：仅当合并结果没有 tool_call_chunks 时才合并 tool_calls；注释写明「Skip when chunks exist: the constructor derives tool_calls, and reading here forces a collapse」。懒折叠（ai.ts:376-406，用 Object.defineProperty 在实例与 lc_kwargs 上定义惰性 getter）保证流式聚合不被 O(n²) 的反复全量折叠拖垮。A 错，字段可共存只是有主从；C 错，tool_calls 是规范字段；D 荒谬。',
+        concept: 'lc-chunk-merge',
+      },
+    ],
+    [
+      ['_mergeDicts', 'base.ts:470-546 的字典合并 DSL，是所有消息 chunk concat 的元数据合并内核'],
+      ['_findMergeTarget', 'base.ts:602-632 的列表项匹配器，返回应被归并的目标下标或 -1（追加）'],
+      ['getMergeableTypeBase', 'base.ts:568-570 的辅助函数：剥掉类型名尾部的 _delta 后缀再比较类型族'],
+      [
+        '懒折叠',
+        'AIMessageChunk 用 Object.defineProperty 定义惰性 getter，首次读取 tool_calls 时才把 tool_call_chunks 折叠为结构化数据',
+      ],
+    ],
+    [
+      '以为合并是「右值永远赢」——字符串元数据里只有 id/name/output_version/model_provider 取后值，普通字符串（如文本 args 片段）是累加拼接，ignoreKeys 三个键反而保留原值',
+      '自己聚合流式 chunk 时丢掉 index 或 id 字段——匹配器会因此退化成逐项追加，并行工具调用的参数片段会错位拼接',
+      '在流式聚合热循环里频繁读 chunk.tool_calls——每次读取都可能触发懒折叠，聚合应只读 tool_call_chunks',
+    ],
+  ),
+  'theory',
+)

@@ -1,0 +1,215 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L56 = withKind(
+  L(
+    'L56',
+    16,
+    'modelRetry/modelFallback：模型层容错两件套',
+    2,
+    ['L52'],
+    ['lc-model-retry-fallback'],
+    [
+      '说出 modelRetry 六个退避参数的默认值与各自作用（maxRetries/backoffFactor/initialDelayMs/maxDelayMs/jitter/retryOn）',
+      '辨析 retry（同一模型再试）与 fallback（换模型再试）的选型边界',
+      '解释 modelRetry 为什么要给 request.modelSettings 塞 maxRetries: 0',
+    ],
+    `### 定位：同一位置、两种哲学的模型层容错
+
+模块五的容错课从模型层开始。modelRetry 与 modelFallback 是一对孪生兄弟：都挂在 wrapModelCall 上、都靠 catch handler 的异常工作，但哲学相反——**retry 赌「同一个模型一会儿就好了」，fallback 赌「这个模型今天不行，换一家」**。选型判断很简单：可预期的瞬态故障（429、网络抖动、5xx）用 retry；区域性故障（某 provider 整体宕机）用 fallback；生产级 agent 常两个都挂。本课所有数字都是源码实证，不是文档转述。
+
+一句话结论：**retry 管时间维度（退避），fallback 管空间维度（换模型），两者共用同一个洋葱位置 wrapModelCall。**
+
+### modelRetry：六个旋钮与一个反直觉默认
+
+先看参数模式的默认值。
+
+\`\`\`ts
+export const RetrySchema = z.object({
+  /** Maximum number of retry attempts after the initial call. Default is 2 */
+  maxRetries: z.number().min(0).default(2),
+  retryOn: z.union([
+      z.function().args(z.instanceof(Error)).returns(z.boolean()),
+      z.array(z.custom<new (...args: any[]) => Error>()),
+    ])
+    .default(() => (error: Error) => getRetryable(error) ?? true),
+  /** Multiplier for exponential backoff ... Default is 2.0. */
+  backoffFactor: z.number().min(0).default(2.0),
+  /** Initial delay ... Default is 1000 (1 second). */
+  initialDelayMs: z.number().min(0).default(1000),
+  /** Maximum delay ... Default is 60000 (60 seconds). */
+  maxDelayMs: z.number().min(0).default(60000),
+  /** Whether to add random jitter (±25%) ... Default is \`true\`. */
+  jitter: z.boolean().default(true),
+});
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/constants.ts:7-50（commit 7704471）*
+
+retryOn 的默认值得单独咀嚼：\`getRetryable(error) ?? true\`——**默认什么都重试**，除非错误对象被上游标记为不可重试。这解释了为什么 retryOn 要支持函数形态：生产上你几乎总要收窄（比如只重试 429/5xx）。退避公式在 utils.ts:120-150：\`initialDelayMs * backoffFactor ** attempt\`，backoffFactor 传 0.0 退化为固定间隔（源码有专门分支）；jitter 是 ±25% 的对称随机偏移且保底不为负；最后与 retryAfterMs 取 max——服务器让你等 30 秒，你算出 2 秒也没用。这个函数还有三处防御细节值得点出：delay 先被 \`Math.min(delay, maxDelayMs)\` 封顶再抖动（上限约束的是抖动前的名义值，抖动后的实际延迟可能略超 maxDelayMs，误差不超过 25%）；抖动后 \`Math.max(0, delay)\` 保证不为负（±25% 对小延迟可能算出负数）；sleep 本身只有六行 \`new Promise((resolve) => setTimeout(resolve, ms))\`（utils.ts:105-108）——没有可取消性，重试等待期间传 abort signal 不会中断 sleep，要提前终止只能靠 attempt 上限自然耗尽或外层 wrapModelCall 抛出。
+
+主循环的骨架值得看原样。
+
+\`\`\`ts
+wrapModelCall: async (request, handler) => {
+  const delegated = {
+    ...request,
+    modelSettings: { maxRetries: 0, ...request.modelSettings },
+  };
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await handler(delegated);
+    } catch (error) {
+      if (!shouldRetryException(err)) {
+        return handleFailure(err, attemptsMade); // 不可重试：立即失败处理
+      }
+      if (attempt < maxRetries) {
+        const delay = calculateRetryDelay(delayConfig, attempt, getRetryAfterMs(err));
+        if (delay > 0) await sleep(delay);
+      } else {
+        return handleFailure(err, attemptsMade);
+      }
+    }
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/modelRetry.ts:191-237（commit 7704471，有裁剪）*
+
+两处细节：第一，循环是 \`attempt <= maxRetries\`，即**初始 1 次 + 重试 2 次 = 3 次尝试**；第二，\`maxRetries: 0\` 塞进 modelSettings 是为了关掉底层 SDK 的内建重试（L54 讲过 modelSettings 每次请求重新 bindTools），否则两层重试相乘。
+
+### onFailure 三态：continue 不是成功
+
+重试耗尽后的走向由 onFailure 决定（modelRetry.ts:15-33、171-186）：默认 \`"continue"\` 返回一条 AIMessage，内容形如 \`Model call failed after 3 attempts with HttpError: ...\`；\`"error"\` 直接 rethrow 终止；传函数则用你的格式化字符串生成 AIMessage。陷阱在这里：**continue 语义下 agent 不会停**——模型收到这条「失败消息」后可能继续编故事或乱调工具。所以要区分两种诉求：「任务可以降级继续」选 continue；「失败必须让调用方感知」选 error 或函数 + 抛错。
+
+### modelFallback：84 行的换模型机器
+
+对照看 fallback 的全部实现核心。
+
+\`\`\`ts
+export function modelFallbackMiddleware(
+  ...fallbackModels: (string | LanguageModelLike)[]
+) {
+  return createMiddleware({
+    name: "modelFallbackMiddleware",
+    wrapModelCall: async (request, handler) => {
+      try {
+        return await handler(request);            // 主模型
+      } catch (error) {
+        for (let i = 0; i < fallbackModels.length; i++) {
+          try {
+            const model = typeof fallbackModels[i] === "string"
+              ? await initChatModel(fallbackModels[i] as string)
+              : fallbackModels[i];
+            return await handler({ ...request, model }); // 换模型重放同一请求
+          } catch (fallbackError) {
+            if (i === fallbackModels.length - 1) throw fallbackError;
+          }
+        }
+        throw error; // 没有 fallback 时重抛原始错误
+      }
+    },
+  });
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/modelFallback.ts:43-84（commit 7704471，有裁剪）*
+
+三个观察：其一，它**不做任何退避**——失败立刻换下一个模型，时间维度的等待交给外层 modelRetry（洋葱顺序上把 fallback 放内层、retry 放外层，retry 就能包住整个 fallback 序列）；其二，字符串模型经 initChatModel 现场实例化，没有缓存——每次失败重试都会重新初始化；其三，错误传播是「最后一个 fallback 的错误」，排障时要看栈尾而不是栈首。
+
+### 选型与组合：一张对照表
+
+| 维度 | modelRetry | modelFallback |
+|---|---|---|
+| 应对对象 | 瞬态错误（限流/抖动） | 持续性错误（provider 宕机） |
+| 消耗 | 时间（退避等待） | 备用模型配额 |
+| 退避 | 指数 + 抖动 + Retry-After 下限 | 无，立即切换 |
+| 失败出口 | AIMessage（continue）/ 抛错（error） | 最后一个 fallback 的异常 |
+| 配置校验 | Zod 解析失败抛 InvalidRetryConfigError | 无 Zod，参数即模型列表 |
+
+组合套路：\`middleware: [modelRetryMiddleware({ maxRetries: 2 }), modelFallbackMiddleware("openai:gpt-4o-mini")]\`——retry 在外层包住 fallback，语义是「整个模型序列都试完一轮还不行，等一会儿再来一轮」。注意 retryOn 也会作用于 fallback 抛出的错误，函数式判定比 instanceof 数组更适合这种嵌套。
+
+把叠放推演到具体时间线能让选型更具体。按上例配置，一次主模型故障的完整轨迹是：主模型 429 → fallback 换 openai:gpt-4o-mini 再失败 → 循环耗尽抛最后一个 fallback 的错误 → 外层 retry 的 catch 接住，按退避等约 1 秒 → 进入第二轮：主模型重试 → 又失败 → fallback 再失败 → 再等约 2 秒（指数增长）→ 第三轮耗尽后 onFailure 生效。**总尝试次数是（1 + fallback 数）×（1 + maxRetries）**——按默认值就是 3 × 3 = 9 次真实调用，单次失败链路的计费与延迟都要按这个乘积预估。这也是为什么两个都挂时要同步调小 maxRetries：fallback 已经提供了空间冗余，时间维度再叠满 2 次重试通常过了。反过来，只有 retry 没有 fallback 的 agent 在 provider 整体宕机时是纯等待；只有 fallback 没有 retry 的 agent 在瞬态限流下会浪费备用配额（第一次 429 就永久跳过主模型）。两件套的互补关系由此成立：retry 保护「会自愈的故障」，fallback 保护「不会自愈的故障」，各自的触发面不同，代价结构也不同。
+
+### 本课小结
+
+- modelRetry 默认 2 次重试 + 指数退避（因子 2.0、初始 1s、上限 60s、±25% 抖动），Retry-After 永远是延迟下限。
+- 它主动把 modelSettings.maxRetries 归零，防止 SDK 内建重试与中间件重试相乘。
+- onFailure:\\"continue\\" 返回错误描述型 AIMessage——agent 会带着失败继续，不是成功。
+- modelFallback 84 行：立即换模型、无退避、抛最后一个 fallback 的错误；与 retry 叠放时 retry 放外层。
+- 下一课看预算闸两种：不重试、不换模型，直接数次数——modelCallLimit 与 toolCallLimit。
+`,
+    null,
+    [
+      {
+        text: 'modelRetryMiddleware 的默认退避配置是？',
+        options: [
+          '3 次重试，固定 1 秒间隔，无抖动',
+          '2 次重试，指数退避因子 2.0，初始 1 秒，上限 60 秒，默认开 ±25% 抖动',
+          '5 次重试，线性增长到 30 秒',
+          '默认关闭重试，必须显式开启',
+        ],
+        answer: 1,
+        explain:
+          'RetrySchema 的默认值：maxRetries 2（共 3 次尝试）、backoffFactor 2.0、initialDelayMs 1000、maxDelayMs 60000、jitter true（middleware/constants.ts:7-50）。抖动幅度是 ±25%，来自 calculateRetryDelay 里 delay * 0.25 的随机偏移（middleware/utils.ts:142-147）。A 错——次数与方式都不对；C 无出处；D 错——不配置也有默认 2 次重试。',
+        concept: 'lc-model-retry-fallback',
+      },
+      {
+        text: 'modelRetryMiddleware 在 wrapModelCall 里把 modelSettings.maxRetries 设为 0 的目的是？',
+        options: [
+          '彻底关闭所有重试',
+          '关闭底层模型客户端的内建重试，避免「模型 SDK 内部重试 × 中间件重试」相乘导致总尝试次数失控',
+          '让每次重试都不经过 bindTools',
+          '这是给日志用的标记，没有行为影响',
+        ],
+        answer: 1,
+        explain:
+          'wrapModelCall 里构造 delegated = { ...request, modelSettings: { maxRetries: 0, ...request.modelSettings } }（modelRetry.ts:192-195），而 L54 讲过 modelSettings 每次请求重新 bindTools——把 SDK 内建重试归零后，重试节奏完全由中间件的退避算法（含 Retry-After 下限与抖动）掌控。A 错——中间件自己的 maxRetries 仍在生效；C 与 bindTools 无关；D 错——它直接改变 SDK 行为。',
+        concept: 'lc-model-retry-fallback',
+      },
+      {
+        text: 'calculateRetryDelay 对 provider 返回的 retryAfterMs（如 Retry-After 头）如何处理？',
+        options: [
+          '忽略它，只按指数退避算',
+          '作为下限：最终延迟取 max(计算出的退避, retryAfterMs)，绝不比服务器要求的更早重试',
+          '直接替换退避计算',
+          '乘以 0.5 加快重试',
+        ],
+        answer: 1,
+        explain:
+          'calculateRetryDelay 的返回是 Math.max(delay, retryAfterMs ?? 0)（middleware/utils.ts:149），注释写明「Used as a floor so we never retry sooner than the server asked」。getRetryAfterMs 从错误对象上读 retryAfterMs 数字字段（utils.ts:152-160）。A/C 都违背了「尊重服务器节流指令」的设计；D 无出处。',
+        concept: 'lc-model-retry-fallback',
+      },
+      {
+        text: 'modelFallbackMiddleware 的失败传播语义是？',
+        options: [
+          '所有模型都失败后返回一条含错误信息的 AIMessage',
+          '主模型失败后按序试 fallback；最后一个 fallback 也失败时，抛出的是最后那个 fallback 的错误',
+          '主模型失败后立即抛主模型的错误',
+          '随机挑一个 fallback 重试无限次',
+        ],
+        answer: 1,
+        explain:
+          'modelFallback.ts:55-81：for 循环里每次失败先判断 i === fallbackModels.length - 1，是则 throw fallbackError——注意抛的是**最后一个 fallback 的错误**而非主模型错误；没有提供任何 fallback 时才 rethrow 原始 error（第 80 行）。A 是 modelRetry 的 onFailure:"continue" 语义，不要混淆；C 忽略了 fallback 序列；D 无限重试不存在。',
+        concept: 'lc-model-retry-fallback',
+      },
+    ],
+    [
+      [
+        'RetrySchema',
+        '重试参数的 Zod 模式（middleware/constants.ts:7-50）：maxRetries/backoffFactor/initialDelayMs/maxDelayMs/jitter/retryOn，modelRetry 与 toolRetry 共用',
+      ],
+      [
+        'retryOn',
+        '可重试判定：错误构造器数组（instanceof 匹配）或 (error) => boolean 函数；默认 getRetryable(error) ?? true——即除非错误被标记不可重试，否则都重试',
+      ],
+      ['jitter', '±25% 随机抖动，防止节流恢复时刻的惊群重放'],
+      ['modelFallback', '按序换模型容错：fallback 模型可为字符串（经 initChatModel 实例化）或现成模型实例'],
+    ],
+    [
+      '以为 retryOn 数组按名字匹配错误——它匹配的是 instanceof 构造器；按错误名/状态码过滤要传函数（retryOn: (e) => e.name === "RateLimitError"）',
+      '把 modelRetry 的 onFailure:"continue" 当成功——重试耗尽后它返回一条内容为错误描述的 AIMessage（modelRetry.ts:171-186），agent 会「带着失败继续走」，需要兜底的场景应选 "error" 或自定义格式化函数',
+      '同时启用 modelRetry 与底层 SDK 重试——不加 maxRetries: 0 时两层重试相乘（3 次中间件 × N 次 SDK），实际等待时间指数放大',
+    ],
+  ),
+  'theory',
+)

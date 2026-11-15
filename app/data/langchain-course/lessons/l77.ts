@@ -1,0 +1,368 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L77 = withKind(
+  L(
+    'L77',
+    21,
+    'PregelRunner 与 loop 分工：并发执行、AbortSignal 三链、_commit 三形态',
+    3,
+    ['L75'],
+    ['lc-pregel-runner'],
+    [
+      '实现一个带观测点的最小双节点并发图，用 onStepWrite 回调打印每个超步的写入清单，跑通 tick/runner 交替的完整循环',
+      '搭一个双节点同时抛错的实验图，验证单错误原样抛出、多错误聚合成 AggregateError 的行为差异',
+      '调通 AbortSignal 三链实验：外部 signal 中止、invalid resume 不中止、error handler 接管后不中止三种路径各自的可观测差异',
+      '产出一份 _commit 四形态（INTERRUPT/Drained/普通 BubbleUp/ERROR+ERROR_SOURCE_NODE）与 checkpoint pending writes 的对照记录',
+    ],
+    `### 定锚：动手前先看清契约
+
+前三课把 loop 侧读完了：tick 决定**跑谁**。本课进入 runner 侧——它决定**怎么跑**。这条实验课的目标是把 runner 的四个机制（并发调度、信号链、动态任务、提交协议）逐个变成可观测的实验。开工前先固定契约：runner.tick 从不调用 loop.tick，注释明说「this method does NOT call PregelLoop#tick. That must be handled externally」；loop.tick 返回 true 后外层才调用 runner.tick，任务执行完经 \`loop.putWrites\` 回写、下一轮 loop.tick 收尾——这就是 BSP 的交替驱动。
+
+### 并发调度与 promiseBarrier：读源码再搭实验
+
+\`\`\`ts
+while (
+  (startedTasksCount === 0 || executingTasksMap.size > 0) &&
+  tasks.length
+) {
+  for (
+    ;
+    executingTasksMap.size < (maxConcurrency ?? tasks.length) &&
+    startedTasksCount < tasks.length;
+    startedTasksCount += 1
+  ) {
+    const task = tasks[startedTasksCount];
+    const running = _runWithRetry(task, retryPolicy,
+      { [CONFIG_KEY_CALL]: call?.bind(thisCall, this, task) },
+      signals?.composedAbortSignal
+    ).catch((error) => ({
+      task, error, signalAborted: signals?.composedAbortSignal?.aborted,
+    }));
+    executingTasksMap.set(task.id, running);
+  }
+  const settledTask = await Promise.race([
+    ...executingTasksMap.values(),
+    ...(abortPromise ? [abortPromise] : []),
+    barrier.wait,
+  ]);
+  if (settledTask === PROMISE_ADDED_SYMBOL) continue;
+  ...
+  yield settled;
+  executingTasksMap.delete((settledTask as SettledPregelTask).task.id);
+}
+\`\`\`
+
+*— pregel/runner.ts:333-414（commit fa426b2）*
+
+读这段要抓三处。**填装循环**：maxConcurrency 缺省为 tasks.length（不设限），已开始任务数 startedTasksCount 保证不重复派发。**race 三路**：abortPromise 在外部信号或步级超时信号触发时 reject \`new Error("Abort")\`，让 await 立刻中断；\`barrier.wait\` 是手写唤醒原语——
+
+\`\`\`ts
+function createPromiseBarrier() {
+  const barrier = { next: () => void 0, wait: Promise.resolve(PROMISE_ADDED_SYMBOL) };
+  function waitHandler(resolve) {
+    barrier.next = () => {
+      barrier.wait = new Promise(waitHandler);
+      resolve(PROMISE_ADDED_SYMBOL);
+    };
+  }
+  barrier.wait = new Promise(waitHandler);
+  return barrier;
+}
+\`\`\`
+
+*— pregel/runner.ts:40-57（commit fa426b2）*
+
+\`call()\`（task() 函数式 API 的底层）推入 PUSH 任务时会执行 \`executingTasksMap.set(...); barrier.next()\`（runner.ts:598-599），race 醒来后 \`continue\` 回到填装循环把新任务纳入执行。**注意**：PUSH 任务绕过 maxConcurrency 的初始计数，限流只对初始列表生效。error handler 任务也走同一通道：任务失败且有注册处理器时，\`scheduleErrorHandler\` 产出 handlerTask 直接塞进 executingTasksMap 并 barrier.next()（runner.ts:377-404），错误在本超步内就被处理而不是中止整图。
+
+### AbortSignal 三链：一条信号，三种命运
+
+\`\`\`ts
+private _initializeAbortSignals({ exceptionSignal, stepTimeoutSignal, signal }) {
+  const previousSignals = (this.loop.config.configurable?.[CONFIG_KEY_ABORT_SIGNALS] ?? {});
+  const externalAbortSignal = previousSignals.externalAbortSignal ?? signal;
+  const timeoutAbortSignal = stepTimeoutSignal ?? previousSignals.timeoutAbortSignal;
+  const { signal: composedAbortSignal, dispose: disposeCombinedSignal } =
+    combineAbortSignals(externalAbortSignal, timeoutAbortSignal, exceptionSignal);
+  const signals = { externalAbortSignal, timeoutAbortSignal, composedAbortSignal };
+  this.loop.config = patchConfigurable(this.loop.config, {
+    [CONFIG_KEY_ABORT_SIGNALS]: signals,
+  });
+  return { signals, disposeCombinedSignal };
+}
+\`\`\`
+
+*— pregel/runner.ts:233-272（commit fa426b2）*
+
+三链各管一件事：**external**（用户传入，经 AsyncLocalStorage 供子图继承）、**timeout**（步级 AbortSignal.timeout）、**exception**（本超步出错时由 exceptionSignalController 触发）。组合后的 composedSignal 下发给每个任务的 \`_runWithRetry\`，并回写进 loop.config 让子图继承。错误分类逻辑在收尾循环里：
+
+\`\`\`ts
+if (isGraphInterrupt(error)) {
+  graphBubbleUp = isGraphInterrupt(graphBubbleUp)
+    ? new GraphInterrupt([...graphBubbleUp.interrupts, ...error.interrupts])
+    : error;
+} else if (isGraphBubbleUp(error) && !isGraphInterrupt(graphBubbleUp)) {
+  graphBubbleUp = error;
+} else if (error && (nodeErrors.size === 0 || !signalAborted)) {
+  if (!isInvalidResume(error)) exceptionSignalController.abort();
+  nodeErrors.add(error);
+}
+...
+if (nodeErrors.size === 1) throw Array.from(nodeErrors)[0];
+else if (nodeErrors.size > 1) throw new AggregateError(
+  Array.from(nodeErrors),
+  \`Multiple errors occurred during superstep \${this.loop.step}. ...\`
+);
+\`\`\`
+
+*— pregel/runner.ts:151-202（commit fa426b2）*
+
+interrupt 走聚合通道（多个任务的 interrupts 合并成一个 GraphInterrupt 再抛）；普通错误触发 exceptionSignal 中止同伴并收集；\`signalAborted\` 标志记录任务结束时的信号状态，中止后其他节点抛出的 AbortError 不再计入——它们不携带根因信息。invalid resume 是唯一「错误但不 abort」的普通错误：等同伴跑完再抛，保证同批 resume 答案不被切断。
+
+### _commit 四形态与动手实验
+
+\`\`\`ts
+private _commit(task, error?) {
+  if (error !== undefined) {
+    if (isGraphInterrupt(error)) {
+      if (error.interrupts.length) {
+        // One write holds all of them: writes to INTERRUPT replace each other
+        const writes = [
+          [INTERRUPT, error.interrupts],
+          ...task.writes.filter((w) => w[0] === RESUME),
+        ];
+        this.loop.putWrites(task.id, writes);
+      }
+    } else if (isGraphDrained(error)) {
+      if (task.writes.length) this.loop.putWrites(task.id, task.writes);
+    } else if (isGraphBubbleUp(error) && task.writes.length) {
+      this.loop.putWrites(task.id, task.writes);
+    } else {
+      task.writes.push([ERROR, { message: error.message, name: error.name }]);
+      if (this._shouldRouteToErrorHandler(task)) {
+        task.writes.push([ERROR_SOURCE_NODE, String(task.name)]);
+        this.handledExceptions.add(error);
+      }
+      this.loop.putWrites(task.id, task.writes);
+    }
+  } else {
+    if (this.nodeFinished && (!task.config?.tags?.includes(TAG_HIDDEN))) {
+      this.nodeFinished(String(task.name));
+    }
+    if (task.writes.length === 0) task.writes.push([NO_WRITES, null]);
+    this.loop.putWrites(task.id, task.writes);
+  }
+}
+\`\`\`
+
+*— pregel/runner.ts:438-483（commit fa426b2）*
+
+四个分支对应四条提交协议：**INTERRUPT** 把所有 interrupts 塞进一条写（注释说明 INTERRUPT 写互相替换，多条会只留最后一条），并保留 RESUME 写；**GraphDrained** 尽量不提交，让任务在父图 resume 时重跑；**普通 BubbleUp** 带着已产生的写入原样上抛；**普通错误**记 ERROR 写，若节点有 error handler 再记 ERROR_SOURCE_NODE 并加入 handledExceptions（收尾循环据此跳过 abort）。成功路径补 NO_WRITES 哨兵。
+
+实验三则（用 MemorySaver + streamMode "debug" 观察 pending writes）：
+
+\`\`\`ts
+import { StateGraph, MessagesAnnotation, MemorySaver } from "@langchain/langgraph";
+
+// 实验 1：双节点同时抛错 → AggregateError；单节点抛错 → 原样抛出
+const boom = async () => { throw new Error(\`boom-\${Math.random()}\`); };
+const wf = new StateGraph(MessagesAnnotation)
+  .addNode("a", boom).addNode("b", boom)
+  .addEdge("__start__", "a").addEdge("__start__", "b")
+  .addEdge("a", "__end__").addEdge("b", "__end__")
+  .compile({ checkpointer: new MemorySaver() });
+try {
+  await wf.invoke({ messages: [] }, {
+    configurable: { thread_id: "t1" }, onStepWrite: (step, writes) => {
+      console.log("step", step, writes.map(([ch]) => ch)); // 观察 ERROR / NO_WRITES
+    },
+  });
+} catch (e) {
+  console.log(e.constructor.name, e.errors?.map((x: Error) => x.message));
+}
+
+// 实验 2：外部中止 → composedAbortSignal 触发，任务收到 AbortError
+const ctrl = new AbortController();
+setTimeout(() => ctrl.abort(), 50);
+await wf.invoke({ messages: [] }, {
+  configurable: { thread_id: "t2" }, signal: ctrl.signal,
+});
+
+// 实验 3：节点级 error handler → 运行不中止，ERROR_SOURCE_NODE 出现在 pending writes
+\`\`\`
+
+逐条验收：实验 1 的 catch 里 AggregateError 携带 \`errors\` 数组（两个消息）；若只保留节点 a 抛错、b 正常返回，则 catch 到的是原始 Error——单错误不聚合。实验 2 的 debug 流里能看到任务以 ERROR（AbortError 类）收场。实验 3 关键对照：没有 handler 的节点失败会中止运行；注册了 \`__error_handler__\` 节点的图在同样的失败下正常跑完，且 \`wf.getStateHistory\` 里能看到 ERROR_SOURCE_NODE 写入（L80 的 resume 重排就靠它）。
+
+### acceptPush：PUSH 任务在 loop 侧的接纳
+
+前面读到的是 runner 侧的 \`barrier.next()\`，但 PUSH 任务真正进入任务表靠的是 loop 的 \`acceptPush\`——barrier 的 \`scheduleTask\` 回调最终委托给它（runner.ts:300-307 的参数装配里 \`scheduleTask: async (task, writeIdx, call) => this.loop.acceptPush(task, writeIdx, call)\`）：
+
+\`\`\`ts
+async acceptPush(task, writeIdx, call) {
+  if (this.interruptAfter?.length > 0 &&
+      shouldInterrupt(this.checkpoint, this.interruptAfter, [task])) {
+    this.toInterrupt.push(task);
+    return;
+  }
+  const pushed = _prepareSingleTask(
+    [PUSH, task.path ?? [], writeIdx, task.id, call] as CallTaskPath,
+    this.checkpoint, this.checkpointPendingWrites, this.nodes, this.channels,
+    task.config ?? {}, true, { step: this.step, checkpointer: this.checkpointer, ... });
+  if (!pushed) return;
+  if (this.interruptBefore?.length > 0 &&
+      shouldInterrupt(this.checkpoint, this.interruptBefore, [pushed])) {
+    this.toInterrupt.push(pushed);
+    return;
+  }
+  if (this.stream.modes.has("tasks") || this.stream.modes.has("debug")) {
+    this._emit(gatherIteratorSync(prefixGenerator(mapDebugTasks([pushed]), "tasks")));
+  }
+  this.tasks[pushed.id] = pushed;
+  if (this.skipDoneTasks) this._matchWrites({ [pushed.id]: pushed });
+  const tasks = await this._matchCachedWrites();
+  for (const { task } of tasks) this.putWrites(task.id, task.writes, true);
+  return pushed;
+}
+\`\`\`
+
+*— pregel/loop.ts:1478-1540（commit fa426b2）*
+
+逐行读有四个要点。**断点检查做两次**：PUSH 任务在展开前后各过一遍 shouldInterrupt（interruptAfter 查原始任务、interruptBefore 查准备好的 pushed）——动态任务不因为「没出现在 tick 的 taskList 里」而逃过断点。**CallTaskPath 的首元素是 PUSH**：任务 path 与静态节点的 node path 不同族，L76 讲的写排序正是按这个 path 的序列化结果排的，PUSH 任务因此天然带自己的排序键。**skipDoneTasks 语义照常生效**：resume 时推入的 PUSH 任务同样会走 \`_matchWrites\` 查存量写入——如果上一个进程已经算过这个任务，写入直接领回不重跑。**cached writes 立刻结清**：\`_matchCachedWrites\` 返回的任务逐个 \`putWrites(..., true)\` 持久化，保证动态任务领回的写入不滞后于下一次 checkpoint。这段源码也解释了 L77 实验里一个容易困惑的现象：task() 里推的任务出现在 tasks 流的时机不是「下一个 tick」，而是**当前超步内被 barrier 唤醒的那一刻**（emit 在 acceptPush 里同步发生）。
+
+### scheduleErrorHandler：错误处理任务的诞生
+
+error handler 任务不是 runner 发明的，是 loop 的工厂方法：
+
+\`\`\`ts
+scheduleErrorHandler(failedTask, error) {
+  const handlerNode = this.getErrorHandlerNode(String(failedTask.name));
+  if (!handlerNode) return undefined;
+  const handlerTask = _prepareNodeErrorHandlerTask(
+    failedTask, handlerNode, error,
+    this.checkpoint, this.checkpointPendingWrites, this.nodes, this.channels,
+    failedTask.config ?? this.config,
+    { step: this.step, checkpointer: this.checkpointer, ... }) as ... | undefined;
+  if (handlerTask === undefined) return undefined;
+  this.tasks[handlerTask.id] = handlerTask;
+  this._emit(gatherIteratorSync(prefixGenerator(mapDebugTasks([handlerTask]), "tasks")));
+  if (this.debug) printStepTasks(this.step, [handlerTask]);
+  return handlerTask;
+}
+\`\`\`
+
+*— pregel/loop.ts:1560-1596（commit fa426b2）*
+
+装配链条是：runner 在收尾循环里发现任务失败且 \`_shouldRouteToErrorHandler(task)\` 为真（runner.ts:377-404 一带），调用 \`loop.scheduleErrorHandler\` 拿到 handlerTask，塞进 executingTasksMap 并 \`barrier.next()\`——handler 与普通任务共用同一条并发通道，因此它受同一超步的 abort 语义约束（本超步已因别的错误 abort 时它同样收尾）。docstring 里有一句关键承诺：**「The failure provenance (ERROR + ERROR_SOURCE_NODE) is checkpointed by the runner via putWrites so handlers observe the same context after a resume」**——错误上下文进 checkpoint 的责任在 runner 的 \`_commit\`（前文四形态里 ERROR + ERROR_SOURCE_NODE 那条），两个类各守一半：loop 负责「造任务」，runner 负责「存证据」。
+
+### abortPromise：为什么中止信号需要专门包装成 promise
+
+race 三路里最费解的是 abortPromise 的构造：
+
+\`\`\`ts
+const timeoutOrCancelSignal = combineAbortSignals(
+  signals?.externalAbortSignal, signals?.timeoutAbortSignal
+);
+const abortPromise = timeoutOrCancelSignal.signal
+  ? new Promise<never>((_resolve, reject) => {
+      listener = () => reject(new Error("Abort"));
+      timeoutOrCancelSignal.signal?.addEventListener("abort", listener, { once: true });
+    })
+  : undefined;
+\`\`\`
+
+*— pregel/runner.ts:318-330（commit fa426b2）*
+
+为什么不能只在每次任务结算后检查 \`signal.aborted\`？因为 race 可能正 await 在「最后一个仍在跑的任务」上——若没有任何任务结算，循环根本不会醒来，外部 abort 也就没有机会被处理。abortPromise 把「信号已触发」这一事件本身变成 race 的一路：信号触发即 reject \`new Error("Abort")\`，race 立刻醒来，循环顶部还有一道短路（runner.ts:310-313：信号已中止则直接 \`throw new Error("Abort")\`，且注释解释了为何不用 \`throwIfAborted\`——DOMException 的抛法与 runner 统一的字符串错误不一致）。注意**步级超时信号也在这一路里**：\`timeoutAbortSignal\` 由 runner.tick 开头的 \`AbortSignal.timeout(timeout)\` 生成（runner.ts:127-129），与 externalAbortSignal combine——这就是 quiz 里「步级超时由 AbortSignal.timeout 组成在信号链里」的出处。三个信号的完整分工：external 管用户取消、timeout 管步级预算、exception 管本超步错误传染，前两者合成 abortPromise，第三者由 exceptionSignalController 单独持有。
+
+### 误用案例与边界条件
+
+三条实战教训，全部有源码依据。**其一：在 PUSH 任务里依赖 maxConcurrency 做资源保护会失效**——\`call()\` 推入的任务绕过初始计数直接 \`executingTasksMap.set\`（runner.ts:598-599），限流只作用于填装循环的 for 条件；需要硬资源上限时应该在工具内部自己做信号量。**其二：把 error handler 注册当成「错误必被消化」**——只有 \`_shouldRouteToErrorHandler\` 判定为可路由的错误才会走 handler 路径并进 handledExceptions；GraphInterrupt/GraphDrained 这类控制流异常永远不会被 error handler 吞掉（它们在 \`_commit\` 的前两个分支就被单独处理），若 handler 自身再抛错，pending writes 里会出现新的 ERROR 写——下一次 resume 时 \`_resumeErrorHandlersIfApplicable\` 重排（L80 展开）。**其三：onStepWrite 回调里读到的写入不是「已持久化」的**——runner.tick 收尾循环结束后的 \`onStepWrite?.(this.loop.step, allTasks.map(t => t.writes).flat())\`（runner.ts:194-195）只是内存快照，putWrites 的持久化由 loop 异步调度；拿它当审计日志可以，当「存储成功」的判据不行。
+
+### 本课小结
+
+- loop 与 runner 的契约：tick 决定跑谁、runner 决定怎么跑；runner 不自调 loop.tick，交替由外层驱动。
+- 并发执行的三路 race：任务结算、abortPromise（信号中止）、barrier.wait（PUSH/error-handler 任务动态加入）；maxConcurrency 只限初始任务。
+- AbortSignal 三链合成后经 config 传播到子图；普通错误 abort 同伴，invalid resume 与已路由 error handler 的错误不 abort。
+- _commit 四形态（INTERRUPT/Drained/BubbleUp/ERROR+ERROR_SOURCE_NODE）与 NO_WRITES 哨兵构成 resume 协议的存储基础。
+- 下一课从任务执行转向输出通道：八种流模式与 StreamChunk 三元组。
+`,
+    null,
+    [
+      {
+        text: 'PregelRunner.tick 收到的任务集合是如何过滤的？',
+        options: [
+          '全部任务',
+          'writes.length === 0 的任务——已有写入的任务视为已完成，直接跳过',
+          '状态为 pending 的任务',
+          'name 不含 __error_handler__ 的任务',
+        ],
+        answer: 1,
+        explain:
+          'runner.tick 里 `const pendingTasks = allTasks.filter((t) => t.writes.length === 0)`——任务是否有写入是「是否已完成」的统一判据，resume 时存量写入因此能挡住重跑（tick 里还会把存量写入显式交给 applyWrites）。A 会重复执行已完成任务；C 的 status 概念属于 loop 不属于任务；D 错——error handler 任务也是任务，同样按写入判完成。',
+        concept: 'lc-pregel-runner',
+      },
+      {
+        text: '一个任务失败后，runner 什么情况下会 abort 其余并发任务？',
+        options: [
+          '任何错误都立即 abort',
+          '普通错误且不是 invalid resume 时 abort；invalid resume 故意不 abort，等其余任务跑完再抛',
+          '只有 GraphInterrupt 会 abort',
+          '由 checkpointer 决定',
+        ],
+        answer: 1,
+        explain:
+          "源码注释写明 invalid resume 的特殊语义：「An invalid resume value doesn't abort the other tasks. It's thrown once they finish, so a task answered in the same resume isn't cut off after its side effects and then run again with its saved answer」——中断其余任务会让已产生副作用的任务带着已存答案被重跑。A 过于绝对；C 错——GraphInterrupt 走 graphBubbleUp 聚合通道，不进 nodeErrors；D 无此机制。",
+        concept: 'lc-pregel-runner',
+      },
+      {
+        text: '_executeTasksWithRetry 里 Promise.race 的参数除了任务 promise 还有什么？作用是？',
+        options: [
+          '只有任务 promise',
+          'abortPromise（外部/超时信号触发时 reject）与 barrier.wait（call() 推入新 PUSH 任务时 resolve）——前者实现中止，后者让动态任务在本超步内被接纳执行',
+          'setTimeout 定时器，用于强制超时',
+          '另一个 runner 的 promise，用于负载均衡',
+        ],
+        answer: 1,
+        explain:
+          'race 的三路参数各有职责：任务 promise 结算产出 SettledPregelTask；abortPromise 让中止信号能打断「还在等任务」的 await；barrier.wait 配合 createPromiseBarrier——call()（task() 函数式 API）推入 PUSH 任务时 barrier.next() 让循环醒来填入新任务。C 错——步级超时由 AbortSignal.timeout 组成在信号链里；D 无负载均衡机制。',
+        concept: 'lc-pregel-runner',
+      },
+      {
+        text: '_commit 对「成功但零写入」的任务做了什么？',
+        options: [
+          '什么都不做，等下次重跑',
+          '推入 [NO_WRITES, null] 哨兵再 putWrites——没有这个标记，resume 时该任务会被误判为未完成而重跑',
+          '抛出异常要求节点返回状态',
+          '把任务从 tasks 字典删除',
+        ],
+        answer: 1,
+        explain:
+          '成功路径的 `if (task.writes.length === 0) task.writes.push([NO_WRITES, null])` 正是 L76 里 IGNORE 集合成员之一的存在理由：持久化层面「完成」必须有痕迹，否则下一次 resume 的 `writes.length === 0` 过滤会把跑过的任务重新派发。A 会导致重复副作用；C/D 与源码不符。',
+        concept: 'lc-pregel-runner',
+      },
+    ],
+    [
+      [
+        'PregelRunner',
+        '任务并发执行器：并发调度、AbortSignal 组合、重试接入、错误分类与聚合；与决定「跑谁」的 PregelLoop 分离',
+      ],
+      [
+        'promiseBarrier',
+        '手写的一次性唤醒原语：barrier.next() 让 Promise.race 立即醒来，用于把 call() 动态推入的 PUSH 任务纳入本超步',
+      ],
+      [
+        'handledExceptions',
+        'WeakSet<Error>：已路由给节点级 error handler 的异常记录在案，runner 收尾时不再因它们中止运行',
+      ],
+      [
+        'ERROR_SOURCE_NODE',
+        '持久化到 pending writes 的哨兵，记录失败来源节点名；resume 时据此重排错误处理器任务',
+      ],
+    ],
+    [
+      '在节点内部 catch 所有异常以求「图不崩」——错误一旦被 _commit 记为 ERROR 写入就进入重放协议，吞掉异常反而让 error handler 与断点语义失效',
+      '以为 maxConcurrency 会限制 PUSH 任务——call() 推入的任务绕过初始计数直接进 executingTasksMap，限流只作用于初始任务列表的填装循环',
+      '混淆两个 tick：loop.tick 返回 true 表示「有待执行任务，请 runner 接手」；runner.tick 从不调用 loop.tick，交替驱动是外层 _streamIterator 的职责',
+    ],
+  ),
+  'practice',
+)

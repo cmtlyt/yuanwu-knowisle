@@ -49,7 +49,8 @@ function parseDraft(file) {
   const meta = JSON.parse(m[1])
   const md = m[2].replace(/^\r?\n/, '').replace(/\s+$/, '') + '\n'
   const id = meta.id
-  if (!/^L\d{2}$/.test(id)) throw new Error(`${id}: id 必须是 LNN`)
+  /* L\d{2,3}：142 课级大课（agent-course）的课时 id 是三位数（L100+），00096 起放宽兼容。 */
+  if (!/^L\d{2,3}$/.test(id)) throw new Error(`${id}: id 必须是 LNN / LNNN`)
   if (!Array.isArray(meta.goals) || meta.goals.length < 2) throw new Error(`${id}: goals 至少 2 条`)
   if (!Array.isArray(meta.concepts) || meta.concepts.length < 1) throw new Error(`${id}: concepts 至少 1 个`)
   if (!KINDS.has(meta.kind)) throw new Error(`${id}: kind 非法 ${meta.kind}`)
@@ -107,10 +108,12 @@ ${list}
 `
 }
 
+/* 过滤 + 数值排序（不能字典序：'L100' < 'L11' 会把 LESSONS 顺序排乱，prereqs「必须更早」校验会炸）。 */
+const lessonNum = (f) => parseInt(f.slice(1), 10)
 const files = fs
   .readdirSync(DRAFTS)
-  .filter((f) => /^L\d{2}\.md$/.test(f))
-  .toSorted()
+  .filter((f) => /^L\d{2,3}\.md$/.test(f))
+  .toSorted((a, b) => lessonNum(a) - lessonNum(b))
 if (files.length === 0) throw new Error('drafts 目录为空')
 
 const lessons = []

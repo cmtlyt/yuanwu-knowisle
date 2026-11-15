@@ -1,0 +1,254 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L58 = withKind(
+  L(
+    'L58',
+    16,
+    'toolRetry/toolError/toolEmulator：工具层容错与模拟',
+    2,
+    ['L55'],
+    ['lc-tool-fault-tolerance'],
+    [
+      '实现一个 toolRetry + toolError + toolEmulator 三层叠放的容错栈，并在 createAgent 中跑通「重试→定制错误→模拟」三种路径',
+      '构建带工具过滤（tools 白名单）与 isGraphBubbleUp 放行的 wrapToolCall 容错中间件',
+      '接入 toolEmulator 的工具模拟模式，产出不执行真实工具的测试用 agent',
+    ],
+    `### 定位：工具层的「重试 / 定制失败 / 假装成功」三件套
+
+L55 搭好了 wrapToolCall 的舞台，本课请三位内置住户登场。它们各管一件事：**toolRetry 管时间**（失败后带退避重试）、**toolError 管语义**（把异常翻译成模型能读懂的错误消息，且只在你说翻译时才翻）、**toolEmulator 管测试**（根本不执行真实工具，用 LLM 编一个像样的返回值）。三件套全部基于 wrapToolCall，叠放顺序决定了故障的层层过滤——这是本课的实战主线。
+
+一句话结论：**工具容错栈的读法是洋葱从外到内：emulator 决定「真跑吗」，retry 决定「跑几次」，error 决定「败了说什么」。**
+
+### toolRetry：与 modelRetry 共享引擎的工具版
+
+toolRetry 与 L56 的 modelRetry 复用同一套 RetrySchema 与 calculateRetryDelay（toolRetry.ts:8-10 引入 utils），差异有三。其一，多了工具过滤：tools 参数接受工具实例或名字字符串，构造期归一成 toolFilter 数组，\`shouldRetryTool\` 空过滤器 = 全部重试（209-214）。其二，出口是 ToolMessage 而非 AIMessage——工具失败要以 tool_call_id 关联回模型（handleFailure 266-271，status: \\"error\\"）。其三，多了 bubble-up 守卫。看主循环的关键骨架：
+
+\`\`\`ts
+wrapToolCall: async (request, handler) => {
+  const toolName = (request.tool?.name ?? request.toolCall.name) as string;
+  if (!shouldRetryTool(toolName)) {
+    return handler(request);            // 白名单外：直接放行
+  }
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await handler(request);
+    } catch (error) {
+      if (isGraphBubbleUp(error)) {
+        throw error;                    // 控制流信号：绝不重试
+      }
+      // ...非 Error 归一化 → shouldRetryException → 退避 sleep → 重试
+      // 耗尽：handleFailure 返回 error ToolMessage 或抛错
+    }
+  }
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/toolRetry.ts:277-331（commit 7704471，有裁剪）*
+
+另一个细节：取工具名用 \`request.tool?.name ?? request.toolCall.name\`——L55 讲过动态工具的 request.tool 可能是 undefined，所以要有 fallback。
+
+### 工具过滤的归一化与一段严格校验
+
+toolRetry 的 tools 参数在构造期被归一成字符串数组：工具实例取 \`.name\`，字符串直接收（toolRetry.ts:193-207）。归一循环里藏着一条少见的严格校验：既不是字符串、又没有 string 类型 name 的元素直接抛 \`TypeError: Expected a tool name string or tool instance to be passed to toolRetryMiddleware\`——构造期就拒绝含糊输入，而不是运行时静默失配。判定函数是闭包 \`shouldRetryTool\`：过滤器为空时恒真（全工具重试），否则 \`toolFilter.includes(toolName)\` 白名单命中才重试（209-214）。注意白名单匹配的是**名字字符串**，所以 L55 的动态工具补位场景下，工具实例没进注册表也能被覆盖——只要名字对得上。这与 L56 modelRetry 的对照也清晰了：modelRetry 没有 tools 过滤（模型只有一个），多出来的这个维度是工具层特有的。
+
+### 废弃出口值的运行时映射
+
+toolRetry 的 onFailure 支持两个已废弃的旧值，映射发生在构造期（toolRetry.ts:180-191）：\`"raise"\` 打 warning \`⚠️ onFailure: 'raise' is deprecated. Use onFailure: 'error' instead.\` 后归为 "error"；\`"return_message"\` 同样告警后归为 "continue"。两件事值得注意：其一，**废弃值的兼容是「告警 + 语义等价映射」而非报错**——老代码行为不变，只是控制台多一行警告，这是库作者对弃用期的标准处理，与 L57 modelCallLimit 的 "throw" → "error" 映射同一手法；其二，映射点在构造期意味着每次创建中间件都会告警一次，若你在循环里反复创建 toolRetryMiddleware，警告会刷屏——正确姿势是构造一次复用（中间件对象本就设计为可复用，L53 的生命周期理论）。onFailure 的函数形态签名是 \`(error) => string\`，返回值直接作为 ToolMessage 的 content；字符串形态 "continue" 则用 formatFailureMessage 生成统一文案：\`Tool '\${toolName}' failed after \${attemptsMade} \${attemptWord} with \${errorType}\`（236-243）——工具名、尝试次数、错误类型三要素齐备，模型据此判断是换参数重试还是放弃该路径。
+
+### toolError：opt-in 的错误翻译官
+
+toolError 是三者中最克制的一个：它不重试、不默认处理，一切取决于 onError 回调的返回值。
+
+\`\`\`ts
+export type ToolErrorHandler = (
+  error: unknown,
+  request: ToolCallRequest
+) => MessageContent | void | Promise<MessageContent | void>;
+
+// wrapToolCall 内部
+try {
+  return await handler(request);
+} catch (error: unknown) {
+  if (isGraphBubbleUp(error)) {
+    throw error;
+  }
+  const content = await config.onError(error, request);
+  if (content === undefined) {
+    throw error;   // 不处理 → 原错误继续传播
+  }
+  return new ToolMessage({
+    content,
+    tool_call_id: request.toolCall.id ?? "",
+    ...(typeof toolName === "string" ? { name: toolName } : {}),
+    status: "error",
+  });
+}
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/toolError.ts:17-104（commit 7704471，有裁剪）*
+
+这份克制是有安全动机的：JSDoc 提醒「Prefer returning content that identifies the error type without including the raw error message, which may contain sensitive or internal details」——原始报错可能带内网地址、SQL 片段，直接喂给模型等于信息外泄。所以 onError 只对「你认为模型该知道」的错误返回一句分类描述（如 \`Tool 'search' failed with TypeError.\`），其余返回 undefined 让错误正常炸出去。
+
+### toolEmulator：用 LLM 假装工具
+
+测试期最头疼的是依赖真实外部系统（邮件、支付、数据库）。toolEmulator 的思路：拦截 wrapToolCall，把工具名、描述、参数拼成 prompt 交给一个模型，让它「编造该工具在此参数下会返回的值」，直接以 ToolMessage 短路返回。
+
+\`\`\`ts
+const prompt = \`You are emulating a tool call for testing purposes.
+
+Tool: \${toolName}
+Description: \${toolDescription}
+Arguments: \${toolArgsString}
+
+Generate a realistic response that this tool would return given these arguments.
+Return ONLY the tool's output, no explanation or preamble. Introduce variation into your responses.\`;
+
+const response = await emulator.invoke([new HumanMessage(prompt)], config);
+// config 里 mergeConfigs 了 metadata: { lc_source: "toolEmulation" } 与 tags: [INTERNAL_CALL_TAG]
+return new ToolMessage({
+  content,
+  tool_call_id: request.toolCall.id ?? "",
+  name: toolName,
+});
+\`\`\`
+
+*— libs/langchain/src/agents/middleware/toolEmulator.ts:150-186（commit 7704471，有裁剪）*
+
+两个工程细节值得学：其一，模拟调用打上 \`INTERNAL_CALL_TAG\`（"nostream"）与 lc_source 元数据——伪造结果不会污染真实的消息流与追踪；其二，模型解析策略是「wrapModelCall 里捕获 agent 的 model，wrapToolCall 里惰性 initChatModel 并缓存」，所以不配 model 时模拟器与你 agent 用同一个模型，且并发安全（缓存只在首次初始化）。
+
+模型解析链还能再往下挖一层。\`getEmulatorModel\` 的完整优先级（toolEmulator.ts:108-127）：显式传对象直接用；显式传字符串走 \`initChatModel(model, { temperature: 1 })\`——注意温度是写死的 1，模拟器刻意要「更有创造力」的输出，让伪造结果带多样性（prompt 里那句 Introduce variation into your responses 与温度设定是配套设计）；initChatModel 失败时 catch 里打错误日志并回退 agentModel。agentModel 本身来自它自己的 wrapModelCall：\`agentModel = request.model as BaseChatModel\` 然后 \`return handler(request)\` 原样放行（131-135）——**捕获而不改写**，这是「观察型 wrapModelCall」的最小范式，比 L54 的日志中间件还克制。这段链路还有一个隐含的时序约束：wrapToolCall 首次触发时 agentModel 可能还没被赋值（模型调用尚未发生——不过实际执行顺序里 beforeModel/AgentNode 先于工具，所以正常流无此问题），代码用 \`agentModel as BaseChatModel\` 的断言兜住类型层，语义层依赖执行顺序保证。
+
+### 判定边界：模拟、放行与空数组的坑
+
+shouldEmulate 的判定在 wrapToolCall 入口（138-142）：\`emulateAll || toolsToEmulate.has(toolName)\`，不命中直接 \`return handler(request)\` 放行——模拟器对白名单外的工具是完全透明的。而 emulateAll 的构造条件 \`!tools || tools.length === 0\`（88 行）造出了一个反直觉行为：**空数组等价于 undefined，全部工具都会被模拟**——与 JSDoc 里「If empty array, no tools will be emulated」的描述矛盾（quiz 选项里的考点）。这个坑的实操规避法有两个：想全不模拟就干脆不装这个中间件（它没有「全部关闭」的合法配置）；想精确控制就永远传非空名单。写测试时最好加一条元断言：给模拟器传 \`tools: ["nonexistent_tool"]\`，验证真实工具确实未被拦截——用负向白名单锚定「白名单语义真的生效」。
+
+### 实战：三层叠放的容错栈
+
+把三件套按正确顺序组装并跑通：
+
+\`\`\`ts
+import { createAgent, toolRetryMiddleware, toolErrorMiddleware,
+         toolEmulatorMiddleware } from "langchain";
+
+const agent = createAgent({
+  model: "openai:gpt-4o",
+  tools: [searchDatabase, sendEmail],
+  middleware: [
+    // 1) 外层：测试期模拟邮件工具（真实工具不执行）
+    toolEmulatorMiddleware({ tools: ["send_email"] }),
+    // 2) 中层：错误翻译（重试耗尽后仍抛的错，转成安全描述）
+    toolErrorMiddleware({
+      onError: (error, request) => {
+        if (String(error).includes("timeout")) {
+          return \`Tool '\${request.toolCall.name}' timed out. Try a narrower query.\`;
+        }
+        // 返回 undefined → 原错误继续上抛
+      },
+      tools: ["search_database"],
+    }),
+    // 3) 内层：重试（只对数据库工具，耗尽后抛错交给外层）
+    toolRetryMiddleware({ maxRetries: 3, tools: ["search_database"] }),
+  ],
+});
+
+const out = await agent.invoke({
+  messages: [{ role: "user", content: "查订单并给客户发邮件" }],
+});
+// search_database：失败→重试3次→仍败→toolError 转安全消息喂回模型
+// send_email：被 emulator 拦截，LLM 伪造发送结果，真实邮件不发出
+\`\`\`
+
+顺序依据 toolError 文档的建议（retry 放 error 的内层），emulator 放最外层保证它能在 retry 之前就短路掉模拟工具——模拟工具根本不该被重试。执行验证三条路径：数据库工具走「重试→翻译」；邮件工具走「模拟短路」；其他错误按 opt-in 语义原样上抛。
+
+把三条路径的预期输出写成断言表，跑通后逐条核对：路径一（search_database 崩溃），外两层（emulator 不命中、error 命中）放行进 retry，三次尝试耗尽后 handleFailure 按 onFailure 默认值返回 error ToolMessage？不对——本课示例里 retry 的 onFailure 用的是默认 "continue"，耗尽后它返回一条格式化 ToolMessage 而不是抛错，于是**外层 toolError 根本接不到异常**，翻译官无事可做。要验证「retry 耗尽 → error 收尾」的完整链路，retry 必须显式配 \`onFailure: "error"\`（或废弃的 "raise"），让错误真的抛上来。这是三件套叠放最容易踩的静默失效：顺序对了、组件对了，但出口档位没配对，翻译层空转而毫无征兆。路径二（send_email）：emulator 的 prompt 里拼的是工具名、描述与 args 的字符串形式，伪造内容不落 checkpoint 的真实工具记录，lc_source: "toolEmulation" 让追踪系统可甄别。路径三（未配置工具出错）：toolError 的 onError 返回 undefined，原错误继续上抛——到达 ToolNode 后按 L55 的非对称策略处置。三组断言跑完，本课开头的「洋葱从外到内」读法才算被真正验证过。
+
+### 本课小结
+
+- toolRetry 与 modelRetry 共享退避引擎，多了工具白名单与 bubble-up 守卫；出口是 error ToolMessage。
+- toolError 是 opt-in 翻译官：onError 返回内容才转消息，返回 undefined 原样传播；不重试。
+- toolEmulator 用 LLM 伪造工具返回，默认模拟全部工具，内部调用打 "nostream" tag 避免污染消息流。
+- 叠放顺序：emulator 最外 → error 中间 → retry 最内（retry 耗尽抛错由 error 收尾）。
+- 下一课进入模块五最重的单件：summarization，1009 行的上下文压缩引擎。
+`,
+    null,
+    [
+      {
+        text: 'toolRetryMiddleware 的 catch 块第一步为什么是 if (isGraphBubbleUp(error)) throw error？',
+        options: [
+          '性能优化，跳过不需要重试的错误',
+          'LangGraph 的 interrupt/drain 等控制流信号以异常形式冒泡，重试它们会破坏 HITL 暂停与恢复机制',
+          '因为 graph bubble 类错误没有 stack，无法记录',
+          '这是一个无实际作用的防御性代码',
+        ],
+        answer: 1,
+        explain:
+          'toolRetry.ts:292-294 的 catch 第一行就是 bubble-up 检查后直接 rethrow。interrupt（人工介入断点）和 drain（暂停恢复）不是「工具失败了」，是执行协议——把它们当失败重试等于把 HITL 请求吞掉重跑。toolError.ts:89-91 有完全相同的守卫。A/C 无依据；D 错——它保护的是 resume 语义，与 L55 讲的 ToolNode #handleError 里 isGraphInterrupt 永远重抛（ToolNode.ts:237-245）同一逻辑。',
+        concept: 'lc-tool-fault-tolerance',
+      },
+      {
+        text: 'toolErrorMiddleware 的 onError 返回 undefined 时会发生什么？',
+        options: [
+          '返回一条空内容的 ToolMessage',
+          '原始错误原样向上抛（处理是 opt-in 的：返回内容才转成 error ToolMessage）',
+          '静默吞掉错误继续执行',
+          '自动触发一次重试',
+        ],
+        answer: 1,
+        explain:
+          'toolError.ts:93-96：const content = await config.onError(error, request); if (content === undefined) { throw error; }——只有返回了内容才构造 error ToolMessage。JSDoc 写明「Return content to surface the error to the model... Return nothing to propagate the original error」（17-20 行）。A/C 与 opt-in 契约相悖；D 错——toolError 的文档明确说「This middleware does not retry」，要重试得自己叠 toolRetryMiddleware({ onFailure: "error" })。',
+        concept: 'lc-tool-fault-tolerance',
+      },
+      {
+        text: 'toolEmulatorMiddleware 在 tools 不传（undefined）时的行为是？',
+        options: [
+          '不模拟任何工具',
+          '模拟所有工具（全部 tool call 用 LLM 伪造结果，不执行真实工具）',
+          '抛错要求必传',
+          '只模拟没有 description 的工具',
+        ],
+        answer: 1,
+        explain:
+          'toolEmulator.ts:88：const emulateAll = !tools || tools.length === 0; 再在 wrapToolCall 里 shouldEmulate = emulateAll || toolsToEmulate.has(toolName)（138 行）。注意 tools 为**空数组**时 emulateAll 也是 true——这点与 JSDoc 的「If empty array, no tools will be emulated」描述矛盾，实测以代码为准：空数组等价于 undefined，都模拟全部。A 与默认全模拟相反；C 无校验抛错；D 无此逻辑。',
+        concept: 'lc-tool-fault-tolerance',
+      },
+      {
+        text: 'toolEmulator 用哪个模型生成伪造结果？',
+        options: [
+          '固定写死为 gpt-4o',
+          '优先 options.model（字符串经 initChatModel 初始化）；未提供时用 agent 当前模型——它通过自己的 wrapModelCall 捕获 request.model 存进闭包',
+          '随机选一个已注册模型',
+          '不用模型，返回固定占位文本',
+        ],
+        answer: 1,
+        explain:
+          'toolEmulator.ts:130-131 的 wrapModelCall 只做一件事：agentModel = request.model as BaseChatModel 然后原样放行；getEmulatorModel 的优先级是显式 model（对象直接用/字符串 initChatModel 并缓存）→ 失败回退 agentModel → 未配置直接用 agentModel（108-126 行）。B 正确。A 无写死；C 无随机逻辑；D 错——它真的调 LLM 生成「该工具在此参数下会返回什么」，prompt 里要求引入变化。',
+        concept: 'lc-tool-fault-tolerance',
+      },
+    ],
+    [
+      [
+        'isGraphBubbleUp',
+        '判断错误是否为 LangGraph 控制流冒泡信号（interrupt/drain）；容错中间件必须对其直接 rethrow',
+      ],
+      [
+        'INTERNAL_CALL_TAG',
+        '常量 "nostream"（middleware/constants.ts:5）：中间件内部发起的模型调用打上此 tag，LangGraph 的 messages 流处理器会跳过它们',
+      ],
+      [
+        'ToolErrorHandler',
+        'toolError 的 onError 类型：(error, request) => MessageContent | void；返回内容转 error ToolMessage，返回 void 传播原错误',
+      ],
+      [
+        '工具过滤',
+        'toolRetry/toolError 共有的 tools 参数：传工具实例或名字数组则只作用于白名单工具，缺省作用于全部',
+      ],
+    ],
+    [
+      '把 toolError 与 toolRetry 的叠放顺序搞反——toolError 文档明确建议「place toolRetryMiddleware({ onFailure: "error" }) after this middleware」（toolError.ts:50-51）：先让 retry 在内层重试耗尽后抛错，再由外层 toolError 把残余错误转成消息',
+      '依赖 toolEmulator 的空数组语义做「全不模拟」——源码里空数组触发 emulateAll，应改用明确列出想模拟的工具，或判断返回的中间件行为写测试断言',
+      '给 toolRetry 配 retryOn: [SomeError] 却期待按 error.name 匹配——数组是 instanceof 构造器匹配；跨包错误类或字符串名过滤必须用函数形态',
+      '在 toolRetry 的 onFailure 里选了已废弃的 "raise"/"return_message"——运行时打 warning 并分别映射为 "error"/"continue"（toolRetry.ts:179-190）',
+    ],
+  ),
+  'practice',
+)
