@@ -108,3 +108,14 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 | 收官最后一课初稿正文 2835/3000，因仍在 baseline 豁免名单里 `content-gate` 只提示「已达标但仍列在豁免名单」、显示「✅ 体量闸门通过」 | 豁免名单里的课 gate 不施加下限断言，长代码块（7560 字符）又给人「内容够了」的错觉 | 补实质节而不是堆示例：本例补「交付之后：把一次验收变成可回归的资产」表（交付物 / 落盘记录 / 下一次怎么验）与 L142 交接说明，正文到 3412。**gate 绿 ≠ 达标，收官批次也要手动跑 `--only=LNN --verbose` 看 raw 与余量。** 落地见 `docs/00088`（L141） |
 
 > **临时脚本已清理（Wave 1 收官）**：收官提交时删除了项目根目录的 `tmp-backtick.mjs` / `tmp-escape.mjs` / `tmp-fix-backtick.mjs` / `tmp-sample.mjs`，以及 `.wrangler/tmp` 下 68 个 Wrangler bundle 缓存。上文对这些脚本的引用是**历史做法记录**，不是可执行指引；142 课已全部达标，无需再跑批量扫描。若后续新增课程要复现，用一次性 `node -e` 内联脚本（逻辑见各条目），或把脚本正式落到 `scripts/` 并纳入门禁。
+
+## 整门课全量重建：闸门接入、API 白名单与生成器（00089 Effect）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| 给一门此前没有 `Lesson.kind` 的课一次性标完课型，`pnpm verify` 立刻变红（26 课全部不达标） | 标注的瞬间整门课被 `content-gate` 纳入体量闸门，旧正文远低于绝对下限 | Step 0 **同时**写 `baseline.<course> = ["L01"…"L26"]` 全量豁免，标完 `verify` 仍为 0；每批重写后 `--update-baseline` 自动收缩（00089 实测 `26 → 4 → 0`），收官必须清零。豁免是接入手段不是降档，闸门阈值表不动 |
+| 重写课程时按记忆写出 `Effect.async` / `runSyncExit` / `Effect.retry(call,{times,while,schedule})` / `Schedule.fixed("1 second",5)` / `catchAll`，发布后代码跑不起来 | 站点 `node_modules` 未安装目标库（`effect`），无法本地 import 核验；凭跨版本印象写 API，新版签名已变 | 从**原课程正文** `.md` 里用正则提取 `Effect.xxx` 形状的 API 名，排序去重成已验证白名单（00089 原文 85 个），新正文只沿用这些形状；差异里只剩 `Exit.Exit<...>` / `Stream.Stream<...>` 这类**类型别名**才算安全。旧名 `catchAll` 全量换 `Effect.catch`，自造签名换成已验证组合（如 `Schedule.compose(Schedule.recurs(3), Schedule.exponential("100 millis"))`）；拿不准的具体签名写成注释，不进代码块。**版本锁定的课程不能靠记忆写 API，原文白名单比模糊记忆可信** |
+| 整门课重写反复撞模板串转义坑（裸反引号、`\'`、`\.` `\(` `\s`、`\[`、`\n` 变真换行），双扫描还要人眼兜底 | `Lesson.md` 是 TS 模板字符串，正文里的反斜杠 / 反引号 / `${` 全要手工转义，手写 26 课必然漏 | 改为**纯 Markdown 草稿 → 一次性生成脚本**：草稿写 `.md`，脚本先双写反斜杠、转义反引号与 `${`，再序列化 `quiz / terms / pitfalls`；结构化字段直接从当前课时模块读出，避免自造概念 id，最后写出 `lNN.ts`。四类转义坑从根因消除，抽查改为验证「生成结果 + 渲染结果」。**补写草稿后必须重新 apply**，否则 TS 仍是旧版（00089 L17 只改草稿，余量仍 +26，重新生成后才 +187） |
+| `--only=L01 --verbose` 输出里同一课号出现两行、拿错行下结论 | 多门课都用 `LNN` 编号，`--only` 是全局匹配 | 跨课程同名时改用全量 `content-gate` + 自建逐课检查器分辨，别靠单行 verbose 输出判达标 |
+| 示例代码块字符数达标，但状态迁移根本没闭合：`range()` cursor 每批重置导致重复生产、成功路径子任务没标 done、快照签名凭空造、检查顺序把浮动版本误报成未锁定 | 长代码块只是文本、不参与编译，gate / lint / typecheck 都看不出；只看字符数会漏掉逻辑错 | 每课末尾补一段**可失败断言**把状态变化完整走一遍（前后状态 `deepEqual`、负例测冲突 / 浮动版本 / 重复生产），再跑渲染抽查；正文「验收清单」要与代码块断言一一对应 |
+| 方案里给某课标 overview，复核时站不住 | 课型是身份不是字数：交付物是「搭最小工程 + 跑通第一次运行」且正文已含代码，overview 免实现代码不成立 | 按 00058「看交付物」逐节复核；simple 课程 `STAGES` 无 `module`，多节 overview 还会全部挤进 `undefined` 组触发护栏误判。00089 最终 0 节 overview，并把口径修正写进**新**任务 overview，不改历史记录 |

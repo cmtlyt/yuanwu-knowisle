@@ -64,3 +64,9 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 | 症状 | 根因 | 处理 |
 |---|---|---|
 | 移除 Nuxt Content 与 `content/` 后，`pnpm verify` 在「静态资源」段报 `✗ content/docs/effect-course-design.md`、`校验失败 1 项`，退出 1；`smoke.py` 的 ROUTES 还期望该路径返回 200 | `scripts/verify-course.mjs` 的静态资源数组、`scripts/smoke.py` 的 ROUTES 都硬编码了被删资源 | 删除资源时同步清理**全部**存在性断言与引用（verify 静态资源清单、smoke ROUTES、skill 文档、README 路由表、页面链接），改完重跑 `verify` / `smoke` / `build`；这是「删文件」类任务的固定收尾项 |
+
+## 临时文件在 Git Bash 与 Windows Node 间路径不一致
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| `curl -o /tmp/ssr-L01.html` 写文件成功、`wc -c < /tmp/ssr-L01.html` 也有字节数，紧接着 Windows 原生 `node -e` 读 `/tmp/ssr-L01.html` 报 `ENOENT: no such file or directory, open 'D:\tmp\ssr-L01.html'` | Git Bash 的 `/tmp` 映射到 MSYS 临时目录，Windows 原生 Node 把 `/tmp` 解析成**当前盘根目录** `D:\tmp`，两者不是同一路径；shell 内建命令与 Node 看到的文件系统视图不同 | 验证抽查**不落临时文件**：`curl -sS --noproxy '*' -w '\n__HTTP__%{http_code}\n' "<url>" \| node -e '...从 process.stdin 读...'`，HTML 直接管道给 Node；确需落盘就用 `process.env.TEMP` 显式拼绝对路径，并在 shell 与 Node 两侧用同一变量。`curl` 访问 127.0.0.1 要加 `--noproxy '*'`，否则代理环境变量会把本地请求转走。落地见 `docs/00089`（SSR 抽查） |
