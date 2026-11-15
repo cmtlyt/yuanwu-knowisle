@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
+import { difficultyDots } from '~/lib/difficulty'
 import { lessonMinutes } from '~/lib/lesson-time'
 
 const { course, data, base, stages, lessons, conceptName, renderMode, moduleName, subStageName, stageById } =
@@ -100,7 +101,7 @@ const calloutIcon = (tone: string) => (tone === 'warn' ? '⚠️' : tone === 'de
                 <td>{{ l.id }}</td>
                 <td>{{ l.title }}</td>
                 <td>{{ lessonMinutes(l) }}</td>
-                <td>{{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</td>
+                <td>{{ difficultyDots(l.difficulty) }}</td>
                 <td>{{ l.concepts.map(conceptName).join(' / ') }}</td>
                 <td v-if="renderMode === 'complex'">{{ subStageName(l.stage, l.subStage) }}</td>
                 <td>{{ l.widget ?? '—' }}</td>

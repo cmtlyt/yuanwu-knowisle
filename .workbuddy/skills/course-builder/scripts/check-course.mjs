@@ -171,6 +171,14 @@ ok(
   C.LESSONS.every((l) => (l.terms || []).length > 0),
   '关键术语非空',
 )
+const badDifficulty = C.LESSONS.filter(
+  (l) => !Number.isInteger(l.difficulty) || l.difficulty < 1 || l.difficulty > 5,
+)
+ok(
+  badDifficulty.length === 0,
+  '课时难度为 1-5 整数（越界会让难度点阵 repeat 负数、整页白屏）',
+  badDifficulty.length ? badDifficulty.map((l) => `${l.id}=${l.difficulty}`).join(', ') : '',
+)
 ok(
   C.LESSONS.every((l) => typeof l.md === 'string' && l.md.trim().length > 0),
   '课时正文非空（时长由 lessonMinutes() 渲染时现算，不落数据）',

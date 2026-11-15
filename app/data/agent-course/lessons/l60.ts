@@ -7,7 +7,7 @@ export const L60 = withKind(
     'L60',
     9,
     '实战：实现 Plan-and-Execute 引擎（含动态重规划钩子）',
-    42,
+    3,
     ['L59', 'L15'],
     ['pe-engine'],
     [

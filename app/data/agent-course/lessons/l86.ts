@@ -7,7 +7,7 @@ export const L86 = withKind(
     'L86',
     14,
     '输出护栏：别让 Agent 说 / 做不该的',
-    26,
+    2,
     ['L84'],
     ['output-guardrails'],
     [

@@ -7,7 +7,7 @@ export const L59 = withKind(
     'L59',
     9,
     '任务分解与计划执行分离：从拆解技巧到工程结构',
-    24,
+    2,
     ['L14'],
     ['task-decomposition'],
     [

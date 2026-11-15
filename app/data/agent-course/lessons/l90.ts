@@ -7,7 +7,7 @@ export const L90 = withKind(
     'L90',
     15,
     '缓存体系：语义缓存与工具结果缓存',
-    26,
+    2,
     ['L88'],
     ['caching'],
     [

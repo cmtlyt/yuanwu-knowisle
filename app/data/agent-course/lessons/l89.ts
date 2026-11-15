@@ -7,7 +7,7 @@ export const L89 = withKind(
     'L89',
     15,
     '实战：实现模型路由（provider 抽象 + 按成本/质量分流）',
-    43,
+    3,
     ['L88'],
     ['routing-impl'],
     [

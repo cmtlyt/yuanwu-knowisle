@@ -7,7 +7,7 @@ export const L84 = withKind(
     'L84',
     14,
     '实战：提示注入攻防演练（构造注入并构建防御）',
-    44,
+    3,
     ['L83'],
     ['injection-defense'],
     [

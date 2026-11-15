@@ -7,7 +7,7 @@ export const L72 = withKind(
     'L72',
     12,
     '给 Agent 装上「仪表盘」',
-    25,
+    2,
     ['L36'],
     ['observability-dash'],
     [

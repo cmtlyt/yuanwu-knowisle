@@ -7,7 +7,7 @@ export const L83 = withKind(
     'L83',
     14,
     '提示注入：最现实的 Agent 威胁',
-    25,
+    2,
     ['L31'],
     ['prompt-injection'],
     [

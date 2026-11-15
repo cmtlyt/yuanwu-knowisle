@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRequiredCourse } from '~/composables/use-course'
 import { useLearning } from '~/composables/use-learning'
+import { difficultyDots } from '~/lib/difficulty'
 import { lessonMinutes } from '~/lib/lesson-time'
 
 const router = useRouter()
@@ -95,7 +96,7 @@ function goLesson(id: string) {
             <div class="t">{{ l.title }}</div>
             <div class="meta">
               <span>⏱ {{ lessonMinutes(l) }} min</span>
-              <span>难度 {{ '●'.repeat(l.difficulty) }}{{ '○'.repeat(5 - l.difficulty) }}</span>
+              <span>难度 {{ difficultyDots(l.difficulty) }}</span>
               <span>{{ l.concepts.map(conceptName).join(' / ') }}</span>
             </div>
           </div>

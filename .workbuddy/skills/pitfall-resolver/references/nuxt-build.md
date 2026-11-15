@@ -32,6 +32,7 @@
 |---|---|---|
 | Nuxt Content 文档不出现在路由 | 缺 frontmatter 或集合配置不匹配 | 补 frontmatter；确认 `content.config.ts` 集合定义与路径（本项目自 00017 起已移除 Nuxt Content，此条仅适用于仍在用的项目） |
 | 代码示例高亮后插入 HTML 触发 XSS | `v-html` 内容未受控 | 高亮只处理受信任静态数据；用户输入统一 `esc()` 转义 |
+| 课程地图/教学设计页整页白屏，控制台 `RangeError: Invalid count value: -19` → `String.repeat` → `map.vue`，随后 `Cannot destructure property 'type' of 'vnode' as it is null`（后者是首渲染抛错后的连锁卸载，别当独立 bug 查） | 课时 `difficulty` 被误填成分钟数（如 24/42），模板 `'○'.repeat(5 - difficulty)` = `repeat(-19)` 抛错中断整页渲染；数据门禁（verify-course / check-course）未校验值域，坏数据穿过 CI | 三层一起做：① 数据修正为合法 1–5（agent-course L59–L90 曾把分钟数填进 difficulty，按课型 theory/overview=2、practice=3）；② 渲染层抽 `difficultyDots()` 归一化取有限整数 + clamp 1–5 再 repeat（complex/simple map.vue + design.vue 共 5 处统一调用）；③ `scripts/verify-course.mjs` 与 skill 的 `check-course.mjs` 各加「difficulty 为 1-5 整数」断言，坏数据 verify 即 exit 1。实测 2026-11-16：注入 L59=99 负向测试 verify exit=1 报 `L59=99`，还原后全绿。**关键**：`pnpm verify` 只跑 `scripts/verify-course.mjs`，不跑 skill 的 check-course.mjs——CI 门禁必须加在前者 |
 
 ## 冒烟回归顺序
 

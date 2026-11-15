@@ -7,7 +7,7 @@ export const L88 = withKind(
     'L88',
     15,
     '把成本压下来：模型路由策略',
-    25,
+    2,
     ['L10'],
     ['model-routing'],
     [

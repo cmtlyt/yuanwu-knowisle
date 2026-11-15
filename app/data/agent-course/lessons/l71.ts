@@ -7,7 +7,7 @@ export const L71 = withKind(
     'L71',
     11,
     '人在回路：把关键决策交还给人类',
-    25,
+    2,
     ['L69'],
     ['human-in-loop'],
     [

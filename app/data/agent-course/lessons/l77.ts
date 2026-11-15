@@ -7,7 +7,7 @@ export const L77 = withKind(
     'L77',
     13,
     '怎么知道 Agent 真的变好了',
-    24,
+    2,
     ['L30'],
     ['eval-dimensions'],
     [

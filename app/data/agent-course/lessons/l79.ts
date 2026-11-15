@@ -7,7 +7,7 @@ export const L79 = withKind(
     'L79',
     13,
     '主流基准导览：AgentBench / WebArena / GAIA（该信哪一个）',
-    20,
+    2,
     ['L77'],
     ['benchmarks'],
     [

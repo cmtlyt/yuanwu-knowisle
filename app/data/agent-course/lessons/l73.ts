@@ -7,7 +7,7 @@ export const L73 = withKind(
     'L73',
     12,
     '链路追踪：一次请求穿过多少工具',
-    24,
+    2,
     ['L72'],
     ['tracing'],
     [

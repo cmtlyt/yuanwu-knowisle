@@ -7,7 +7,7 @@ export const L62 = withKind(
     'L62',
     9,
     'ADaPT：按难度自适应抽象层级',
-    24,
+    2,
     ['L24', 'L61'],
     ['adapt'],
     [

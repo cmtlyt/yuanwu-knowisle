@@ -7,7 +7,7 @@ export const L87 = withKind(
     'L87',
     14,
     '多租户下的记忆与数据隔离',
-    26,
+    2,
     ['L53'],
     ['tenant-isolation'],
     [

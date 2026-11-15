@@ -7,7 +7,7 @@ export const L64 = withKind(
     'L64',
     10,
     '自我批评循环：先写再挑刺',
-    26,
+    2,
     ['L63'],
     ['self-critique'],
     [

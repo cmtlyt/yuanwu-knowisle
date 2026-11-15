@@ -7,7 +7,7 @@ export const L85 = withKind(
     'L85',
     14,
     '工具最小权限与沙箱隔离',
-    26,
+    2,
     ['L40'],
     ['least-privilege'],
     [

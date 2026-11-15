@@ -7,7 +7,7 @@ export const L66 = withKind(
     'L66',
     11,
     '什么时候需要多个 Agent',
-    24,
+    2,
     ['L27'],
     ['multi-agent-when'],
     [

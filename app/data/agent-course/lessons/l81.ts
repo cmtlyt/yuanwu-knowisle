@@ -7,7 +7,7 @@ export const L81 = withKind(
     'L81',
     13,
     '实战：搭建 Eval harness 与 agent 检测（自动化轨迹评测 + 异常/退化检测）',
-    44,
+    3,
     ['L80', 'L78'],
     ['eval-harness'],
     [

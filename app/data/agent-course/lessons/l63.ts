@@ -7,7 +7,7 @@ export const L63 = withKind(
     'L63',
     10,
     'Reflexion 机制：失败经验持久化',
-    26,
+    2,
     ['L17', 'L18'],
     ['reflexion-mech'],
     [

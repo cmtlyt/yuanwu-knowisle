@@ -7,7 +7,7 @@ export const L69 = withKind(
     'L69',
     11,
     '三种编排模式对比与选型（supervisor / 群聊 / 图 workflow）',
-    24,
+    2,
     ['L68'],
     ['orchestration'],
     [

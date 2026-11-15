@@ -7,7 +7,7 @@ export const L67 = withKind(
     'L67',
     11,
     '设计 Agent 之间的「对话协议」',
-    25,
+    2,
     ['L66'],
     ['agent-protocol'],
     [

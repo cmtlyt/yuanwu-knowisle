@@ -7,7 +7,7 @@ export const L82 = withKind(
     'L82',
     13,
     'LLM-as-Judge：用模型评模型（评分维度设计、偏差与缓解）',
-    43,
+    3,
     ['L81'],
     ['llm-as-judge'],
     [

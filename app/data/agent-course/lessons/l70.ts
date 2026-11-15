@@ -7,7 +7,7 @@ export const L70 = withKind(
     'L70',
     11,
     '多 Agent 的冲突与一致性保障',
-    26,
+    2,
     ['L68'],
     ['conflict-consistency'],
     [

@@ -7,7 +7,7 @@ export const L80 = withKind(
     'L80',
     13,
     '建立你自己的回归基线',
-    26,
+    2,
     ['L78'],
     ['regression-baseline'],
     [

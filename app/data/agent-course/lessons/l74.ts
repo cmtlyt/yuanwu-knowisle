@@ -7,7 +7,7 @@ export const L74 = withKind(
     'L74',
     12,
     '回放失败现场：调试 Agent 的正确姿势',
-    26,
+    2,
     ['L73'],
     ['replay-debug'],
     [

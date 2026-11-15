@@ -7,7 +7,7 @@ export const L68 = withKind(
     'L68',
     11,
     '实战：亲手用 TS 实现一个多 Agent 系统（消息总线 + 角色 + supervisor）',
-    43,
+    3,
     ['L67', 'L36'],
     ['multi-agent-impl'],
     [

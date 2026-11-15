@@ -94,6 +94,17 @@ for (const { label, C } of discovered) {
   ok(!!C.META.version, '版本基线已锁定')
   ok(C.STAGES.length > 0 && C.LESSONS.length > 0 && C.CONCEPTS.length > 0 && quizTotal > 0, '结构非空')
 
+  // 难度点阵渲染用 '○'.repeat(5 - difficulty)：越界值（如把分钟数误填进来）会抛
+  // RangeError 令整页白屏。这里把值域钉死在 1-5 整数，坏数据在 verify 阶段即失败。
+  const badDifficulty = C.LESSONS.filter(
+    (l) => !Number.isInteger(l.difficulty) || l.difficulty < 1 || l.difficulty > 5,
+  )
+  ok(
+    badDifficulty.length === 0,
+    '课时难度为 1-5 整数',
+    badDifficulty.length ? badDifficulty.map((l) => `${l.id}=${l.difficulty}`).join(', ') : '',
+  )
+
   console.log('--- 引用完整性 ---')
   ok(
     C.LESSONS.every((l) => stageIds.has(l.stage)),

@@ -7,7 +7,7 @@ export const L75 = withKind(
     'L75',
     12,
     '实战：从零用 TS 实现 span 追踪中间件（OpenTelemetry 原生手写）',
-    43,
+    3,
     ['L73'],
     ['span-middleware'],
     [

@@ -7,7 +7,7 @@ export const L65 = withKind(
     'L65',
     10,
     '实战：实现 Self-Critique + 验证回路闭环',
-    42,
+    3,
     ['L64'],
     ['verification-loop'],
     [

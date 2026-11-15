@@ -7,7 +7,7 @@ export const L78 = withKind(
     'L78',
     13,
     '轨迹级评测的工程实现',
-    40,
+    3,
     ['L77'],
     ['trajectory-eval'],
     [

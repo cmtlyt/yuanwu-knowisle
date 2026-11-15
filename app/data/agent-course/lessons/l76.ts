@@ -7,7 +7,7 @@ export const L76 = withKind(
     'L76',
     12,
     '实战：把链路追踪与回放接入 L68 的多 Agent 系统',
-    44,
+    3,
     ['L75', 'L68'],
     ['trace-integration'],
     [

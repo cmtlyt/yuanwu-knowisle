@@ -7,7 +7,7 @@ export const L61 = withKind(
     'L61',
     9,
     '动态重规划：当现实偏离计划',
-    25,
+    2,
     ['L60'],
     ['replanning'],
     [
