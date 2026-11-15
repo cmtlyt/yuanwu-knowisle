@@ -126,6 +126,8 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 - 学情数据只存 localStorage 且可导出；按课程隔离 storage key，导入时校验版本字段并拒绝非法备份。
 - 移动优先：≤780px 底部标签栏 + 抽屉导航，图示 / 代码块 / 表格各自独立横滑，触控目标 ≥40px，输入框 16px，处理刘海屏安全区。
 - **课程正文用 Markdown-in-TS 书写（00053）**：课时文件 `lNN.ts` 的 `L()` **第 9 个参数 `md` 为必填反引号模板字符串**，正文用 Markdown 编写；代码块用 ```` ``` title="…" note="…" ```` 传标题 / 注记，提示框用零依赖 `:::warn / :::deep / :::tip` 容器（复用全局 `.callout.*` CSS）。`quiz` / `terms` / `pitfalls` / `widget` **仍保持结构化**，不可塞进 `md`（否则破坏题型校验与学情统计）。正文仍写在 TS 文件内、由类型化数据驱动，项目不使用 Nuxt Content。
+- **课型标注必须过 H1/H2（00058 起强制）**：`Lesson.kind` 是课时的**身份**，判定只看「交付理解还是可运行物」——`theory` 的 `goals` 只该出现「理解 / 掌握 / 认识」，`practice` 必须含实现类动词（实现 / 写出 / 搭 / 构建 / 跑通 / 调通 / 部署 / 编码 / 接入 / 从零 / 埋点 / 打通 / 串成 / 产出）。`content-gate.mjs` 两条硬校验会直接失败：标题含「实战」禁标 `theory` / `overview`；标 `practice` 必须含实现动词。**判定不看当前正文字数**（体量是待办、课型是身份），改标后必须重跑 `--update-baseline`，并同步 `.workbuddy/skills/course-builder/references/data-model.md` 的判定表。审计记录见 `docs/00058-lesson-kind-audit/`。
+- **Markdown 新语法必须在 `:::tone` 容器内单独验证（00062 起强制）**：容器正文走独立渲染出口（`markdown.ts` 的 `callout_open`），不经过顶层解析，历史上因此压平过表格 / 列表 / 多段落（`renderInline` 只解行内语法）。新增任何块级语法支持（表格、task list、引用、嵌套结构）时，除了写在正文里，必须再写进一个 `:::deep` 里跑一遍渲染，确认 `<table>` / `<ul>` 真的生成。同源教训：00058 的围栏 info-string 反引号问题也是「内容层用了语法、渲染层没有对应路径」。
 
 ## 8. 项目级 Skill 与仓库范围
 

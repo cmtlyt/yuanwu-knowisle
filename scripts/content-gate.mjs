@@ -133,6 +133,62 @@ for (const dir of dirs) {
     failed++
   }
 
+  /* ---- 课型自洽硬校验（00058）：课型是「身份」，不是「体量」 ----
+   * H1：标题写「实战」就不能标成纯知识课——标题已承诺交付可运行物，标 theory / overview 会让
+   *     阈值、题目策略与学习路径同时失真（00058 审计中这类错标共 9 节）。
+   * H2：标 practice 就必须有「可运行物」的学习目标——goals 全是「理解 / 掌握 / 认识」说明这是
+   *     知识课冒充实战课：它会把下限抬到 1800 字 + 1500 字符代码，诱导后续重写为了过闸门
+   *     而堆与主题无关的示例（00058 审计中这类错标共 39 节）。
+   * 两条判据都只看标题与 goals，**不看当前正文字数**：体量是待办、课型是身份，
+   * 用体量反推课型会把「还没重写」误判成「标错了」。
+   */
+  const IMPL_VERB = /实现|写出|写一个|搭|搭建|构建|跑通|调通|部署|编码|改造|接入|从零|埋点|打通|串成|产出/
+  const fakeTheory = C.LESSONS.filter(
+    (l) => (l.kind === 'theory' || l.kind === 'overview') && String(l.title).includes('实战'),
+  )
+  if (fakeTheory.length > 0) {
+    console.log(
+      '  ✗ 标题含「实战」的课不能标 theory / overview（标题承诺了可运行物，应标 practice / ' +
+        'framework / scenario / capstone）：' +
+        fakeTheory.map((l) => l.id + '=' + l.kind).join('、'),
+    )
+    failed++
+  }
+  const fakePractice = C.LESSONS.filter(
+    (l) => l.kind === 'practice' && !IMPL_VERB.test((l.goals || []).join(' ')),
+  )
+  if (fakePractice.length > 0) {
+    console.log(
+      '  ✗ 标 practice 的课，goals 必须含实现类动词（全是「理解 / 掌握」说明是知识课，应标 ' +
+        'theory）：' +
+        fakePractice.map((l) => l.id).join('、'),
+    )
+    failed++
+  }
+
+  /* ---- 围栏 info-string 禁含反引号（00058 审计附带发现）----
+   * CommonMark 规定：反引号围栏的 info-string 里不能再出现反引号。一旦出现，**整行不会被识别
+   * 成代码块**——代码被当段落渲染，紧跟其后的 `:::` 容器与标题全部错位，页面看起来像「正文里
+   * 混进了 md 源码」。00058 审计时全仓有 24 节命中（历史迁移留下的 `note="… `x` …"` 写法），
+   * 数据已批量改为中文引号；这条校验负责守住，别让重写时再写回去。
+   */
+  const badFence = []
+  for (const l of C.LESSONS) {
+    String(l.md || '')
+      .split('\n')
+      .forEach((line, i) => {
+        const m = line.match(/^ {0,3}(`{3,})(.*)$/)
+        if (m && m[2].includes('`')) badFence.push(l.id + ' 第 ' + (i + 1) + ' 行')
+      })
+  }
+  if (badFence.length > 0) {
+    console.log(
+      '  ✗ 代码围栏的 info（title= / note=）里不能出现反引号，否则整块不会被识别成代码块（改用「」）：' +
+        badFence.join('、'),
+    )
+    failed++
+  }
+
   /* ---- overview 课型护栏（按整门课校验，不受 --only 影响）---- */
   const navLessons = C.LESSONS.filter(isNavLesson)
   if (navLessons.length > 0) {

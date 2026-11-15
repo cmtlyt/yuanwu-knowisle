@@ -230,6 +230,7 @@ export const CONCEPTS: Concept[] = [
     prereqs: ['mastra-core', 'fc-runtime'],
   },
   { id: 'mastra-mcp', name: 'Mastra MCP', stage: 19, weight: 2, prereqs: ['mastra-core', 'mcp-sdk'] },
+  { id: 'mastra-obs', name: 'Mastra 可观测', stage: 19, weight: 2, prereqs: ['mastra-core', 'tracing'] },
 
   // —— 阶段 20 · Vercel AI SDK ——
   { id: 'ai-sdk-core', name: 'AI SDK 核心', stage: 20, weight: 2, prereqs: ['framework-dimensions'] },

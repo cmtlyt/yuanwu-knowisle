@@ -30,7 +30,7 @@ const ok = (cond, label, extra = '') => {
   }
 }
 
-console.log('\n[1/2] contentStats 边界口径')
+console.log('\n[1/3] contentStats 边界口径')
 const CASES = [
   [
     '纯段落',
@@ -70,7 +70,7 @@ for (const [label, md, expect] of CASES) {
   )
 }
 
-console.log('\n[2/2] 真实课程抽样（容器正文必须计入）')
+console.log('\n[2/3] 真实课程抽样（容器正文必须计入）')
 const dirs = fs
   .readdirSync(path.resolve(HERE, '../app/data'), { withFileTypes: true })
   .filter((d) => d.isDirectory() && d.name.endsWith('-course'))
@@ -95,10 +95,48 @@ for (const dir of dirs) {
   ok(bad.length === 0, dir + '（' + course.LESSONS.length + ' 课）', bad.slice(0, 3).join('；'))
 }
 
+console.log('\n[3/3] 容器内块级内容渲染（00062）')
+const { renderMarkdown } = await import('../app/lib/markdown.ts')
+const RENDER_CASES = [
+  ['容器内表格', ':::deep\n### 标题\n\n| a | b |\n|---|---|\n| 1 | 2 |\n:::', '<table>'],
+  ['容器内无序列表', ':::warn\n### 标题\n\n- 一\n- 二\n:::', '<ul>'],
+  ['容器内有序列表', ':::deep\n### 标题\n\n1. 一\n2. 二\n:::', '<ol>'],
+  ['容器内多段落', ':::tip\n### 标题\n\n第一段\n\n第二段\n:::', '<p>第二段</p>'],
+]
+for (const [label, md, needle] of RENDER_CASES) {
+  const html = renderMarkdown(md)
+  ok(html.includes(needle), label, html.includes(needle) ? '' : '未生成 ' + needle)
+}
+
+// 真实课程：容器里写了表格行，就必须真的渲染出 <table>（防止再退回 renderInline）
+let containerTables = 0
+const badTables = []
+for (const dir of dirs) {
+  const entry = path.resolve(HERE, '../app/data', dir, 'index.ts')
+  if (!fs.existsSync(entry)) continue
+  const mod = await import(pathToFileURL(entry).href)
+  const course = [mod.default, ...Object.values(mod)].find((v) => v && Array.isArray(v.LESSONS))
+  if (!course) continue
+  for (const l of course.LESSONS) {
+    const re = /:::[ \t]*[\w-]+[ \t]*\n([\s\S]*?):::[ \t]*(?=\n|$)/g
+    let m
+    while ((m = re.exec(l.md))) {
+      if (!/^\|.*\|$/m.test(m[1])) continue
+      containerTables++
+      if (!renderMarkdown(l.md).includes('<table>')) badTables.push(l.id)
+    }
+  }
+}
+ok(
+  badTables.length === 0,
+  '真实课程容器内表格（' + containerTables + ' 处）',
+  badTables.slice(0, 3).join('；'),
+)
+
 console.log(
   '\n' +
     (failed === 0
-      ? '✅ contentStats 口径自检通过（抽样 ' + totalLessons + ' 课，无容器正文丢失）'
+      ? '✅ contentStats 口径与容器渲染自检通过（抽样 ' + totalLessons + ' 课，无容器正文丢失）'
       : '❌ contentStats 口径自检失败：' + failed + ' 项'),
 )
 process.exit(failed === 0 ? 0 : 1)

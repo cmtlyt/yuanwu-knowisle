@@ -214,6 +214,11 @@ html[data-theme="dark"] .code-block { background: #0c111b; }
 .callout.warn { background: var(--warn-soft); border-color: rgba(217, 134, 42, .22); }
 .callout.deep { background: var(--primary-soft); border-color: rgba(75, 111, 224, .25); }
 .callout p { margin: 0; }
+.callout p + p { margin-top: 8px; }
+.callout ul, .callout ol { margin: 6px 0 0; padding-left: 20px; }
+.callout li + li { margin-top: 4px; }
+.callout table { margin-top: 8px; font-size: 12.5px; }
+.callout .code-block { margin-top: 8px; font-size: 12px; }
 .list-block ul { margin: 0; padding-left: 20px; }
 .list-block li { margin-bottom: 6px; }
 .terms { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 10px; }

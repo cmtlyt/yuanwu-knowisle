@@ -102,16 +102,22 @@ function calloutPlugin(mdInstance: MdInstance): void {
   mdInstance.renderer.rules.callout_open = (tokens: Token[], idx: number) => {
     const meta = tokens[idx]!.meta as unknown as { tone: string; inner: string }
     const tone = meta.tone
-    const lines = (meta.inner || '').split('\n').filter((l) => l.trim() !== '')
+    // 首尾空行去掉，但**中间的保留**：段间空行是段落分隔，filter(Boolean) 会把多段落压成一段
+    const raw = (meta.inner || '').split('\n')
+    while (raw.length && raw[0]!.trim() === '') raw.shift()
+    while (raw.length && raw[raw.length - 1]!.trim() === '') raw.pop()
     let title = ''
     let body = ''
-    if (lines.length) {
-      title = lines[0]!.replace(/^#{1,6}\s*/, '').trim()
-      body = lines.slice(1).join('\n').trim()
+    if (raw.length) {
+      title = raw[0]!.replace(/^#{1,6}\s*/, '').trim()
+      body = raw.slice(1).join('\n').trim()
     }
     const icon = tone === 'warn' ? '⚠️' : tone === 'deep' ? '🔬' : '💡'
     const titleHtml = mdInstance.renderInline(title)
-    const bodyHtml = body ? `<p>${mdInstance.renderInline(body)}</p>` : ''
+    // 正文按**块级**渲染：早期这里用 renderInline，导致容器里的表格退化成一行管道符、
+    // 列表挤成一段、多个段落被合并（00060 在 L25 的对照表上撞到）。块级渲染后
+    // 表格 / 列表 / 多段落 / 代码块都能正常展开，单段正文的输出与之前一致。
+    const bodyHtml = body ? mdInstance.render(normalizeFenceInfo(body)) : ''
     return `<div class="callout ${tone}"><b>${icon} ${titleHtml}</b>${bodyHtml}</div>\n`
   }
   mdInstance.renderer.rules.callout_close = () => ''
@@ -119,8 +125,27 @@ function calloutPlugin(mdInstance: MdInstance): void {
 
 calloutPlugin(md)
 
+/**
+ * CommonMark 规定反引号围栏的 info-string 里不能再出现反引号：一旦出现，整行不会被识别为代码块，
+ * 于是代码被当段落渲染、后面的 `:::` 容器与标题全部错位（00058 审计发现 24 节历史数据有这问题）。
+ *
+ * 数据侧已批量把 info 里的行内反引号换成中文引号（`「」`），这里再做一层兜底：title / note
+ * 只输出为纯文本（`code-title` / `code-note`），换引号视觉等价，但围栏能正常生效。
+ */
+function normalizeFenceInfo(src: string): string {
+  return src.replace(
+    /^( {0,3})(`{3,})(.*)$/gm,
+    (line: string, indent: string, fence: string, info: string) => {
+      if (!info.includes('`')) return line
+      let n = 0
+      const fixed = info.replace(/`/g, () => (++n % 2 === 1 ? '「' : '」'))
+      return indent + fence + fixed
+    },
+  )
+}
+
 /** 渲染 Markdown 源为 HTML（html:false，原始 HTML 已被中和；客户端调用方自行 DOMPurify）。 */
 export function renderMarkdown(src: string): string {
   if (!src) return ''
-  return md.render(src)
+  return md.render(normalizeFenceInfo(src))
 }

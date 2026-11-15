@@ -7,317 +7,409 @@ export const L42 = withKind(
     'L42',
     5,
     '实战：不依赖框架实现 Function Calling 运行时',
-    4,
+    3,
     ['L39', 'L41'],
     ['fc-runtime'],
     [
-      '写出可直接运行的 FC 运行时（schema 生成 → 解码 → 并行执行 → 回填）',
-      '用一份 zod schema 同时承担「给模型看」与「校验入参」两个职责',
-      '把未知工具 / 参数非法 / 工具抛错三类失败统一转成 tool 消息回填',
-      '用假 client 对运行时做确定性验证，不依赖真实模型',
+      '把工具注册表、协议适配、并行执行、边界检查组装成完整运行时',
+      '用适配器隔离 provider 差异，使换模型不改业务代码',
+      '写出覆盖「未命中工具 / 参数非法 / 部分失败」的验收断言',
     ],
     `
-### 需求：运行时必须守住的四条不变量
+### 先把「框架替你做了什么」列出来
 
-框架替你封装的 FC（Function Calling）能力，本质上只是一段几十行的循环。但要写得能用，必须先说清它承诺什么——这四条不变量是后面所有代码的验收标准：
+L36 写了运行时骨架，L38 讲了协议，L39 讲了 schema，L40 讲了边界，L41 讲了并行。现在要把它们组装起来——而组装之前，值得先列一张清单：**一个 Function Calling 框架到底替你做了什么**。
 
-1. **单一事实来源**：工具的参数定义只能有一份。给模型看的 JSON Schema 与运行时的入参校验必须从同一份定义派生，否则两者漂移时会出现「模型按 A 传参、校验按 B 拒绝」的诡异 bug。
-2. **失败即消息**：未知工具、参数非法、工具内部抛错，都不允许冒泡成进程异常，必须转成 \`role: 'tool'\` 消息回填给模型，让它有机会自我修正。
-3. **不丢信息**：模型可能在同一轮里既返回文本又返回 tool_calls，两者都要原样进上下文。
-4. **有界终止**：必须有步数上限，否则工具之间可以互相触发形成死循环。
+| 职责 | 框架里的名字 | 你手写要做什么 |
+|---|---|---|
+| 工具注册 | \`tool()\` / \`defineTool\` | 一个 Map + 类型定义 |
+| schema → 声明 | 自动转换 | 手写 JSON Schema（L39） |
+| provider 适配 | 内置多模型支持 | 适配器接口 + 各 provider 的字段映射 |
+| 调用循环 | \`maxSteps\` 循环 | L36 的主循环 |
+| 参数校验 | 常带 zod | 运行时校验函数 |
+| 并行与部分失败 | 有的支持、有的没有 | L41 的并发池 |
+| 边界（权限/超时） | 基本不管 | L40 的 guard |
 
-第 4 条最容易被忽略。开发期「模型总是很快就收敛」会让人误以为不需要上限，而线上的死循环一旦发生，就是按分钟计费的账单事故。
+最后一行是关键：**框架几乎都不管安全边界**。它们擅长「让调用跑通」，不擅长「让调用别乱跑」。所以手写一遍的价值不只是「理解框架」，而是拿到一个能自己加边界的位置。
 
-### 接口：运行时只依赖三个最小契约
+### 三个模块，一条边界
 
-先定接口再写实现，好处是运行时不绑定任何 SDK。下面三个类型就是全部依赖面：工具定义、对话客户端、消息。把 \`ChatClient\` 做成接口，意味着测试时可以用假 client 替换真实模型，运行时的每条分支都能被确定性验证。
+整套实现分三层，边界很清楚：
 
-\`\`\`ts title="① 三个最小契约" note="ToolDef.schema 是唯一事实来源：既派生出给模型看的 JSON Schema，又用来校验模型返回的入参。"
-import type { ZodType } from 'zod'
+\`\`\`
+provider adapter   ← 只管「怎么和某家模型说话」
+runtime loop       ← 只管「一轮怎么走」
+tool layer         ← 只管「工具怎么定义与执行」
+\`\`\`
 
-export interface ToolDef<A = any, R = unknown> {
+换 provider 只动第一层，加工具只动第三层，改循环策略只动第二层。这条分层的收益在真实项目里很直接：绝大多数「换模型」的需求，最后都变成改一个适配器文件。
+
+### 工具层：注册表 + 校验
+
+工具定义要同时承载三样东西：给模型看的 schema、给执行用的函数、给安全用的元数据。
+
+\`\`\`ts title="tool layer：一份定义，三个消费者" note="schema 给模型，run 给执行，risk/timeout 给边界——三者写在同一个对象里，避免「声明与实现脱节」。"
+export type Risk = 'read' | 'write' | 'destructive'
+
+export interface ToolDef<A = Record<string, unknown>> {
   name: string
   description: string
-  schema: ZodType<A>          // 唯一事实来源
-  run: (args: A) => Promise<R>
+  schema: {
+    type: 'object'
+    properties: Record<string, { type: string; description?: string; enum?: string[] }>
+    required?: string[]
+  }
+  risk: Risk
+  timeoutMs?: number
+  run: (args: A, ctx: { signal: AbortSignal; userId: string }) => Promise<unknown>
 }
 
-export interface ChatClient {
-  chat(req: { messages: Msg[]; tools: ToolSchema[] }): Promise<{ message: AssistantMsg }>
+export class ToolRegistry {
+  private map = new Map<string, ToolDef>()
+
+  add(def: ToolDef) {
+    if (this.map.has(def.name)) throw new Error('工具重名：' + def.name)
+    this.map.set(def.name, def as ToolDef)
+    return this
+  }
+
+  get(name: string) {
+    return this.map.get(name)
+  }
+
+  /** 转成 provider 需要的 tools 数组（OpenAI 风格） */
+  toSpec() {
+    return [...this.map.values()].map((d) => ({
+      type: 'function' as const,
+      function: { name: d.name, description: d.description, parameters: d.schema },
+    }))
+  }
 }
 
-export type Msg =
-  | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content?: string; tool_calls?: ToolCall[] }
-  | { role: 'tool'; tool_call_id: string; content: string }
+/** 运行时校验：schema 只影响生成倾向，不提供保证（L39） */
+export function validateArgs(
+  def: ToolDef,
+  args: Record<string, unknown>,
+): { ok: true } | { ok: false; error: string } {
+  const missing = (def.schema.required ?? []).filter((k) => args[k] === undefined || args[k] === '')
+  if (missing.length) return { ok: false, error: '缺少必填参数：' + missing.join(', ') }
+
+  for (const [key, spec] of Object.entries(def.schema.properties)) {
+    const v = args[key]
+    if (v === undefined) continue
+    if (spec.enum && !spec.enum.includes(String(v))) {
+      return { ok: false, error: \`参数 \${key} 只能是 \${spec.enum.join(' / ')}\` }
+    }
+    if (spec.type === 'number' && typeof v !== 'number') {
+      return { ok: false, error: \`参数 \${key} 必须是数字\` }
+    }
+    if (spec.type === 'string' && typeof v !== 'string') {
+      return { ok: false, error: \`参数 \${key} 必须是字符串\` }
+    }
+  }
+  return { ok: true }
+}
 \`\`\`
 
-### 步骤一：从 zod 派生 tool schema
+\`add\` 里的重名检查不是洁癖：工具重名时后注册的会覆盖先注册的，而模型仍然按旧 schema 填参数，症状是「参数莫名不匹配」。让它在启动时就炸，比线上排查便宜得多。
 
-不变量 1 的落地就是这一行——\`z.toJSONSchema(t.schema)\`。手写两份定义（一份 JSON Schema 给模型、一份校验函数）在工具数量一多必然漂移，而漂移的表现往往不是报错，而是「模型永远传不对某个可选字段」，排查成本极高。
+### 适配层：把 provider 差异吃掉
 
-\`\`\`ts title="② schema 生成：反射而非手抄" note="zod v4 内置 toJSONSchema；zod v3 需 zod-to-json-schema 之类的适配层。"
-import { z } from 'zod'
+不同 provider 的字段名有差异（\`tool_calls\` vs \`function_call\`、\`tool_call_id\` vs \`id\`），适配器负责统一成内部结构。
 
-export function toToolSchemas(tools: ToolDef[]): ToolSchema[] {
-  return tools.map((t) => ({
-    type: 'function' as const,
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: z.toJSONSchema(t.schema),
+\`\`\`ts title="adapter：内部只认一种形状" note="适配器不做业务判断，只做形状转换——这条约束让它容易测、也容易加新 provider。"
+export interface ModelMsg {
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string | null
+  toolCalls?: { id: string; name: string; args: string }[]
+  toolCallId?: string
+}
+
+export interface ChatResult {
+  text: string | null
+  toolCalls: { id: string; name: string; args: string }[]
+  finishReason: 'stop' | 'tool_calls' | 'length'
+  tokens: number
+}
+
+export interface Provider {
+  chat(input: { messages: ModelMsg[]; tools: unknown[] }): Promise<ChatResult>
+}
+\`\`\`
+
+这个接口只有三个字段是必须的：\`text\`、\`toolCalls\`、\`finishReason\`。所有 provider 都能映射到它，而运行时只依赖它——这就是「换模型改一个文件」的全部秘密。
+
+### 主循环：只读并行、写串行
+
+把 L36 的循环、L41 的并发池、L40 的边界拼在一起，得到最终形态：
+
+\`\`\`ts title="fc-runtime：一轮的完整处理" note="注意 reads 并行、writes 串行的分支——这是 L41 的结论落地。"
+export async function step(
+  msgs: ModelMsg[],
+  provider: Provider,
+  registry: ToolRegistry,
+  ctx: { signal: AbortSignal; userId: string; env: 'dev' | 'prod'; approved: Set<string>; writesLeft: number },
+): Promise<{ done: boolean; msgs: ModelMsg[]; tokens: number }> {
+  const res = await provider.chat({ messages: msgs, tools: registry.toSpec() })
+  const next: ModelMsg[] = [...msgs, { role: 'assistant', content: res.text, toolCalls: res.toolCalls }]
+
+  if (res.finishReason !== 'tool_calls' || res.toolCalls.length === 0) {
+    return { done: true, msgs: next, tokens: res.tokens }
+  }
+
+  const reads = res.toolCalls.filter((c) => registry.get(c.name)?.risk === 'read')
+  const writes = res.toolCalls.filter((c) => registry.get(c.name)?.risk !== 'read')
+
+  const runOne = async (c: { id: string; name: string; args: string }) => {
+    const def = registry.get(c.name)
+    if (!def) return { id: c.id, text: \`ERROR 未知工具 \${c.name}\` }
+
+    let parsed: Record<string, unknown>
+    try {
+      parsed = JSON.parse(c.args || '{}')
+    } catch {
+      return { id: c.id, text: 'ERROR 参数不是合法 JSON' }
+    }
+
+    const v = validateArgs(def, parsed)
+    if (!v.ok) return { id: c.id, text: 'ERROR ' + v.error }
+
+    if (def.risk === 'destructive' && ctx.env === 'prod' && !ctx.approved.has(c.name)) {
+      return { id: c.id, text: 'ERROR 需要人工确认：' + c.name }
+    }
+
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), def.timeoutMs ?? 10_000)
+    try {
+      const data = await def.run(parsed, { signal: ctrl.signal, userId: ctx.userId })
+      return { id: c.id, text: 'OK\\n' + JSON.stringify(data) }
+    } catch (e) {
+      return { id: c.id, text: 'ERROR ' + (e as Error).message }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  // 只读并行（并发上限 4），写操作按顺序串行
+  const readOut = await Promise.all(reads.map(runOne))
+  const writeOut: { id: string; text: string }[] = []
+  for (const w of writes) {
+    if (ctx.writesLeft <= 0) {
+      writeOut.push({ id: w.id, text: 'ERROR 写操作配额已用尽' })
+      continue
+    }
+    ctx.writesLeft -= 1
+    writeOut.push(await runOne(w))
+  }
+
+  const byId = new Map([...readOut, ...writeOut].map((r) => [r.id, r.text]))
+  for (const c of res.toolCalls) {
+    next.push({ role: 'tool', content: byId.get(c.id) ?? 'ERROR 结果缺失', toolCallId: c.id })
+  }
+  return { done: false, msgs: next, tokens: res.tokens }
+}
+\`\`\`
+
+两个细节容易忽略：
+
+**结果回填按 \`res.toolCalls\` 的原始顺序，而不是完成顺序。** 因为 \`Promise.all\` 的结果虽然有序，但读写分两组跑完后，你需要一个 \`byId\` 映射重新对齐。直接按执行顺序 push，会让模型收到顺序错乱的结果。
+
+**\`writesLeft\` 在循环里递减，不在 \`runOne\` 里。** 因为写操作是串行的，递减点放在「串行循环」这一层，配额才不会被并发穿透。
+
+### 验收断言：四条覆盖协议层
+
+协议层的测试与业务无关，四条断言就能钉住主要失效模式：
+
+| # | 构造 | 期望 |
+|---|---|---|
+| 1 | 模型返回未声明的工具名 | 回填 \`ERROR 未知工具\`，循环继续 |
+| 2 | 模型返回 \`{"limit":"ten"}\`（类型错） | 回填「必须是数字」，不执行 |
+| 3 | 两个只读调用，一个抛错 | 另一个仍返回 OK，两条 tool 消息都在 |
+| 4 | 两个写调用，配额剩 1 | 一条成功、一条「配额已用尽」 |
+
+\`\`\`ts title="用假 provider 做协议断言" note="假 provider 只返回预设的 toolCalls，不需要真实模型——这让协议测试变成纯单元测试。"
+const registry = new ToolRegistry()
+  .add({
+    name: 'ok',
+    description: 'always ok',
+    schema: { type: 'object', properties: {} },
+    risk: 'read',
+    run: async () => ({ v: 1 }),
+  })
+  .add({
+    name: 'boom',
+    description: 'always throws',
+    schema: { type: 'object', properties: {} },
+    risk: 'read',
+    run: async () => {
+      throw new Error('炸了')
     },
-  }))
-}
-\`\`\`
+  })
 
-### 步骤二：主循环——唯一的装配点
-
-循环只做四件事，且顺序不可调换：**装配请求 → 追加 assistant 消息 → 执行 tool_calls → 追加 tool 消息**。这里有个容易被「优化」掉的细节：assistant 消息必须原样 \`push\` 进上下文，包括它的 \`content\` 字段。很多实现在有 tool_calls 时只保存 tool_calls、丢掉同时返回的文本，导致模型下一轮「忘了自己刚说过什么」，表现为反复解释同一件事。
-
-\`\`\`ts title="③ 主循环：有界、可失败、不吞消息" note="终止条件只有两个：模型不再要工具，或撞上 maxSteps。后者抛错而不是静默返回，避免把死循环伪装成正常结果。"
-export async function runWithTools(
-  client: ChatClient,
-  tools: ToolDef[],
-  prompt: string,
-  opt: { maxSteps?: number; system?: string } = {},
-) {
-  const maxSteps = opt.maxSteps ?? 10
-  const byName = new Map(tools.map((t) => [t.name, t]))
-  const messages: Msg[] = [
-    { role: 'system', content: opt.system ?? DEFAULT_SYSTEM },
-    { role: 'user', content: prompt },
-  ]
-
-  for (let step = 0; step < maxSteps; step++) {
-    const { message } = await client.chat({ messages, tools: toToolSchemas(tools) })
-    messages.push(message) // 原样保留：content 与 tool_calls 都不丢
-
-    const calls = message.tool_calls ?? []
-    if (calls.length === 0) return { text: message.content ?? '', steps: step + 1 }
-
-    const results = await Promise.all(calls.map((c) => execOne(c, byName)))
-    messages.push(...results)
-  }
-  throw new Error('E_MAX_STEPS: 超出最大步数 ' + maxSteps + '，疑似工具死循环')
-}
-\`\`\`
-
-### 步骤三：单次调用——三类失败都变成消息
-
-\`execOne\` 是整个运行时最有价值的部分。它把三种失败**全部降级成消息**：未知工具名、参数不合法、工具执行抛错。这样模型拿到的不是异常栈，而是一段可读的失败原因，下一轮就能自己纠正参数或换工具。反过来，如果在这里 \`throw\`，一次模型幻觉就能让整个请求 500。
-
-\`\`\`ts title="④ 三类失败统一降级" note="JSON.parse 也要包进 try：模型确实会产出被截断的 arguments 字符串。"
-async function execOne(call: ToolCall, byName: Map<string, ToolDef>): Promise<Msg> {
-  const tool = byName.get(call.function.name)
-  if (!tool) return reply(call.id, { error: 'UNKNOWN_TOOL', got: call.function.name })
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(call.function.arguments || '{}')
-  } catch {
-    return reply(call.id, { error: 'BAD_ARGS', reason: 'arguments 不是合法 JSON' })
-  }
-
-  const parsed = tool.schema.safeParse(raw)
-  if (!parsed.success) {
-    return reply(call.id, { error: 'BAD_ARGS', issues: parsed.error.issues })
-  }
-
-  try {
-    return reply(call.id, await tool.run(parsed.data))
-  } catch (e) {
-    return reply(call.id, { error: 'TOOL_FAILED', message: (e as Error).message })
-  }
-}
-
-const reply = (id: string, data: unknown): Msg => ({
-  role: 'tool',
-  tool_call_id: id,
-  content: JSON.stringify(data),
-})
-\`\`\`
-
-### 步骤四：并发上限、超时与结果截断
-
-主循环里那行 \`Promise.all\` 在真实产品里不够用，三个缺口会先后暴露：
-
-1. **并行风暴**：模型一次返回 20 个 tool_calls，全部同时打向一个只允许 5 并发的下游 API，触发限流后所有调用一起失败。必须给并发数设上限，超出的排队而不是丢弃。
-2. **单工具挂死**：某个 HTTP 工具没设超时，一次卡 30 秒，整个 Agent 一起等。运行时必须给每次调用加独立超时，并按「失败即消息」处理——超时和参数非法是同一类问题，都不该冒泡成进程异常。
-3. **结果撑爆上下文**：查日志的工具返回 2 MB 文本，几轮就把窗口塞满，后续模型调用直接超长报错。
-
-这三个缺口对应三段防御，全部加在 \`execOne\` 外层，不动主循环结构——这是先定「三个最小契约」的回报：加防护不需要改协议。并发上限的取值也不该拍脑袋：取下游限流阈值的一半，给人工操作与其他服务共用配额留余量，并且允许环境变量覆盖，因为开发、预发、生产的配额从来不一样。
-
-\`\`\`ts title="⑥ 并发闸门 + 单调用超时 + 结果截断" note="pLimit 让 20 个调用排队而不是同时打出去；withTimeout 把超时降级成 tool 消息；truncate 保证单条结果不超预算。"
-import pLimit from 'p-limit'
-
-const limit = pLimit(5) // 同一轮内最多 5 个并发
-
-const withTimeout = <T>(p: Promise<T>, ms: number) =>
-  Promise.race([p, new Promise<never>((_, rej) => setTimeout(() => rej(new Error('E_TIMEOUT')), ms))])
-
-export function truncate(s: string, max = 8000) {
-  if (s.length <= max) return s
-  const head = s.slice(0, max * 0.7)
-  const tail = s.slice(-max * 0.3) // 保留尾部：错误栈与结论通常在最后
-  return head + '\\n…[已截断 ' + (s.length - max) + ' 字符]…\\n' + tail
-}
-\`\`\`
-
-主循环只需把 \`Promise.all\` 换成带闸门与兜底的版本：
-
-\`\`\`ts title="⑦ 主循环接上防御" note="每层都兜住异常，保证「任何单个工具的失败都只影响自己的那条 tool 消息」。"
-const results = await Promise.all(
-  calls.map((c) =>
-    limit(() =>
-      withTimeout(execOne(c, byName), 15_000).catch((e) =>
-        reply(c.id, { error: 'E_TIMEOUT', message: (e as Error).message }),
-      ),
-    ),
-  ),
-)
-\`\`\`
-
-单条截断还不够，还要有**一轮的总预算**：累计 tool 结果字符超过阈值时，把后续结果折叠成一句提示，让模型自己缩窄查询范围。按轮算而不是按会话算，是因为上下文窗口的压力来自「这一轮塞进去多少」，历史消息可以靠摘要压缩，而同一轮的批量结果没有别的出口。
-
-还有一种更隐蔽的超长来源：结构化结果单条不大，但条数极多，比如一次查到 500 行日志。这类结果不该按字符截断，而要在工具内部就做分页，并把「共 500 条，返回前 50 条」写进返回值——模型必须知道自己看到的是不是全部，否则会把「只看到 50 条」当成「只有 50 条」，据此得出错误结论。
-
-除了预算，还有一个隐性缺口：**重复调用**。模型可能连续三轮调同一个工具、同样的参数，每轮都成功返回同一结果——这不是死循环，\`maxSteps\` 拦不住，却把本该 3 轮的交互拖成 10 轮。检测方式是按「工具名 + 参数哈希」记最近几次调用，命中就给结果标上 \`already_called\`，提示模型「刚刚做过，结果在上文」。这条规则不能做成硬拒绝：查实时指标的工具确实需要重复调用，硬拒绝会让 Agent 丧失时效判断。
-
-### 步骤五：用假 client 做确定性验证
-
-不接真实模型也能验证运行时——\`ChatClient\` 是接口，写一个按预设剧本返回的假 client 就够了。下面三条路径分别覆盖「正常闭环」「参数非法被回填」「死循环被上限拦住」。这类测试跑在 CI 里只需要毫秒，而且永不 flaky。
-
-\`\`\`ts title="⑤ 三条路径的验证脚本" note="跑法：node --experimental-strip-types verify.ts。断言失败即抛错，可直接进 CI。"
-import assert from 'node:assert/strict'
-import { z } from 'zod'
-
-const add: ToolDef = {
-  name: 'add',
-  description: '两数相加',
-  schema: z.object({ a: z.number(), b: z.number() }),
-  run: async ({ a, b }) => ({ sum: a + b }),
-}
-
-const scripted = (msgs: AssistantMsg[]) => ({ chat: async () => ({ message: msgs.shift()! }) })
-const callAdd = (args: string): AssistantMsg => ({
-  role: 'assistant',
-  tool_calls: [{ id: 'c1', function: { name: 'add', arguments: args } }],
+const fake = (calls: { id: string; name: string; args: string }[]): Provider => ({
+  chat: async () => ({ text: null, toolCalls: calls, finishReason: 'tool_calls', tokens: 5 }),
 })
 
-// 1) 正常闭环：调一次工具 → 回填 → 给最终答复
-const ok = await runWithTools(scripted([callAdd('{"a":1,"b":2}'), { role: 'assistant', content: '3' }]), [add], '1+2?')
-assert.equal(ok.text, '3')
-assert.equal(ok.steps, 2)
+const ctx = { signal: new AbortController().signal, userId: 'u1', env: 'dev' as const, approved: new Set<string>(), writesLeft: 10 }
 
-// 2) 参数非法：不抛异常，而是把 BAD_ARGS 回填给模型
-const bad = await runWithTools(scripted([callAdd('{"a":"x","b":2}'), { role: 'assistant', content: '参数错了' }]), [add], 'q')
-assert.equal(bad.text, '参数错了')
+// 断言 3：部分失败不影响另一个
+const r = await step([{ role: 'user', content: 'go' }], fake([
+  { id: '1', name: 'ok', args: '{}' },
+  { id: '2', name: 'boom', args: '{}' },
+]), registry, ctx)
 
-// 3) 死循环：模型一直要调工具 → 撞上限抛 E_MAX_STEPS
-await assert.rejects(
-  () => runWithTools(scripted(Array.from({ length: 20 }, () => callAdd('{"a":1,"b":2}'))), [add], 'q', { maxSteps: 3 }),
-  /E_MAX_STEPS/,
-)
+const tools = r.msgs.filter((m) => m.role === 'tool')
+console.assert(tools.length === 2, '两个工具结果都要回填')
+console.assert(tools[0]!.content!.startsWith('OK'), '成功的仍然成功')
+console.assert(tools[1]!.content!.startsWith('ERROR'), '失败的标注失败')
 \`\`\`
 
-### 边界：这套实现不解决什么
+第三条断言是这套实现的核心价值：**部分失败不影响其余结果**。如果用 \`Promise.all\` 写，这条断言会在第一个 \`boom\` 处抛错，整个 \`step\` 失败——而正确行为是「模型看到一成一败，自己决定下一步」。
 
-- **跨轮依赖**：\`Promise.all\` 假设同一轮内的调用互不依赖。若 B 需要 A 的结果，模型应该在下一轮再发起 B，运行时不该替它猜依赖顺序。
-- **非幂等副作用**：并行的写操作（下单、转账）必须由工具自身做幂等键，运行时无法保证。
-- **超大结果**：工具返回整个表会被塞进上下文，几轮就撑爆窗口。应在工具内做截断 + 分页。
-- **流式**：真实产品要边生成边展示，需要在 \`chat\` 层做流式解析，循环结构不变。
+### 加流式要动哪一层
 
-:::warn
+手写实现的一个隐性好处是：加流式（L37）时你清楚知道该改哪里。
 
-### 三个线上真踩过的坑
+按上面的分层，流式只影响两处：**适配层**多一个 \`chatStream\` 方法（把 provider 的回调转成 \`AsyncGenerator\`），**主循环**把「等结果」换成「边收边透出、结束后再推进」。工具层完全不动——工具只关心「参数进来、结果出去」。
 
-**坑一：把 tool 消息的 \`tool_call_id\` 写错**。现象是模型报「找不到对应调用」或行为混乱。根因是并行执行后结果顺序与调用顺序不一致，或复制粘贴时没改 id。修复：始终从 \`call.id\` 构造，绝不自己编号。
+换成框架时这件事会变复杂：框架可能把流式与工具循环耦合成一个 \`streamEvents\` API，你需要用它定义的事件类型来重写整段逻辑。功能没有变多，但你对「哪一层在做什么」的掌控变弱了。
 
-**坑二：只保留 tool_calls、丢掉 content**。现象是模型反复重复已说过的解释。根因是不变量 3 被违反。修复：assistant 消息原样 push，不做「清洗」。
+这不是说框架不好，而是说**分层的价值在扩展时才显现**：能指出「改一个文件」和「改一整段」的区别，就是分层的回报。
 
-**坑三：把工具异常直接 throw 到外层**。现象是偶发 500，重试也没用。根因是不变量 2 被违反。修复：\`execOne\` 内 catch 全部失败，只返回消息。
+### 加一条可观测性钩子也只要一个函数
 
-:::
+生产环境一定会需要「这次任务调了几次工具、每次多久、失败率多少」。手写实现里，这只是个包装函数：
+
+\`\`\`ts
+export function withMeter<T extends (...a: never[]) => Promise<unknown>>(name: string, fn: T): T {
+  return (async (...args: never[]) => {
+    const t0 = performance.now()
+    try {
+      const out = await fn(...args)
+      metrics.record(name, { ok: true, ms: performance.now() - t0 })
+      return out
+    } catch (e) {
+      metrics.record(name, { ok: false, ms: performance.now() - t0 })
+      throw e
+    }
+  }) as T
+}
+\`\`\`
+
+把它套在 \`runOne\` 上，就得到了「按工具维度的成功率与耗时分布」——这正是 L72 里那套可观测性体系的最小内核。框架通常也有类似能力，但往往绑定它自己的事件模型，导出到你现有的监控体系需要额外适配。
 
 :::deep
 
-### 与框架的对应关系
+### 什么时候该换成框架
 
-OpenAI Agents SDK 的 \`tool()\`、Vercel AI SDK 的 \`tool()\`、LangChain 的 \`DynamicStructuredTool\` 都在这套结构上做加法：自动生成 schema（对应步骤一）、自动并行（步骤二）、内置错误包装（步骤三）、再加 tracing 与重试。手写过一遍之后，框架报错信息里那些字段名（\`tool_call_id\`、\`safeParse\`、\`maxSteps\`）就不再是黑盒。
+手写这套大约 200 行。什么时候值得换成 LangGraph / Agents SDK？
+
+**该换的信号：**
+
+- 需要「持久化执行」——进程崩溃后从断点恢复。手写要自己做 checkpoint 与状态序列化，框架有现成机制。
+- 需要「人在回路」——挂起等审批再继续。这与持久化是同一套基础设施。
+- 需要「多 Agent 编排」——子图、并行分支、条件路由。手写会迅速变成状态机地狱。
+- 团队多人协作，需要统一的抽象与文档。
+
+**不该换的信号：**
+
+- 只是「调几个工具、跑几轮」。手写 200 行比引入依赖更省心。
+- 需要精细控制边界（权限、配额、审计）。框架的钩子往往不够细，你还是要绕开它。
+- 需要极致控制成本（自定义上下文裁剪、缓存策略）。框架的默认行为可能正好与你的预算冲突。
+
+一个务实的路径是：**先手写跑通，等到「持久化 / 人在回路 / 多 Agent」三个需求中出现第一个时再换**。那时你已经知道自己需要什么，选框架也有了判据——而不是被「生态热闹」推着走。
 
 :::
+
+:::warn
+
+### 手写实现最容易漏的三件事
+
+**第一，\`tool_call_id\` 的唯一性。** 有些 provider 在并行调用时复用 id，或干脆不返回。回填时按 id 对不上，模型就会收到「结果缺失」。防御：id 缺失时按 index 生成稳定的伪 id，并在日志里标注。
+
+**第二，空内容的 assistant 消息。** 只调工具、不输出文本时，\`content\` 是 \`null\`。有些实现会把它写成空字符串 \`''\`，而某些 provider 会拒绝「content 为空的 assistant 消息」。保留 \`null\` 更安全。
+
+**第三，\`finish_reason\` 与 \`tool_calls\` 不一致的兜底。** 有时 \`finish_reason='stop'\` 但 \`tool_calls\` 非空（部分 provider 的边界行为）。此时应以 \`tool_calls\` 非空为准——否则工具永远不被执行。
+
+:::
+
+### 收束：运行时是「协议 + 边界」的组合
+
+这一节把所有零件拼在了一起，而拼装后你会发现：真正让运行时可靠的，不是「调通了模型」，而是那些**看起来不像功能的功能**——参数校验、部分失败、写串行、超时兜底、配额递减。
+
+它们都不产生「demo 效果」，但决定了「能不能上线」。
+
+L43 换一个视角：当工具不再由你实现，而是由别人提供时，上面这套「schema + 执行 + 边界」怎么标准化。那就是 MCP 要解决的问题。
+
 `,
     null,
     [
       {
-        text: '运行时里「参数校验」与「给模型看的 tool schema」应来自？',
+        text: '适配层（Provider 接口）的价值是？',
         options: [
-          '两份独立维护的定义',
-          '同一份 zod schema 派生（单一事实来源）',
-          '只校验不生成',
-          '只生成不校验',
+          '性能更好',
+          '把 provider 字段差异统一成内部形状，换模型只改一个文件',
+          '减少 token',
+          '自动重试',
         ],
         answer: 1,
-        explain: '两份定义必然漂移，漂移后表现为「模型永远传不对某个字段」。',
+        explain: '运行时只依赖统一形状，差异被封在适配器里。',
         concept: 'fc-runtime',
       },
       {
-        text: '某工具调用返回了非法参数，运行时的正确行为是？',
+        text: '工具注册表里检查重名，主要是为了避免？',
         options: [
-          '抛出异常中断请求',
-          '把 BAD_ARGS 与具体 issues 作为 tool 消息回填，让模型下一轮修正',
-          '静默返回空结果',
-          '自动重试同一参数三次',
+          '内存浪费',
+          '后注册覆盖先注册，模型按旧 schema 填参导致「参数莫名不匹配」',
+          '类型冲突',
+          '日志重复',
         ],
         answer: 1,
-        explain: '失败即消息：模型需要看到失败原因才能自我修正。',
+        explain: '启动即炸，比线上排查便宜。',
         concept: 'fc-runtime',
       },
       {
-        text: '同一轮返回 5 个互不依赖的 tool_calls，最合适的执行方式是？',
-        options: ['严格串行', 'Promise.all 并行', '只执行第一个', '按字母序执行'],
+        text: '为什么只读调用可以并行、写操作要串行？',
+        options: ['写的量大', '并行写会造成部分成功语义模糊与回滚失序', '协议限制', '模型不支持'],
         answer: 1,
-        explain: '无依赖并行，总延迟从「和」降为「最大值」。',
+        explain: 'L41 的结论：只读独立可并行，写要保持顺序可追溯。',
         concept: 'fc-runtime',
       },
       {
-        text: '下面这段实现有一个致命缺陷，问题在哪？\\n\\nif (msg.tool_calls?.length) { messages.push({ role: "assistant", tool_calls: msg.tool_calls }) }',
+        text: '结果回填为什么要按 `res.toolCalls` 原始顺序，而不是执行完成顺序？',
         options: [
-          '不该在 assistant 消息里带 tool_calls',
-          '重建了一个只含 tool_calls 的对象，丢掉了同轮返回的 content',
-          'messages.push 应该用 unshift',
-          'tool_calls 必须先转成字符串',
+          '性能更好',
+          '并行完成顺序不可控，错序会让模型收到对不上的结果',
+          '减少消息数',
+          '符合协议要求',
         ],
         answer: 1,
-        explain: '应原样 push 模型返回的 message；丢掉 content 会让模型下一轮「忘了自己说过什么」。',
+        explain: '用 byId 重新对齐，保证一一对应。',
         concept: 'fc-runtime',
       },
       {
-        text: '要支持「下单」这类非幂等副作用工具，运行时层的合理设计是？',
+        text: '什么时候值得从手写切到框架？',
         options: [
-          '靠运行时保证只执行一次',
-          '由工具自身携带幂等键，运行时只负责传参与回填',
-          '禁用并行即可',
-          '把重试次数设为 0',
+          '工具超过 3 个',
+          '出现持久化执行 / 人在回路 / 多 Agent 编排需求时',
+          '需要日志时',
+          '代码超过 500 行时',
         ],
         answer: 1,
-        explain: '运行时无法感知业务语义，幂等必须由工具（领域层）保证。',
+        explain: '这三类需求手写成本陡增，框架有现成基础设施。',
         concept: 'fc-runtime',
       },
     ],
     [
-      ['toToolSchemas', '把工具定义反射成模型可理解的 tool 列表'],
-      ['tool_call_id', '把 tool 结果与某次调用配对的唯一键'],
-      ['safeParse', '不抛异常的校验入口，失败返回 issues'],
-      ['E_MAX_STEPS', '步数上限触发的终止信号，用于拦截工具死循环'],
-      ['幂等键', '让重复执行同一副作用只生效一次的业务标识'],
+      ['适配器', '把 provider 差异转换为内部统一形状的一层'],
+      ['工具注册表', '工具定义与执行的唯一入口，承载 schema 与元数据'],
+      ['部分失败', '并行中部分成功、部分失败仍需各自回填'],
+      ['持久化执行', '崩溃后从检查点恢复的能力，是换框架的主要信号'],
     ],
     [
-      '手写两份参数定义（一份给模型、一份校验），随后静默漂移。',
-      '在 execOne 里直接 throw，一次模型幻觉导致整个请求 500。',
-      '有 tool_calls 时重建 assistant 消息，丢掉同轮 content。',
-      '不设 maxSteps，工具互触发形成死循环，账单按分钟增长。',
+      'kind 未命中 / 参数非法时抛异常，导致整个任务失败。',
+      '结果按完成顺序回填，模型收到错位的工具结果。',
+      '把空 content 写成空字符串，被 provider 拒绝。',
     ],
   ),
   'practice',

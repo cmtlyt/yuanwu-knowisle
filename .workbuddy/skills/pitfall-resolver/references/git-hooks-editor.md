@@ -47,6 +47,7 @@ node -e "const fs=require('fs'),p=require('path');const f=fs.readFileSync('.git/
 | commitlint 拒绝合法消息（`scope-enum`） | 给 scope 加了白名单，挡住 `site` / `a11y` 等合法模块名 | 去掉 `scope-enum`，scope 可选且取值不限；只约束 type 白名单、header 长度、subject 格式 |
 | 合并 / revert / fixup 消息被拒 | 规则没放行 | commitlint 默认忽略 `Merge` / `Revert` / `fixup!`，不要额外加白名单去覆盖 |
 | `commit-msg` 失败，报 `body's lines must not be longer than 100 characters [body-max-line-length]`，提交未生成 | `@commitlint/config-conventional` 默认启用 `body-max-line-length: [2, always, 100]`；`.commitlintrc.json` 只覆盖了 `header-max-length`，中文长正文按字符计数同样超限 | 把 `git commit -m <header> -m <body>` 的第二段压到 **≤100 字符**（任务编号用简写、每段 body 单独计数），完整任务说明写进 `docs/NNNNN-*/overview.md`，body 只留一句短引用；提交前用 `printf 'feat: 示例\n\n关联 docs/00001-init。' \| pnpm exec commitlint --quiet` 预验，退出码 0 才提交。失败时索引仍保留已暂存文件，缩短正文后直接重跑 `git commit` 即可，不必重新 `git add` |
+| `commit-msg` 失败，报 `subject must not be sentence-case [subject-case]`；中文提交信息也被拒，`--quiet` 下只有退出码 1、没有任何输出 | `@commitlint/config-conventional` 默认 `subject-case: [2, never, ['sentence-case', 'start-case', 'pascal-case', 'upper-case']]`；subject **以大写英文词开头**（`Wave 1 …` / `Fix …` / `Add …`）就被判 sentence-case，与后面是不是中文无关。本项目历史提交一律中文开头，此前没暴露 | subject **一律以中文开头**（`feat(course): 完成 Wave 1 …`），或整句小写英文开头；不要拿大写英文词起头。预验失败时去掉 `--quiet` 才能看到具体规则名。实测 2026-11-15：`feat(course): Wave 1 全部 142 课重写收官（00057-00088）` 被拒，改为 `feat(course): 完成 Wave 1 全部 142 课重写与收官（00057-00088）` 通过；索引不丢，改完直接重跑 `git commit` |
 
 ## 索引 / 忽略规则
 

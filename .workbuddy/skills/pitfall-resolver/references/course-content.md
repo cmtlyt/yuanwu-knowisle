@@ -20,7 +20,8 @@
 | 测验归因定位不到薄弱点 | `quiz[].concept` 指向不存在的概念 ID | 用自检脚本做自动校验：阶段 / 概念 / 前置 / 题目概念 / widget 标识 / 答案索引，任何悬空引用都让脚本失败 |
 | 答案索引越界 | `answer` 不在 `options` 的 0-based 范围内 | 自检断言 `Number.isInteger(answer) && answer >= 0 && answer < options.length` |
 | 学习路径出现环或前置排在后面 | DAG 未校验 | 自检同时检查「课时前置顺序单调」「概念前置不跨到后续阶段」「两类依赖无环」 |
-| 批量用脚本给某批课「补第 N 题」后，`check-course` 报「题目概念引用有效 ✗ / 选项与答案索引有效 ✗」，诊断发现该课第 N 题 `text`/`options` 变 undefined、`answer` 位置是 explain 文本、`concept` 变 undefined | 追加题时该题干行**顶格（col 0）且行尾漏逗号**；JS 把 `q('题干'['选项数组'],…)` 解析成**字符串下标访问**（逗号表达式取最后一个元素），整个 `q(...)` 坍缩、字段整体左移 | 批量加题务必保证题干/选项/答案/explain/概念五行的**缩进一致（8 空格）且每行尾逗号齐全**；加完立刻跑覆盖审计 + `check-course`，别只跑一次就收工。诊断：写脚本遍历每课每题，标出 `!conceptIds.has(q.concept)` 或 `answer` 越界的题，再看其源码行是否顶格 |
+| 批量用脚本给某批课「补第 N 题」后，`check-course` 报「题目概念引用有效 ✗ / 选项与答案索引有效 ✗」，诊断发现该课第 N 题 `text`/`options` 变 undefined、`answer` 位置是 explain 文本、`concept` 变 undefined | 追加题时该题干行**顶格（col 0）且行尾漏逗号**；JS 把 `q('题目'['选项数组'],…)` 解析成**字符串下标访问**（逗号表达式取最后一个元素），整个 `q(...)` 坍缩、字段整体左移 | 批量加题务必保证题干/选项/答案/explain/概念五行的**缩进一致（8 空格）且每行尾逗号齐全**；加完立刻跑覆盖审计 + `check-course`，别只跑一次就收工。诊断：写脚本遍历每课每题，标出 `!conceptIds.has(q.concept)` 或 `answer` 越界的题，再看其源码行是否顶格 |
+| 整课重写后 `pnpm verify` 报「课时概念引用有效 ✗ / 题目概念引用有效 ✗」；或预检查发现新写的 `concepts` 数组里有个 `concepts.ts` 里根本不存在的 id | 重写时**凭标题自造概念 id**（例如把已注册的 `version-lock` 写成 `dependency-lock`），且三道测验的 `quiz[].concept` 沿用了同一个错 id。`content-gate` 只查体量与课型，不查概念；只有 verify 会暴露 | 重写前先抄原骨架：`git show HEAD:app/data/<course>/lessons/lNN.ts \\| sed -n '5,16p'`，或先 `grep` 目标阶段在 `concepts.ts` 里的 id 列表；改 id 时 `concepts` 数组与**全部** `quiz[].concept` 一起改（`replace_all`）。若确实要新增概念，按 `docs/00075` 的做法在 `concepts.ts` 对应阶段段补注册后再引用。落地见 `docs/00075`（`mastra-obs`）、`docs/00082`（`version-lock`） |
 
 
 通用自检脚本（接受课程数据模块与可选演练模块路径；**两个参数都可传目录**，脚本自动补 `index.ts`）：
@@ -77,3 +78,33 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 | 所有 widget 标识都能解析，但切课后定时器还在跑 | 只验了映射、没验生命周期 | 每个演练返回 `cleanup()` 回收定时器 / 监听 / RAF；宿主 `onMounted` 挂载、`onBeforeUnmount` 清理 |
 | 用户把演练当成真实运行时 | 没标注边界 | 明确写「原理模拟」，真实代码指向官方 Playground |
 | 演练内核 `widgets.ts` 拆成 `widgets/` 目录后，`check-course.mjs` 报 `ERR_MODULE_NOT_FOUND`，或文档命令仍传 `app/lib/widgets.ts` | Node ESM 不解析目录 index；旧单文件删除后原路径直接失效 | ① `check-course.mjs` 第二参数传**目录** `app/lib/widgets`（其 `load()` 自动补 `index.ts`）；② `verify-course.mjs` 显式 import `app/lib/widgets/index.ts`；③ 目录内兄弟**值**导入显式 `.ts`；④ Nuxt 消费方 `~/lib/widgets` 省略扩展名不变，由 Vite 解析目录 index。拆分后同步校正根 README / 课程 `design.ts` 正文 / 宿主组件注释 / skill 文档中的路径与演练数量（11 → 24），落地见 `docs/00035`、`docs/00036` |
+
+## 正文渲染（Markdown-in-TS 容器）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| 课时正文写在 `:::deep/warn/tip` 容器里的表格显示成一长串竖线 `\|`，列表挤成一段 | `app/lib/markdown.ts` 的 `callout_open` 用 `renderInline` 输出容器正文——只解行内语法，表格 / 列表 / 多段落 / 围栏全部被压平；另外拆行时 `.filter(l => l.trim() !== '')` 把段间空行也吃了，多段落本来就无法分块 | 两处一起改：① 正文改 `mdInstance.render(normalizeFenceInfo(body))`；② 只去首尾空行、保留中间空行；③ 补 `.callout p + p / ul / table` 间距样式。防回归：`scripts/verify-content-stats.mjs` 第三段有 5 条断言（表格 / 无序 / 有序 / 多段落 / 真实课程扫描）。落地见 `docs/00062` |
+| 改课时后 `npx tsx scripts/content-gate.mjs` 或渲染抽查报 `TransformError: Expected ")" but found "<某个正文词>"`，行号指向某句**自然语言正文**而非代码 | `Lesson.md` 是模板字符串，正文里写的行内代码 `` `refs` `` 用了裸反引号——它直接结束模板串，之后的中文被当 JS 解析。与 00058 的 fence info-string 反引号是**同类不同位置**：那个在 ` ```ts title="…` 里，这个在正文句子里 | 模板串内**任何**行内代码一律写 `` \`x\` ``（含正文、goals 之外的说明文字）。排查技巧：报错列号往往落在中文串中间，正常情况下中文不会出现在 JS 表达式里，看到 `Expected ")" but found "中文"` 就该直接搜该行有没有裸反引号。落地见 `docs/00067`（L68） |
+| `pnpm lint` / `typecheck` 报 `no-useless-escape: Unnecessary escape character 'd'`，行号落在 `lessons/lNN.ts` 的**代码块内**；或课程页面里正则显示成 `\b1[3-9]d{9}\b`（`\b` 变成退格、`\d` 变成 `d`） | 同一根因的另一面：代码块也是模板串的一部分，代码里的 `\d` `\b` `\s` `\w` `\n` `\t` 会被 JS 当**字符串转义**处理。`\d`→`d`、`\b`→退格符、`\n`→真实换行（后者 lint 不报，只静默破坏渲染） | 模板串内代码块里的**每个**反斜杠都要双写：`/\\d+/`、`'a\\nb'`。检查脚本 `tmp-escape.mjs`（扫 `(?<!\\)\\[dbswnt]`）。**该脚本在 2026-11-15 全量扫出 5 处历史遗留**（`l47` 的 `` `OK\n…` `` 行内代码、`l82` 的 `join('\n')` 与 `SYS + '\n\n'`），均已修为双反斜杠并复查渲染。落地见 `docs/00074`（L102） |
+| 课程页面代码块里的 JS 字符串显示成 `'status = 'PAID''`（内层引号成对塌陷、代码不可编译），但 **esbuild / lint / typecheck / 双扫描全部不报错** | 第三种模板串转义：源码里为在单引号字符串内放单引号写了 `\'`，而 `\'` 在 TS 模板串里是**合法转义**、直接输出 `'`，反斜杠被吞掉。`tmp-backtick.mjs` 只查反引号、`tmp-escape.mjs` 只查 `\\[dbswnt]`，都不覆盖 `\'` | 代码块里**不要在单引号字符串内用 `\\'`**：外层改双引号（`"status = 'PAID'"`）最省事；确需保留则写 `\\\\'`（模板串输出 `\\'`）。写完用 `npx tsx -e "import('./app/data/agent-course/lessons/lNN.ts').then(m=>console.log(m.LNN.md.split('\\\\n').filter(l=>/关键字/.test(l)).join('\\\\n')))"` **打印渲染后的 md 文本**核对代码块是否仍是合法代码——统计脚本只看块数，看不出块内字符被吞。落地见 `docs/00079`（L117） |
+| 课程代码块里的正则 `/\.run\(\s*parsed/` 渲染成 `/.run(s*parsed/`，正则完全失效；`tmp-escape.mjs` 只报了 `\s`，lint / typecheck / 双扫描都没拦住 | `\.` `\(` `\)` `\{` 这类反斜杠同样被模板串吞掉（JS 无效转义直接输出后面的字符），但扫描脚本的正则是 `(?<!\\)\\[dbswnt]`，**只覆盖六个字符**；代码块里只要写正则，几乎必然带上这些漏网字符 | 课程代码块**尽量不写正则**，改用 `text.includes('.run(parsed')` / `startsWith` 之类无反斜杠判断；确需保留则每个反斜杠双写。补一次全量扫描：截取 md 模板串区间，逐行找后面不是 反引号 / 反斜杠 / `$` / `{` 的单反斜杠（本批用一条 `node -e` 内联脚本做了，结果干净）。落地见 `docs/00085`（L129） |
+
+## 跨课接口一致性（Capstone 链）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| 下游课初稿调用 `gatewayLevelOf()`、`Executor.runReadOnly()`，但上游 L129 根本没有这两个方法；正文还写着「本课只消费上游接口，一行不改」 | 写下游课时凭「听起来应该有」补方法名，没把上游文件的公开接口原文摊开对照。Capstone 六课是链，凭空接口会让整条链断裂；而代码块只是文本、不参与编译，`content-gate` / lint / typecheck 全都查不出来 | 动笔前先 `grep -n "export \|  [a-zA-Z]*("` 上游课文件，列出真实 `export` 与公开方法；正文里写一张**接缝表**（上游交付 / 本课用法 / 不允许改什么），下游只调用表内方法。常量表与上游注册容易漂移时加启动自检（如 `assertLevelTableMatchesGateway()` 比对网关 `describe()` 与常量表），既修 bug 又变成可讲的内容。落地见 `docs/00085`（L130） |
+| Capstone 类课初稿代码一次过线（9433–10852 字符），正文却只有 2868 / 2825 字、低于 3000，且因在 baseline 豁免名单里 `content-gate` 只提示「已达标但仍列在豁免名单」不报红 | 长代码块会给人一种「内容够了」的错觉，但 `proseWords` 不统计代码；豁免名单里的课 gate 不施加下限断言 | 补的方向不是继续堆示例，而是补 **接缝表 / 不变量表 / 一次完整运行的事件表 / 采样分层口径** 这类把代码之间约束讲清楚的正文。写完固定跑 `--only=LNN --verbose` 看 raw 与余量（>50）。落地见 `docs/00085`（L130、L131） |
+
+## 收官段：范围对齐、默认关闭补丁与结构自检（L139–L142）
+
+| 症状 | 根因 | 处理 |
+|---|---|---|
+| Markdown 表格里为显示 `[number, number]` 写成 `\[number, number\]`，页面渲染丢反斜杠且代码块里的同类写法直接失效；`tmp-escape.mjs` 不报，lint / typecheck 也不报 | 第四种模板串转义坑的变体：`\[` 是 JS 无效转义，反斜杠被吞掉；`tmp-escape.mjs` 的正则只覆盖 `[dbswnt]` 六个字符 | 表格里一律用行内代码包裹（写 `` \`[number, number]\` ``），不在正文写转义方括号。补跑**修正版全量单反斜杠扫描**：逐字符扫模板串，遇到反斜杠后若跟反斜杠 / 反引号 / `$` 就跳过两个字符，否则记为异常；这个「跳过两个」的规则很关键，否则合法双写 `\\n` 的第二个反斜杠会被误报。落地见 `docs/00087`（L137） |
+| 发布流水线把整份 `html`（含文末参考文献区）回喂 `assertNoRenderBypass()`，闸门天天报「render-only sentence」，很快被人关掉 | 参考文献区里的原文片段本来就不该被当成「正文事实句」；断言检查的是**正文事实**，喂进去的却混了非正文内容，语义范围与数据范围不对齐 | 给渲染结果拆出 `bodyHtml`（只含章节正文），`createReportService()` 与测试统一喂 `stripTags(rendered.bodyHtml)`；`html` 仍用于导出与锚点检查。通用规则：**回喂闸门前先问「这段数据是不是断言要管的那部分」**，范围不对齐会让正确实现被误判，误判比漏判更容易导致闸门被下线。落地见 `docs/00088`（L141） |
+| 后段课的 `segmentedSynthesize()` 需要上游 `synthesize()` 支持全局编号映射，但上游 L138 已达标、正文与断言都锁死了当前行为 | 直接改上游签名会破坏已达标课的语义与它自己的验收断言；重新写一套合成又会制造第二份真相 | 用**默认关闭的可选参数**补上游：`numberById?: Map<string, number>`，不传时行为逐字不变，只在下游分段合成时传入。正文与坑库都要写明「补丁默认关闭」，让后续课知道旧路径仍有效。落地见 `docs/00087` / `docs/00088`（L138 → L140） |
+| 结构自检课写「A/B 两支禁止互相依赖」时，把收束课自己也判成错误；或放宽例外后，B 分支某课偷偷依赖 A 分支却无人发现 | 凭直觉写规则，没先用真实数据跑一遍不变量；且例外只写了「可以不做」，没写「必须做成什么样」 | 动笔前用 `node --experimental-strip-types -e` 直接 import `AGENT_COURSE` 实测：概念图 / 课时图成环情况、悬空引用、课号连续性、overview 分布、跨分叉引用。实测发现唯一跨分叉引用正是 L142 自己（`prereqs = L134 + L141`）。规则写成三段：支内可依赖、跨支禁止、**收束课必须同时连住两支末端**；测试从两侧各测一次（注入跨支引用 / 砍掉一侧前置）。**一条规则若有例外，两侧都要有断言**。落地见 `docs/00088`（L142） |
+| 课程代码块的验收断言里写死 `assert.equal(r.stats.lessons, 142)`，新增一节课后测试自己先挂 | 把「当前快照」当成「结构不变量」，测试依赖了会随时间变化的数字 | 断言改为 `AGENT_COURSE.LESSONS.length` / `AGENT_COURSE.CONCEPTS.length`，规模快照只进报表不参与判定；正文里写死的数字标注「只作本次记录，断言不依赖它」。与 00054 删 `minutes` 同源：**别让会变的数字变成第二份真相**。落地见 `docs/00088`（L142） |
+| 收官最后一课初稿正文 2835/3000，因仍在 baseline 豁免名单里 `content-gate` 只提示「已达标但仍列在豁免名单」、显示「✅ 体量闸门通过」 | 豁免名单里的课 gate 不施加下限断言，长代码块（7560 字符）又给人「内容够了」的错觉 | 补实质节而不是堆示例：本例补「交付之后：把一次验收变成可回归的资产」表（交付物 / 落盘记录 / 下一次怎么验）与 L142 交接说明，正文到 3412。**gate 绿 ≠ 达标，收官批次也要手动跑 `--only=LNN --verbose` 看 raw 与余量。** 落地见 `docs/00088`（L141） |
+
+> **临时脚本已清理（Wave 1 收官）**：收官提交时删除了项目根目录的 `tmp-backtick.mjs` / `tmp-escape.mjs` / `tmp-fix-backtick.mjs` / `tmp-sample.mjs`，以及 `.wrangler/tmp` 下 68 个 Wrangler bundle 缓存。上文对这些脚本的引用是**历史做法记录**，不是可执行指引；142 课已全部达标，无需再跑批量扫描。若后续新增课程要复现，用一次性 `node -e` 内联脚本（逻辑见各条目），或把脚本正式落到 `scripts/` 并纳入门禁。
