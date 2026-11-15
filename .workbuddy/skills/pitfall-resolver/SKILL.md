@@ -1,86 +1,46 @@
 ---
 name: pitfall-resolver
-description: 遇到任何问题都必须先加载本 skill 查找解决方案，解决并回归通过后必须更新或新增解决方案条目。通用问题排查与解决方案库（症状 → 根因 → 处理），采用「先查库 → 再修 → 后回写」闭环：报错、构建失败、lint 或类型检查不通过、格式化冲突、依赖与 peer 冲突、Git hook 阻断、提交信息被拒、SSR hydration 警告、移动端横向溢出、无头浏览器断言假阳性、工具报「无目标文件」、命令或参数失效、结果不符合预期、方案不确定、被用户纠正、卡住或反复试错、验证不通过、SAFE_DELETE_BULK_CONFIRM_REQUIRED、safe-delete 批量删除守卫、TS2532 TypedArray 下标、TS2769 WebCrypto iv、TS2339 getDirectory、TS2345 最小接口不匹配等，不限于已收录的症状。加载后按症状速查定位参考文件再动手；回写规则是命中已有条目则更新（新解法、版本变化、失效修正），未命中则新增条目，查库未帮上忙也要补记实际有效解法。关键词：任何问题、报错、失败、异常、不生效、被阻断、冲突、警告、卡住、不符合预期、不确定、已解决、回写、更新方案、新增方案、TS 7、typescript-eslint、oxlint、oxfmt、tsgolint、pnpm、husky、lint-staged、commitlint、lint-staged ignores 顶级键、门禁忽略 .vscode、body-max-line-length、提交正文超长、Format issues found、静态资源校验失败、删除文件后验证失败、管道吞掉退出码、Nuxt、CDP、VSCode、troubleshooting、pitfall、known issue、how to fix、Cloudflare、wrangler、Workers、compatibilityDate、workerd、原生模块、better-sqlite3、GitHub Actions、if 引用 secrets（job 级与 step 级都不允许）、哨兵值模式（env not-set 兜底）、0 个 job、workflow file issue、gh workflow run、OPFS 降级、unhandledrejection、clearAll 漏删、意图正则误判、CDP 探针假阴性、抽屉会话未就绪、no-base-to-string 元组数组、Python global 声明位置、frozen-lockfile 缺 specifier、CDP __enter__ 不 start、sendall NoneType、OPTIONS 预检 405、curl ACAO 与浏览器不一致、CDP 事件帧被忽略、Failed to fetch CORS、意图长尾误判、本地导航静默降级、术语消歧、system prompt 课程语境、模型输出 flaky 断言、探针计数基线 off-by-one、新建会话 rebuildFeed 抹气泡、askAi、TS2322 theme 字面量联合、ESNext target 固化、toReversed/toSorted ES2023 运行时 API、no-unsafe-type-assertion 不能全消、no-unused-vars 分类清理、catch {} optional binding、零调用 helper 有意保留、残留标志/残留计算、oxlint -f json labels[0] 是父作用域、consistent-function-scoping 假重复、warnings 去重口径、widgets.ts 目录化后命令路径失效、Skill 工具找不到项目级 skill、活文档与历史记录边界、首次给整门课标 kind 后 verify 变红、baseline 全量豁免接入、目标库未安装无法核验 API、原文 API 白名单、纯 Markdown 草稿生成 TS、补写草稿未重新 apply、跨课程同名课号、Git Bash /tmp 与 Windows Node 路径不一致 ENOENT、curl 管道传 stdin、rxjs 7.8.2 弃用写法 retryWhen、EMPTY/NEVER 常量、publish/multicast/share({refCount}) 6.x 历史对照、原文 import 白名单新增名判定、flatMap 同名误报、marble 同帧分组、有界并发 pending 队列、背压展平不变量、Subject complete 通知、结果段与临时产物事实不一致、收官先清理再回填、三门课同名课号、scripts/check-course.mjs 报 Cannot find module、requireStack [] 入口脚本不存在、AGENTS.md 现行命令路径、简写命令复跑前先查文档。This skill must be loaded first whenever the agent hits any problem, error, failure, unexpected result, blocked step, or uncertainty, before attempting a fix; after the fix is verified with regressions, update the existing solution or add a new one. 关键词追加：检索资料落盘、上下文压缩丢数字、单文件体量过大、逐条分片、零丢失校验、证据台账、persisted-output、Output too large、Full output saved to、tool-results 全文恢复、五反引号围栏、动态 SPA 只抓到外壳、prereqs 误填概念 id、课时前置顺序失败、追加字符数不等于词数、闸门实测余量补齐、slug 子串误配覆盖分片、callId 精确映射、SENSITIVE_CONTENT_UNAVAILABLE、文档站 301 迁移、SPA 404 导航壳。
+description: 遇到任何问题必须先加载本 skill：报错、构建或门禁失败、依赖与 hook 阻断、结果不符预期、方案不确定、被用户纠正、反复试错、全新问题。按「症状 → 根因 → 处理」查库、修复回归后强制回写解决方案。关键词：troubleshooting、pitfall、known issue、报错、失败、异常、不生效、卡住、回写、TS 7 / oxlint / oxfmt / pnpm、Nuxt / Cloudflare / GitHub Actions、CDP 探针、课程数据。明细按主题在 references/ 内按需检索。
 agent_created: true
 ---
 
 # 问题排查与解决方案库
 
-把重复踩过的坑沉淀成可按症状检索的知识。固定闭环：**遇到任何问题 → 先加载本 skill 查库 → 按已验证解法修复 → 重跑回归 → 回写解决方案**。每条记录都是实测结论，包含根因与可执行的修复动作，不是猜测。
+闭环（强制）：**任何问题 → 先加载本 skill → 查库 → 一次性修复并回归 → 回写解决方案 → 同步口径**。每条记录都是实测结论（症状 / 根因 / 已实测处理），不是猜测。
 
-## 触发范围（不限于报错）
+## 什么算「问题」
 
-以下全部算「问题」，识别到的第一时间就要加载本 skill，不要直接试错或凭记忆猜：
+命令或构建失败、门禁不通过、依赖与版本冲突、hooks 或提交被拒、页面渲染与交互异常、结果不符预期、方案不确定、被用户纠正、反复试错、**全新或未收录的问题**——识别到第一时间加载本 skill，不要直接试错或凭记忆猜。
 
-- 命令执行失败、工具调用报错、退出码非 0、超时、无输出、参数不生效
-- 构建 / lint / typecheck / 格式化 / 数据自检 / 冒烟测试不通过
-- 依赖安装失败、peer 冲突、版本不兼容、锁文件异常
-- Git hooks 阻断、提交被拒、索引或暂存状态异常
-- 页面渲染、hydration、视口、交互、数据读写不符合预期
-- 结果与预期不一致、需求或方案不确定、被用户纠正、同一问题反复尝试
-- 编辑器 / 操作系统 / 运行环境差异导致行为不一致
-- **任何尚未收录的全新问题**：同样先加载，走同一闭环
+## 闭环五步
 
-## 使用方式（闭环，五步缺一不可）
+1. 加载本 skill，读下方速查表。
+2. **只读取命中的 `references/*.md`**，按关键词定位章节；未命中则按主题挑最接近的文件扫一遍，再自行排查。
+3. 一次性修复，重跑相关回归（顺序见 `references/verification.md`）；同一问题三次未解决就停下求助。
+4. **回写（强制，最终答复之前）**：更新或新增条目；库没帮上忙也要记「查库结果 + 实际有效解法」。
+5. 解法改变命令 / 配置 / 工具链时，同步 README / AGENTS.md / docs 口径，避免照旧文档再踩。
 
-1. **先加载**：识别出问题的第一时间加载本 skill，再读下方「症状速查」。
-2. **查库**：只读命中的 `references/*.md`，按「症状 → 根因 → 处理」执行。速查表没有对应项时，先按主题挑最接近的文件扫一遍，再自行排查。
-3. **修复并回归**：一次性修复后重跑相关回归（门禁顺序见 `references/verification.md`）；同一问题连续三次未解决，停下来说明已尝试方案并请求协助。
-4. **回写（强制）**：问题解决、回归通过后，**在给出最终答复之前**更新或新增解决方案。这是任务的完成条件，不是可选步骤；库里没帮上忙也要写清「查库结果 + 实际有效解法」。
-5. **同步口径**：若解法改变了项目命令、配置或工具链，顺手更新 README / overview / docs 中的相关表述，避免下次照旧文档再踩一次。
+## 症状速查（主题路由；不要全量展开 references）
 
-## 症状速查
-
-| 症状 / 关键词 | 参考文件 |
+| 症状关键词 | 参考文件 |
 |---|---|
-| `typescript-eslint does not support TS 7.0`、`nuxi typecheck` 缺 checker、`@oxlint/migrate` 失败、TS 7 无 Compiler API、`vue-tsc` 装不上、`.vue` 模板没被检查 | `references/toolchain.md` |
-| `no-unsafe-type-assertion`、`no-base-to-string`、`no-implied-eval`、迁移内核推断出宽泛类型、`no-unused-vars` 该删还是保留、`catch {}` 是否会改变降级行为、误删零调用 helper | `references/toolchain.md` |
-| `pnpm smoke -- --base` 参数解析失败、`minimumReleaseAgeExclude` 被自动写入、unmet peer、`--frozen-lockfile` 失败、`esbuild` 无法 require | `references/toolchain.md` |
-| Nuxt 构建锁残留 / PID 复用、`NUXT_IGNORE_LOCK`、Nitro 探针 404、构建通过但运行时 500、Nitro 内部模块解析警告 | `references/nuxt-build.md` |
-| hydration mismatch、改名后 composable 未定义、链接按钮错位、定时器残留、多门课学情串数据 | `references/nuxt-build.md` |
-| `--window-size` 测不出手机断点、断言全是 ✓ 却有 bug（假阳性）、抽屉探针假阴性、仪表盘横向溢出 | `references/browser-viewport.md` |
-| 课程正文 API 在最新版不存在、跨版本 API 混用、手抄迁移丢内容、演练切课后定时器还在跑、旧应用进度看不到 | `references/course-content.md` |
-| 新增第二门课后首页 / hero / 侧栏仍显示第一门课专属文案、`pnpm verify` 只查 Effect 一门、`node --experimental-strip-types` 直跑报 `ERR_MODULE_NOT_FOUND` 找不到 `./effect-course`（省略扩展名相对导入） | `references/course-content.md` |
-| `useRequiredCourse` 返回 `course.value` 类型仍是 `ComputedRef<CourseEntry \| undefined>`、页面 `stateOf(course.value)` 报「undefined 不能赋给 CourseEntry」、模板里 `course!` 非空断言 | `references/course-content.md` |
-| 批量脚本给某课「补第 N 题」后 `check-course` 报「题目概念引用有效 ✗ / 选项与答案索引 ✗」、诊断见该题 `text`/`options` 变 undefined（顶格漏逗号致 `q('题干'[选项],…)` 字符串下标坍缩）、高难度课「单概念堆 3 题」、课时数被固定 6×4、`verify` 硬编码「正确率 75%」在题数变化后失败、全局改课时 id 改漏 / 改出环（单遍映射重编号） | `references/course-content.md` |
-| 课程数据层改成目录（`effect-course/index.ts` + 章节文件）后 Node 直跑 import 目录 / `import './stages'` 报 `ERR_MODULE_NOT_FOUND`、`verify`/`check-course` 扫不到课程、巨型单文件拆不干净 | `references/course-content.md`（目录化布局 + Node 目录 index 不解析 + 显式 `.ts` 导入规范） |
-| 重建 `.output` 时 `pnpm build` 报 `[safe-delete] 操作失败 / Some operations were aborted`（后台预览服务占着文件句柄）、wrangler dev 预览起不来 | `references/nuxt-build.md` |
-| `pre-commit` 被阻断、`Expected at least one target file`、工具 ignore 与 lint-staged 冲突、无初始提交跳过 stash、commitlint 拒绝合法消息、`body-max-line-length`、`body's lines must not be longer than 100 characters`、提交正文超长、Windows hook 不执行、lint-staged 顶级 `ignores` 键（v17 不支持）、门禁忽略 `.vscode` 目录、大提交报「命令行太长。」/ `Task killed: oxfmt` / 错误文案乱码（`锟斤拷`）、`--max-arg-length` | `references/git-hooks-editor.md` |
-| 大小写重命名不生效、Python 模块名含连字符、VSCode 文件嵌套规则不生效 / workspace 覆盖用户级 | `references/git-hooks-editor.md` |
-| `TS2532 Object is possibly 'undefined'`（TypedArray 下标）、`TS2769` WebCrypto `iv` 重载不匹配、`TS2339 getDirectory` 不存在（OPFS 应 `getDirectoryHandle`）、`TS2345` 迁移内核对象不满足最小接口、`no-unsafe-type-assertion` 批量 warning、`TS2322` theme 字面量联合（断言换局部变量注解后报错）、Nuxt 生成 tsconfig 已是 ESNext / `vite.build.target`、`toReversed` / `toSorted` 运行时基线 | `references/toolchain.md` |
-| `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`（count>threshold，Nuxt 清 `node_modules/.cache/nuxt` 构建缓存被拦截）、`CODEBUDDY_SAFE_DELETE_ENABLED` | `references/nuxt-build.md` |
-| `Format issues found in above 1 files`、`fmt:check` 单文件格式差异、`pnpm verify` 静态资源 `✗`、删除文件后校验失败、管道吞掉退出码 / 假「全绿」 | `references/toolchain.md`、`references/verification.md` |
-| 何时验、验什么、临时探针与临时服务怎么清理、门禁顺序 | `references/verification.md` |
-| wrangler 部署、`workerd` 占位值、`compatibilityDate` 阈值、`wrangler.jsonc` 不写 main/assets、原生模块不能进 Worker、`wrangler dev` 首启 crash #1 | `references/cloudflare-deploy.md` |
-| GitHub Actions 运行全部 `failure` 且 `0 个 job` / 同秒完成 / `run_completed_at=null`、`gh run view` 提示 "workflow file issue"、`if`（job 级或 step 级）引用 `secrets` 报 `Unrecognized named-value: 'secrets'`、`gh workflow run` 解析失败、哨兵值模式（`secrets.X \|\| 'not-set'` + `env` 判空） | `references/github-actions.md` |
-| 助学 Agent 客户端运行时：OPFS 抛错后 `unhandledrejection` / 抽屉空白、`clearAll` 只删 `home.json` 导致课程文件残留、「仅学情页注入」断言在首页仍命中、意图正则把答疑截到本地导航、CDP 探针 11 条假阴性（抽屉 DOM 出现但会话异步未就绪） | `references/browser-viewport.md` |
-| 真实端点联调：`with CDP()` 直接 navigate 报 `sendall NoneType`、curl 有 `ACAO:*` 但浏览器 `Failed to fetch`、OPTIONS 预检 `405` 无 CORS 头、CDP 抓不到 `Log.entryAdded` 事件 | `references/browser-viewport.md`（00030 真实端点验证与 CORS） |
-| 助学 Agent 意图路由与抽检：`NAV_RE` 裸词 / 贪婪匹配静默误判、导航卡无 AI 自助出口、真实模型混淆同名 API（map 被说成会扁平）、动态断言计数基线 off-by-one、新建会话 async 未完成即 send 导致气泡被 `rebuildFeed` 抹掉、模型输出不能写硬断言 | `references/browser-viewport.md`（00031 意图路由与抽检探针） |
-| 新增验证脚本后 `no-base-to-string` / `restrict-template-expressions`（元组数组推断）、Python `ast.parse` 通过但运行报 `global` 声明顺序错、精确锁版本后 `pnpm-lock.yaml` 缺 importer specifier 导致 `--frozen-lockfile` 失败 | `references/toolchain.md` |
-| `Skill` 工具报 `Can not find skill` 找不到项目级 skill、拆分后文档命令仍指向已删除的 `widgets.ts`、不确定某文档算不算「已落盘历史记录」 | `references/toolchain.md`（skill 加载与活文档口径）、`references/course-content.md`（演练目录化引用点） |
-| 首次给整门课标 `Lesson.kind` 后 `verify` 立刻变红、目标库未安装无法核验 API（自造 / 旧版写法混用）、模板串转义反复出错、补写草稿未重新生成、跨课程同名课号 `--only=LNN` 输出两行 | `references/course-content.md`（00089 整门课全量重建：baseline 全量豁免、原文 API 白名单、纯 Markdown 草稿生成器） |
-| Git Bash `/tmp` 与 Windows Node `/tmp` 路径不一致、`ENOENT` 盘符根目录 tmp、curl 落盘后 Node 读不到、本地请求被代理转走 | `references/verification.md`（临时文件路径与 stdin 管道抽查） |
-| 版本锁定课程正文混入 6.x / 已弃用写法（`retryWhen`、`EMPTY()`、`publish().refCount()`、`share({ refCount })`）、原文 import 白名单差异里的「新增名」难判是否自造、扫旧写法时 `flatMap(` 误报、marble / 有界并发 / 背压 / Subject 代码块状态迁移不闭合、三门课同名课号 `--only=LNN` 输出三行、结果段写了「已清理」但 `git status` 里临时产物还在、`scripts/check-course.mjs` 报 `Cannot find module`（`requireStack: []`，入口在项目级 skill 目录） | `references/course-content.md`（00090 整门课全量重建：版本口径校准、时序代码块可失败断言、生成器复用、收官清理顺序与 AGENTS.md 现行命令路径） |
-| 研究资料合并成单个大文件被用户纠正「单文件过大」、上下文压缩后检索数字丢失、`<persisted-output>` / `Output too large` / `Full output saved to` 只留 2048 字节预览、`tool-results/<callId>.txt` 全文恢复、原文自带四反引号导致围栏破损、动态 SPA 只抓到外壳 | `references/research-notes.md`（逐条分片落盘、零丢失校验、五反引号围栏、改抓 raw/tree 入口） |
-| **任何未列出的问题 / 症状不明 / 全新问题** | 先按主题挑最接近的文件扫一遍；解决后按下节规则**新增**条目并补速查表关键词 |
+| TS 7、typescript-eslint、oxlint type-aware、tsgolint、oxfmt 格式、pnpm 锁与 peer、lint 规则与 warning 口径 | `references/toolchain.md` |
+| Nuxt 构建锁 / PID、Nitro 404 与运行时 500、hydration、composable 未定义、定时器残留、多课串数据、safe-delete 守卫 | `references/nuxt-build.md` |
+| 浏览器断点、CDP 探针假阳性、抽屉与会话异步、真实端点 CORS、意图路由与模型抽检 | `references/browser-viewport.md` |
+| 跨版本 API、目录化导入、草稿生成器、`Lesson.kind` 与体量闸门、题目与引用完整性、收官清理 | `references/course-content.md`（34 KB，先按关键词定位章节） |
+| 检索分片落盘、上下文压缩丢数字、输出截断恢复、slug 误配、prereqs 契约 | `references/research-notes.md` |
+| hooks 阻断、lint-staged 参数与 ignore、commitlint、大小写重命名、Python 模块名、VSCode 配置 | `references/git-hooks-editor.md` |
+| 验证时机与顺序、临时文件与端口清理、假阳性断言、管道吞退出码 | `references/verification.md` |
+| wrangler 部署、workerd、compatibilityDate、原生模块 | `references/cloudflare-deploy.md` |
+| GitHub Actions 0 job、`if` 引用 secrets、哨兵值 | `references/github-actions.md` |
+| 未列出的症状 / 症状不明 / 全新问题 | 按主题挑最接近文件扫一遍；解决后新增条目并补关键词 |
 
-## 解决后回写（强制）
+## 回写（强制）
 
-| 情况 | 动作 |
-|---|---|
-| 已有同症状条目，解法仍有效 | 不重复新增；补充了细节（版本、命令、适用边界）就更新该行并注明实测日期 |
-| 已有条目，但解法失效 / 有更优解 / 版本变化 | 更新原条目：替换处理动作，保留旧结论作为「不适用」提示，注明日期 |
-| 库里没有该症状 | 在对应主题文件末尾新增条目；主题不存在时新建 kebab-case 参考文件，并在速查表登记 |
-| 查库未命中、靠自行排查解决 | 仍要新增条目，写明为何未命中（关键词缺失 / 症状表述不同），并补上速查表关键词 |
+- 已有同症状且解法有效：不新增，补细节才更新并注明实测日期；解法失效或有更优解：更新处理动作，旧结论标「不适用」。
+- 库里没有或查库未命中：在对应主题文件末尾新增（**症状 / 根因 / 已实测处理**三要素缺一不可），写明未命中原因；主题不存在则新建 kebab-case 文件并登记速查。
+- 命令要可直接复制并写预期退出码；一次性搜索结果、临时路径与个人上下文不入库（归 `.workbuddy/memory/`）。新关键词同步补进速查表与 description。
 
-条目规则：
+## 边界
 
-- 必须写清**触发症状**（最好含原始报错文本）、**根因**、**已实测有效的处理**，三者缺一不可；不要写「可能是……」这类未验证猜测。
-- 追加到对应主题文件末尾，不新建重复条目；涉及命令时给出可直接复制的完整命令与预期退出码，注明是否需要临时环境变量 / 临时端口。
-- 若出现新的报错文本或关键词，同步补进本文件的速查表与 `description`，让下次能自动命中。
-- 只记可复用的结论；一次性的搜索结果、临时路径、个人上下文不要写入本库（那是 `.workbuddy/memory/` 的职责）。
-- 文件名统一 kebab-case；`SKILL.md` 为框架强制名例外。
-
-## 与 course-builder 的关系
-
-`course-builder` 负责「怎么从零构建一门交互式课程」（8 阶段流程、数据契约、通用自检脚本）。本 skill 负责「出问题时怎么修」，与课程构建流程解耦，**任何项目里的同类问题都适用**。course-builder 任何阶段遇到问题都应转而加载本 skill，解决并回归通过后回写解决方案，不再自带踩坑清单。
+`course-builder` 负责「怎么建课」，本 skill 负责「出问题怎么修」，任何项目同类问题都适用；course-builder 遇问题转本 skill，解决后回写，不再自带踩坑清单。
