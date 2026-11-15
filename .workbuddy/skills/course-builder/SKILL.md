@@ -51,6 +51,7 @@ agent_created: true
 - `references/workflow.md` — 8 阶段详细流程、每阶段验收标准、交付清单模板
 - `references/data-model.md` — 内容数据契约、学情状态结构、掌握度/遗忘/诊断公式、扩展机制；**含 complex（4 层 Module→Stage→SubStage→Lesson）课程数据契约与 `withSubStage` 模块聚合模式**（simple 2 层与 complex 4 层共用同一 `CourseData`，靠 `renderMode` 切换）
 - `scripts/check-course.mjs` — 通用数据一致性与引用完整性校验，接受课程数据路径与可选演练模块路径；两个参数都可传**目录**（自动补 `index.ts`，本仓库传 `app/data/<topic>-course` 与 `app/lib/widgets`）
+- `scripts/gen-course.mjs` — 通用「纯 Markdown 草稿 → 课时 TS」生成器（00092 起随 skill 提供）：`node --experimental-strip-types <skill>/scripts/gen-course.mjs <drafts-dir> <topic>-course/lessons [--check]`，在仓库根执行（相对路径以 cwd 为基准）；frontmatter 契约与 gen → `pnpm fmt` 两步管线见 `references/data-model.md` 的「草稿管线」小节。大课（十几课以上）优先走草稿管线，不手写 `lNN.ts`
 - `assets/course-skeleton/` — 目录化课程数据骨架（`index.ts` 入口 + `stages/concepts/meta/design.ts` 章节 + `lessons/lNN.ts` 一课一文件 + `builders.ts`/`types.ts` 共享层**种子** + `README.md` 落地说明）。复制到目标项目后改内容；**新建课程时只建课程级文件，`types.ts`/`builders.ts` 复用仓库级共享层、不逐课复制**（详见其 `README.md` 与 `references/workflow.md` 阶段 3 的「仓库级 vs 课程级」区分）。
 - 项目级 skill `pitfall-resolver`（`.workbuddy/skills/pitfall-resolver/`） — 独立的问题排查与解决方案库；**遇到任何问题先加载它查库，解决后回写**，本 skill 不再自带踩坑清单
 

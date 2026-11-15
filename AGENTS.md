@@ -54,6 +54,7 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 ```
 
 - **现行命令（00035 目录化后；上方示例路径已失效，按约定不修订原文）**：`node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs app/data/effect-course app/lib/widgets`；两个参数都传**目录**，`load()` 自动补 `index.ts`；RxJS 同理传 `app/data/rxjs-course`。`scripts/verify-course.mjs` 内部仍按 `app/lib/widgets/index.ts` 显式路径 import。
+- **课程草稿生成器（00092 起，skill 资产）**：`node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs <drafts-dir> <topic>-course/lessons [--check]`，在仓库根执行（相对路径以 cwd 为基准）；契约与固定两步管线见 course-builder skill 的 `references/data-model.md`「草稿管线」小节。大课优先走草稿管线；**生成后必须 `pnpm fmt`** 才与提交格式一致（00091/00092 实测）。
 - `generate` / `smoke` 两个 npm script 已移除；新增 `preview` / `deploy` / `cf-typegen`（Cloudflare 部署）。生产预览与冒烟改用 Workers 运行时：先 `pnpm build` 产出 `.output`，再 `pnpm exec wrangler --cwd .output dev --port 3199`，**不再用 `node .output/server/index.mjs`**（cloudflare_module 产物是 Worker 入口，非 Node 服务）。冒烟统一直接调用 `python scripts/smoke.py --base ...`（pnpm 11 会把 `--` 原样透传给 Python，且 smoke.py 默认 base 是 3100，与实际 3199 临时服务不符）。脚本文件 `scripts/smoke.py` 保留不变。
 - 冒烟服务用 3199 等独立端口，跑完立即关闭；不要重启用户正在使用的 3100 预览服务。
 

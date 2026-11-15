@@ -7,12 +7,12 @@
  *   ---
  *   （markdown 正文，作为 Lesson.md）
  *
- * 用法：
- *   node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir>           # 生成全部
- *   node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir> --check   # 干跑校验，不写文件
+ * 用法（在仓库根目录执行；相对路径以 cwd 为基准）：
+ *   node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs <drafts-dir> <out-dir>           # 生成全部
+ *   node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs <drafts-dir> <out-dir> --check   # 干跑校验，不写文件
  *
  *   例（00091 agent-harness）：
- *     node --experimental-strip-types scripts/gen-course.mjs \
+ *     node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs \
  *       docs/00091-agent-harness-course/drafts app/data/agent-harness-course/lessons
  *
  * 设计：草稿是唯一内容源（资料与内容先落盘、防上下文压缩丢信息）；生成只做机械转换——
@@ -22,14 +22,14 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+/* 以 cwd 为基准解析参数（脚本随 skill 存放，不能按脚本自身位置推导仓库根）。 */
+const ROOT = process.cwd()
 const args = process.argv.slice(2).filter((a) => a !== '--check')
 const CHECK = process.argv.includes('--check')
 if (args.length !== 2) {
   console.error(
-    '用法: node --experimental-strip-types scripts/gen-course.mjs <drafts-dir> <out-dir> [--check]',
+    '用法: node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs <drafts-dir> <out-dir> [--check]',
   )
   process.exit(2)
 }

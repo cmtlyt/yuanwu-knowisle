@@ -89,6 +89,18 @@ node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-c
 
 它是通用的数据一致性校验；落地到具体项目后，还需跑项目自带的引擎全轨迹自检（本仓库为 `pnpm verify`），两者互补，缺一不可。
 
+**大课的推荐写法：纯 Markdown 草稿 → 生成器**（00092 起为 skill 资产）。十几课以上的课程不要手写
+`lNN.ts`（模板串转义必然漏），改为在 `<task>/drafts/LNN.md` 写「`---` 包围 JSON frontmatter + markdown
+正文」的草稿，用生成器一次性产出全部课时文件；frontmatter 字段契约（`prereqs` 填**课时 id** 而非概念 id、
+quiz/answer/term/pitfall 约束）与**固定两步管线 gen → `pnpm fmt`** 见 `data-model.md` 的「草稿管线」小节：
+
+```bash
+node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs \
+  <drafts-dir> <topic>-course/lessons [--check]
+```
+
+生成器只保证草稿可解析、可生成；引用完整性与体量闸门仍由 `check-course.mjs` / `verify` / `content-gate` 统一把关。
+
 ---
 
 ## 阶段 4 · 交互演练层

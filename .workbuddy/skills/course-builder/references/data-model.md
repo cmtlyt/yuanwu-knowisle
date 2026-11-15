@@ -143,6 +143,37 @@ interface CourseData {
 判定顺序：先看标题与 goals 的**动词**，再看有没有「对照 / 场景 / Capstone」的结构特征，最后才考虑 overview（它有四道护栏，不能当逃生口）。改标后必须重跑 `--update-baseline`，因为下限随课型变化。
 
 
+### 草稿管线（纯 Markdown → 课时 TS，00092 起 skill 资产）
+
+大课（十几课以上）推荐「**纯 Markdown 草稿 → 生成器**」管线，从根因消除 `md` 模板串的四类手工转义坑
+（裸反引号、`\'`、`\.`、`\[`、`${`、换行）：
+
+- **草稿格式**（`<drafts-dir>/LNN.md`，`---` 包围 JSON frontmatter + markdown 正文）：
+
+  | 字段 | 约束 |
+  |---|---|
+  | `id` | 必须匹配 `L\d{2}` |
+  | `stage` / `title` / `difficulty` | 必填 |
+  | `prereqs` | **课时 id**（如 `["L04"]`）且必须在本课之前——**不是概念 id**；概念级依赖写 `Concept.prereqs`。两表填反只有 verify 的「课时前置顺序」能拦住 |
+  | `concepts` | 概念 id，至少 1 个 |
+  | `goals` | 至少 2 条；kind=practice 时须含实现类动词（H2 硬校验） |
+  | `kind` | 六值之一（见「课型判定」）；可用 `kindReason` 附判定理由 |
+  | `quiz` | 至少 1 题（theory 不允许 0 题）；每题 `options ≥ 2`、`answer` 越界即拒、`concept` 必填 |
+  | `terms` / `pitfalls` | 各至少 1 条 |
+
+- **生成命令**（在仓库根执行，相对路径以 cwd 为基准；草稿与 out-dir 需满足 `<course>/lessons` 布局）：
+
+  ```bash
+  node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs \
+    <drafts-dir> <course>/lessons [--check]
+  ```
+
+- **固定两步管线：gen → `pnpm fmt`**。生成器输出是紧凑格式，oxfmt 会把它展开为门禁格式；
+  幂等性/等价性断言必须在 fmt **之后**用 `git diff --quiet <path>`（`git diff` 带差异时也返回 0，
+  `&& echo` 会给出假阳性）。手动编辑生成的 `lNN.ts` 会在下次生成时被覆盖——改内容只改草稿再重生成。
+- id 连续性、stage/concept 引用、前置 DAG、体量闸门**不在生成器里校验**：由 `verify-course.mjs`
+  与 `content-gate.mjs` 统把关（生成器只保证草稿可解析、可生成）。
+
 ### 课程设计说明书（绑定课程的数据，非独立文件）
 
 ```ts
