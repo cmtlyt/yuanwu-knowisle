@@ -2,6 +2,8 @@
 
 本文件面向在 `yuanwu-knowisle` 中工作的 AI agent 与维护者；**项目介绍见 `README.md`**。以下规则优先于个人习惯，详细流程见 `.workbuddy/skills/` 下的两个项目级 skill。
 
+> **维护口径（00093 起）**：本文件按**现行口径**编写，每条规则只保留当前有效的表述；修订或重排时必须新建 `docs/NNNNN-*/` 任务记录，登记被替换的旧表述（见第 11 节）。
+
 ## 1. 遇到问题：先查库，后回写（强制）
 
 - **遇到任何问题都必须先加载 `pitfall-resolver` skill**，不限于报错：命令失败、门禁不通过、结果不符预期、方案不确定、被用户纠正、反复试错、尚未收录的全新问题。按症状速查表定位 `references/*.md` 后再动手。
@@ -14,21 +16,24 @@
 pnpm install                 # postinstall: nuxt prepare；prepare: husky
 pnpm dev                     # http://localhost:3000（Nuxt 本地开发）
 pnpm build                   # 生产构建（cloudflare_module preset → .output）
-pnpm preview                 # 本地用 Workers 运行时预览（wrangler dev）
+pnpm preview                 # 本地 Workers 运行时预览（wrangler dev）
 pnpm deploy                  # 部署到 Cloudflare Workers（需先 pnpm exec wrangler login）
 
-pnpm fmt:check               # oxfmt 只检查格式
-pnpm fmt                     # oxfmt 写回
-pnpm lint                    # oxlint 快速规则
-pnpm lint:fix                # 自动修复
+pnpm fmt / pnpm fmt:check    # oxfmt 写回 / 只检查格式
+pnpm lint / pnpm lint:fix    # oxlint 快速规则 / 自动修复
 pnpm typecheck               # oxlint --type-aware --type-check
-pnpm verify                  # 课程内容/学情全轨迹 + 助学 Agent 纯计算自检（两段串行）
-                             # 现行四段：verify-course → verify-tutor → verify-content-stats → content-gate
-                             # （后两段为 00052/00054 追加：正文体量闸门 + contentStats 口径自检）
-pnpm build                   # 先构建产出 .output
-pnpm exec wrangler --cwd .output dev --port 3199 &   # 本地 Worker 预览（.output 已由 build 产出）
-python scripts/smoke.py --base http://127.0.0.1:3199
+pnpm verify                  # 四段串行：verify-course → verify-tutor → verify-content-stats → content-gate
 ```
+
+生产预览与冒烟（`generate` / `smoke` npm script 已移除；cloudflare_module 产物是 Worker 入口，**不能用 `node .output/server/index.mjs`**）：
+
+```bash
+pnpm build
+pnpm exec wrangler --cwd .output dev --port 3199       # 终端 1：Workers 预览
+python scripts/smoke.py --base http://127.0.0.1:3199   # 冒烟（smoke.py 默认 base 是 3100，须显式传 --base）
+```
+
+冒烟与调试一律用 3199 等独立端口，跑完立即关闭；不要重启用户正在使用的 3100 预览服务。
 
 助学 Agent **动态回归**（人工按需，不进 CI：依赖本机 Chrome + wrangler + 两个独立端口）：
 
@@ -39,42 +44,44 @@ python scripts/tutor-mock.py --port 3210              # 终端 2：OpenAI 兼容
 python scripts/tutor-probe.py --site http://127.0.0.1:3199 --mock http://127.0.0.1:3210
 ```
 
-`scripts/tutor-probe.py` 用真实 Chrome CDP 覆盖配置加密 / 指纹漂移 / SSE / Markdown XSS /
-错误码降级 / 意图路由 / 学情注入范围 / 清除全部对话 / OPFS 异常降级 / 滚动锁；
-`pnpm verify` 只包含无需浏览器的 `scripts/verify-tutor.mjs`（意图用例表 + 导出边界 + 组键绑定）。
-跑完按第 10 节立即关闭 3199 / 3210 两个临时服务。
+`scripts/tutor-probe.py` 用真实 Chrome CDP 覆盖配置加密 / 指纹漂移 / SSE / Markdown XSS / 错误码降级 / 意图路由 / 学情注入范围 / 清除全部对话 / OPFS 异常降级 / 滚动锁；`pnpm verify` 只包含无需浏览器的 `scripts/verify-tutor.mjs`（意图用例表 + 导出边界 + 组键绑定）。跑完按第 2 节冒烟纪律立即关闭 3199 / 3210 两个临时服务。
 
-质量门禁与部署已迁移到 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地仍可用上述同名 script 复现，无需每次手敲。
-
-通用内容自检（可直接复用 skill 脚本）：
+课程内容工具（skill 资产，均在仓库根执行）：
 
 ```bash
+# 课程数据一致性自检：两个参数都传目录，load() 自动补 index.ts
 node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs \
-  app/data/effect-course.ts app/lib/widgets.ts
+  app/data/effect-course app/lib/widgets
+
+# 课程草稿生成器（00092 起）：大课优先走草稿管线；生成后必须 pnpm fmt 才与提交格式一致（00091/00092 实测）
+node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs \
+  <drafts-dir> app/data/<topic>-course/lessons [--check]
 ```
 
-- **现行命令（00035 目录化后；上方示例路径已失效，按约定不修订原文）**：`node --experimental-strip-types .workbuddy/skills/course-builder/scripts/check-course.mjs app/data/effect-course app/lib/widgets`；两个参数都传**目录**，`load()` 自动补 `index.ts`；RxJS 同理传 `app/data/rxjs-course`。`scripts/verify-course.mjs` 内部仍按 `app/lib/widgets/index.ts` 显式路径 import。
-- **课程草稿生成器（00092 起，skill 资产）**：`node --experimental-strip-types .workbuddy/skills/course-builder/scripts/gen-course.mjs <drafts-dir> <topic>-course/lessons [--check]`，在仓库根执行（相对路径以 cwd 为基准）；契约与固定两步管线见 course-builder skill 的 `references/data-model.md`「草稿管线」小节。大课优先走草稿管线；**生成后必须 `pnpm fmt`** 才与提交格式一致（00091/00092 实测）。
-- `generate` / `smoke` 两个 npm script 已移除；新增 `preview` / `deploy` / `cf-typegen`（Cloudflare 部署）。生产预览与冒烟改用 Workers 运行时：先 `pnpm build` 产出 `.output`，再 `pnpm exec wrangler --cwd .output dev --port 3199`，**不再用 `node .output/server/index.mjs`**（cloudflare_module 产物是 Worker 入口，非 Node 服务）。冒烟统一直接调用 `python scripts/smoke.py --base ...`（pnpm 11 会把 `--` 原样透传给 Python，且 smoke.py 默认 base 是 3100，与实际 3199 临时服务不符）。脚本文件 `scripts/smoke.py` 保留不变。
-- 冒烟服务用 3199 等独立端口，跑完立即关闭；不要重启用户正在使用的 3100 预览服务。
+草稿管线的完整契约（frontmatter 字段、`prereqs` 填课时 id、gen → fmt 两步管线与幂等断言）见 course-builder skill `references/data-model.md` 的「草稿管线」小节；`scripts/verify-course.mjs` 内部仍按 `app/lib/widgets/index.ts` 显式路径 import。
 
 ## 3. 质量门禁与覆盖范围
 
 - 按「快 → 慢」执行：`fmt:check` → `lint` → `typecheck` → `verify` → `build` → `smoke`。任一失败即停，先查 `pitfall-resolver`。
-- 通过线是 **0 errors**。存量 warnings（`lint` 10、`typecheck` 12；按「规则+文件+行+列」去重后 8 条，00033 清理后基线）= 5 条函数作用域风格项 + 2 条必要的内核边界类型断言 + **1 条有意保留的 `no-unused-vars`**，不阻塞构建。唯一剩余未使用项是 `app/lib/widgets.ts:114` 的 `svg()`（完整可复用 helper、当前零调用），按 00033 决策保留，**不要顺手删**。`consistent-function-scoping` 有 2 个位置各重复报 3 次，故输出数大于唯一数。
-- **现行 warnings 基线（00035 后；上方统计口径已失效，按约定不修订原文）**：`lint` 3 / `typecheck` 5，**零重复**（oxlint `labels[-1]` 才是函数位置，`labels[0]` 是父作用域）；构成为 `app/lib/analytics.ts` 3 条 `consistent-function-scoping` + `app/composables/use-learning.ts` 2 条内核边界类型断言。原「唯一 8 条 / 重复报 3 次」与 `app/lib/widgets.ts:114` 的 `svg()` warning 已随 00035 目录化消失（`svg()` 函数体保留在 `widgets/dom.ts` 并成为 export）。
+- 通过线是 **0 errors**。存量 warnings 是背景噪音，**现行基线（00093 实测）：`lint` 5 / `typecheck` 10**，构成：
+  - `unicorn(consistent-function-scoping)` 5 处：`app/lib/analytics.ts`（3）、`.workbuddy/skills/course-builder/scripts/gen-course.mjs`（00092 移入 skill 后新增，1）、`scripts/migrate-blocks-to-md.mjs`（1）；
+  - 仅 type-aware 暴露的另外 5 处：`app/composables/use-learning.ts`（2，必要的内核边界类型断言）与 `app/lib/markdown.ts`（3）。
+  - 不要为清零 warnings 改坏语义；出现新 warning 时先判断是否同类背景噪音，拿不准就查 `pitfall-resolver`。
 - `lint` 只跑毫秒级快速规则，`typecheck` 才启用 type-aware 与 TS 编译器诊断；不要把 type-aware 写进 `.oxlintrc.json` 的常驻配置。
 - 两份 Oxc 配置**只忽略不可追踪**目录：`.nuxt/`、`.output/`、`.data/`、`dist/`、`node_modules/`（oxlint 另含 `archive/`）；oxfmt 另忽略 `**/*.md`、`**/*.css`、`**/*.yaml`、`**/*.yml` 与 `pnpm-lock.yaml`。**可追踪目录一律纳入门禁**，包括 `.workbuddy/skills/` 下的 TS / MJS 文件——否则 lint-staged 把暂存文件传给工具、工具却因 `ignorePatterns` 排除，会报 `Expected at least one target file` 退出 2 并阻断提交。
 - 门禁不覆盖 Vue 模板表达式与模板级类型检查（见第 9 节）。
+- 质量门禁与部署已迁移到 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地仍可用上述同名 script 复现，无需每次手敲。
 
 ## 4. 提交规范与 Git hooks
 
-`pnpm install` 通过 `prepare: husky` 设置 `core.hooksPath=.husky/_`；`.husky/_/` 由 husky 生成并自忽略，两个 hook 随仓库共享。
+`pnpm install` 通过 `prepare: husky` 设置 `core.hooksPath=.husky/_`；`.husky/_/` 由 husky 生成并自忽略，两个 hook 随仓库共享。hooks 只做毫秒级暂存检查；`typecheck` / `verify` / `build` 不在 hook 内，统一交给 GitHub Actions（见第 3 节）。
 
 | Hook | 命令 | 作用 |
 |---|---|---|
-| `pre-commit` | `pnpm exec lint-staged` | 只检查暂存文件：`*.{ts,vue,mjs,js,cjs}` → `oxfmt` 写回 + `oxlint`；`*.{json,jsonc}` → 只 `oxfmt` |
+| `pre-commit` | `pnpm exec lint-staged --max-arg-length=4000` | 只检查暂存文件：`*.{ts,vue,mjs,js,cjs}` → `oxfmt` 写回 + `oxlint`；`*.{json,jsonc}` → 只 `oxfmt` |
 | `commit-msg` | `pnpm exec commitlint --edit "$1"` | Conventional Commits 校验 |
+
+`--max-arg-length=4000` 的由来：Windows 下 lint-staged 会把全部暂存文件的**绝对路径**拼进一条命令，经 `.cmd` shim 走 cmd.exe 时受 8191 字符上限约束——单文件绝对路径约 70 字符，一次提交约 120 个文件即报「命令行太长。」（文案还会因编码显示成乱码），任务被杀、提交被拒。4000 切成 ~55 个/批；实测 8000 仍会超（分片后的单批约 7.2K，加 cmd 包装即越界）。
 
 提交信息 `<type>(<scope>): <subject>`，scope 可选且**取值不限**（不做 `scope-enum`，避免挡住 `site` / `a11y` 等合法模块名）：
 
@@ -88,12 +95,9 @@ feat(app)!: 调整学情接口
 type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / revert / style / test`；header ≤100 字符、**body 每行 ≤100 字符**（`@commitlint/config-conventional` 默认带 `body-max-line-length`）、subject 非空且不以 `.` 结尾，其余沿用 `@commitlint/config-conventional`。`Merge` / `Revert` / `fixup!` 默认忽略。
 
 - 提交正文只写一句短引用，任务关联编号可简写；较长的说明放 `docs/NNNNN-*/overview.md`。不确定时用 `printf ... | pnpm exec commitlint --quiet` 预验。
-
-- hooks 只做毫秒级暂存检查；`typecheck` / `verify` / `build` 不在 hook 内，统一交给 GitHub Actions（`.github/workflows/ci-cd.yml`）：push / PR 到 `main` 自动跑 `fmt:check → lint → typecheck → verify → build`，push 到 `main` 且配置了 Cloudflare 密钥后自动 `pnpm deploy`。本地可用同名 script 复现。
 - 单独调试：`git hook run pre-commit`、`printf 'feat: 示例' | pnpm exec commitlint`。
 - hook 由 husky wrapper 以 `sh -e` 执行，不依赖可执行位；从 GUI 客户端提交需保证 `pnpm` 在 PATH 中。
 - 仓库尚无初始提交时 lint-staged 提示 `Skipping backup because there's no initial commit yet` 并跳过备份 stash，属预期；首次提交后恢复常规机制。
-- **`pre-commit` 现行命令是 `pnpm exec lint-staged --max-arg-length=4000`**（覆盖上表单元格里的字面写法）：Windows 下 lint-staged 会把全部暂存文件的**绝对路径**拼进一条命令，经 `.cmd` shim 走 cmd.exe 时受 8191 字符上限约束——单文件绝对路径约 70 字符，一次提交约 120 个文件即报「命令行太长。」（文案还会因编码显示成乱码），任务被杀、提交被拒。4000 切成 ~55 个/批；实测 8000 仍会超（分片后的单批约 7.2K，加 cmd 包装即越界）。
 
 ## 5. 文件命名
 
@@ -121,7 +125,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 
 - **三层解耦**：内容层（`app/data/`）驱动全部页面，引擎层（`app/lib/analytics.ts`）纯计算不碰 DOM，视图层只渲染不硬编码课时列表。
 - 修改课程正文前先核对 `effect@4.1.4` 版本基线，`META.version` / `verifiedAt` / `docs` 集中在数据层；**严禁混用跨版本 API**。
-- 新增课程只在 `app/data/courses.ts` 追加一项，提供 `EffectCourseData` 与独立 `storageKey`；页面、侧栏与学情按数据自动生成。
+- 新增课程只在 `app/data/courses.ts` 追加一项，提供独立数据与 `storageKey`；页面、侧栏与学情按数据自动生成。
 - 引用完整性（阶段 / 概念 / 前置 / 答案索引 / widget 标识）必须由 `check-course.mjs` 自动校验，任何悬空引用都要让脚本失败。
 - 演练内核由 `course-widget.vue` 在 `onMounted` 挂载、`onBeforeUnmount` 调用 `cleanup()` 回收定时器；改动 widget 后跑 `check-course.mjs` + `pnpm verify`。
 - 学情数据只存 localStorage 且可导出；按课程隔离 storage key，导入时校验版本字段并拒绝非法备份。
@@ -135,7 +139,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 | Skill | 职责 |
 |---|---|
 | `.workbuddy/skills/course-builder/` | 课程构建 8 阶段流程、数据契约、通用自检脚本与数据骨架 |
-| `.workbuddy/skills/pitfall-resolver/` | 按症状检索的问题排查与解决方案库（6 个主题参考文件），采用「先查库 → 再修 → 后回写」闭环 |
+| `.workbuddy/skills/pitfall-resolver/` | 按症状检索的问题排查与解决方案库（9 个主题参考文件，按症状按需读取），采用「先查库 → 再修 → 后回写」闭环 |
 | `.workbuddy/skills/` 下 5 个 Cloudflare 官方目录 | `frameworks-on-cloudflare`（含 Nuxt → Workers 适配）、`wrangler`、`cf-cli`、`cloudflare-app-bootstrap`、`workers-best-practices` |
 
 - 这 5 个是 Cloudflare 官方仓库 `cloudflare/skills` 的快照（commit `cbf893b`，Apache-2.0；许可证全文见 `.workbuddy/skills/cloudflare-license.md`），全部只有 Markdown，不进入 lint-staged 的代码扩展名 glob。
@@ -161,10 +165,7 @@ type 白名单：`build / chore / ci / docs / feat / fix / perf / refactor / rev
 
 ## 11. 任务记录组织
 
-- 历史与变更记录统一放在 `docs/NNNNN-<task-name>/`，**一次任务一个目录**，编号 5 位递增；入口与索引是 `docs/README.md`。
+- 历史与变更记录统一放在 `docs/NNNNN-<task-name>/`，**一次任务一个目录**，编号 5 位递增（如 `00001-init`）；入口与索引是 `docs/README.md`，新任务只追加索引行。**不要把新任务内容追加到已有目录或旧文件**；拆分前的累积文件（根目录 `overview.md`、`docs/migration.md`）已废弃，内容按任务迁入各任务目录，引用改用 `docs/README.md` 或具体任务目录。
 - **先建 overview 再实施（强制）**：动手改代码 / 数据 / 配置之前，必须先新建 `docs/NNNNN-<task-name>/overview.md`，写清「目标 + 变更计划 + 验证方案」；**改动较大时先把计划给用户审核，通过后再正式实施**。实施完成再补全「变更 / 验证 / 注意事项」。纯只读探查或单行改动可豁免，但一旦涉及多文件或影响行为就不得跳过。
-- 每完成一次用户任务，新建下一个编号目录，写 `overview.md`（目标 / 变更 / 验证 / 注意事项）；涉及迁入或映射时另写 `migration.md`。**不要把新任务内容追加到已有目录或旧文件**。
-- 目录名用编号开头 + kebab-case 任务名（如 `00001-init`）；只在 `docs/README.md` 索引里登记，不改历史目录中的结论；已失效的历史结论在原目录内标注「以 NNNNN 为准」。
-- 拆分前的累积文件（根目录 `overview.md`、`docs/migration.md`）已废弃，内容按任务迁入上述目录；引用改用 `docs/README.md` 或具体任务目录。
-- **历史记录不可矫正（00034 起，用户永久约定，优先于本节上文与 `docs/README.md` 的旧表述）**：任何已经落盘的任务记录（`docs/NNNNN-*/` 内的全部文件，含 overview / migration / corrections / 附录）**一律不改写、不追加、不标注、不「以 NNNNN 为准」**，包括其中已失效的数字、结论与统计口径；也不要回填修改 `AGENTS.md` / `docs/README.md` 中已落盘的历史基线表述。发现旧结论失真时，**只能在新建的任务记录里明确写出「本次变更会修复 NNNNN 任务的 xx 内容」**，并给出正确口径。本节上文「已失效的历史结论在原目录内标注」与 `docs/README.md` 约定中同类表述自 00034 起不再执行。本文档如需新增规则，只能追加新行，不得修订已有行。
-- **活文档不受「历史记录不可矫正」保护（00036 起）**：保护范围仅限 `docs/NNNNN-*/` 全部文件与 `AGENTS.md` / `docs/README.md` 中已落盘的历史基线表述；根 `README.md`、`app/` 下的代码注释与课程正文、`.workbuddy/skills/` 下的 skill 文档都是**活文档**，发现事实失真应直接校正到当前实现，并在新任务 overview 中声明会修复哪些旧结论。
+- **历史记录不可矫正（00034 起，用户永久约定）**：任何已经落盘的任务记录（`docs/NNNNN-*/` 内的全部文件，含 overview / migration / corrections / 附录）**一律不改写、不追加、不标注**，包括其中已失效的数字、结论与统计口径；`docs/README.md` 已落盘的历史索引行同样不回填修改。发现旧结论失真时，**只能在新建的任务记录里明确写出「本次变更会修复 NNNNN 任务的 xx 内容」**，并给出正确口径（例：00092 修正 00091 的生成器路径，00093 修正 00091/00092 的 warnings 基线）。
+- **活文档直接校正（00036 起，00093 修订范围）**：根 `README.md`、`app/` 下的代码注释与课程正文、`.workbuddy/skills/` 下的 skill 文档，以及**本文件（AGENTS.md）的现行口径**都是活文档，事实失真应直接校正到当前实现，并在新任务 overview 中声明会修复哪些旧结论。AGENTS.md 不再采用「旧行失效后只能紧邻追加修正行」的维护方式（该方式造成叠层杂乱，00093 已重排）；修订 / 重排本文件时新建任务记录登记被替换的旧表述，即可追溯。
