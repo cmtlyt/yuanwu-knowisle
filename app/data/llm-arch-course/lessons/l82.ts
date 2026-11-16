@@ -1,0 +1,391 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L82 = withKind(
+  L(
+    'L82',
+    36,
+    '从零 700M 预训练 + 多卡 ZeRO capstone',
+    5,
+    ['L79', 'L80'],
+    ['m8-capstone'],
+    [
+      '搭建从零 700M 预训练流程',
+      '跑通多卡 ZeRO 冒烟',
+      '核算 token/参数对齐 Chinchilla',
+      '给出 loss 降/困惑度验收断言',
+    ],
+    `### 综合交付要做什么：把 M8 串成一条链路
+
+这是 M8 的收束课。前面各课各自打碎预训练的一个环节：L72 定 next-token 目标、L73 定数据配比、L74 净化语料、L75 给 Chinchilla 算力律、L76 讲过训练权衡、L77 把预算变成规划器、L78 从零跑通 125M、L79 做领域适配、L80 上多卡 ZeRO、L81 用探针测能力。本课把这条链路拼成一个**从零 700M 预训练 + 多卡 ZeRO 的完整交付**，并对着可执行断言验收。
+
+来源挂 S-Chinchilla/S-Transformer17（A 级）：算力律与结构都用 A 级结论。交付物有五件：① 用 L77 规划器算出 700M 的 N/D；② 准备数据与分词器；③ 写 700M 配置并从零初始化；④ 用 torchrun + ZeRO 跑多卡训练、产出 loss 曲线；⑤ 做 token/参数核算、loss 下降与困惑度验收断言、能力探针复核。五件全勾、断言全过，才算完成 capstone。
+
+:::deep
+
+### 一条链路上每块负责什么（归因全景）
+
+把 M8 拆成「定目标 → 备数据 → 算预算 → 搭模型 → 训起来 → 验效果」六层，交付物正好各占一层，且每层的结论都有等级：
+
+- **目标（L72，A）**：next-token 交叉熵，训练与生成同构。这是全程唯一的监督信号。
+- **数据（L73/L74，A/B）**：配比挂 A（LLaMA 2302.13971），清洗工具链是 B 级经验。700M 要 14B token，数据规模是真实门槛。
+- **预算（L75/L77，A）**：C≈6ND、D/N≈20 都是 A 级；规划用有效算力 C·MFU。过训练系数（L76）是 B 级，本课按 20 走主线，不拿 B 级值当关键结论。
+- **模型（L78，A）**：从零随机初始化，结构照 transformer decoder-only，参数量用断言核对。
+- **并行（L80，A）**：700M 单卡显存紧张，用 ZeRO 分片状态；torchrun 拉多进程。
+- **验收（L81，A）**：loss/PPL 是拟合度代理，能力探针是直接证据，两者分开看。
+
+关键认知：**这不是六个独立实验，而是一条有依赖的链**。预算决定模型规模与步数，规模决定要不要并行，并行方式影响训练稳定性，训练产出 loss 曲线，曲线与探针共同构成验收。任何一环出错（配比错位、token 核算错、并行没生效），后面全废。capstone 的价值就是让你亲手把这条链跑通一次，并对每个数字负责。
+
+:::
+
+### 第一步：用规划器算 700M 的 N/D 预算
+
+先复用 L77 的 Chinchilla 规划逻辑，把 700M 的 token 预算、训练算力、显存需求算清楚。这是立项第一步：目标参数 N=700M，按 A 级 20 token/参数得 D=14B token，训练算力 C≈6ND，显存约 12N 字节。把这几个数作为全程的「设计指标」，后面所有断言都对着它们。
+
+\`\`\`python
+import math
+N_TARGET = 700e6
+R = 20                              # Chinchilla token/参数（A 级）
+D_TARGET = R * N_TARGET             # 应 ≈ 14B token
+C_TRAIN = 6 * N_TARGET * D_TARGET   # ≈ 5.88e22 FLOPs
+MEM_STATE_GB = 12 * N_TARGET / 1e9  # 基线模型状态 ≈ 8.4GB
+
+print(f"目标参数 N = {N_TARGET/1e6:.0f}M")
+print(f"目标 token D = {D_TARGET/1e9:.1f}B  (D/N={D_TARGET/N_TARGET:.0f}, A级)")
+print(f"训练算力 C ≈ 6ND = {C_TRAIN:.2e} FLOPs")
+print(f"模型状态显存 ≈ 12N = {MEM_STATE_GB:.1f} GB (单卡放得下但紧)")
+# 设计指标自检
+assert abs(D_TARGET/N_TARGET - 20) < 1e-9
+assert 5e22 < C_TRAIN < 7e22
+assert 8.0 < MEM_STATE_GB < 9.0
+print("700M 设计指标自检通过")
+\`\`\`
+
+三个断言把设计指标钉死：D/N 必须等于 20（A 级比例）、算力在 6e22 量级、显存在 8 到 9GB（解释为何需要多卡）。这组数是后面核对的基准——若实际训练 token 远低于 14B，就是欠训练；若显存按 8.4GB 单卡跑，会 OOM 或极慢。
+
+### 第二步：数据、分词器与 700M 配置
+
+数据与分词器沿用 L74/L78 的管线，但规模放大。70M 数据的清洗与配比在 L73/L74 已讲，这里聚焦「把干净 token 流喂给 700M 配置」。用 L77 的结构换算（N≈12·L·d²）反推 700M 的层数与隐藏维：取 L=24、d=1024，主项 12·24·1024²≈302M，偏小；取 L=24、d=1280 得约 470M；加上 embedding 与投影（词表 32K×1280×2≈82M）与逐层参数，接近 700M。写成配置并用断言核对量级。
+
+\`\`\`python
+from transformers import GPT2Config, GPT2LMHeadModel
+
+VOCAB = 32000
+config700 = GPT2Config(
+    vocab_size=VOCAB, n_positions=2048,
+    n_embd=1280, n_layer=24, n_head=20,   # d/n_h=64
+    bos_token_id=1, eos_token_id=2,
+)
+model700 = GPT2LMHeadModel(config700)
+n700 = sum(p.numel() for p in model700.parameters())
+print(f"700M 配置: L={config700.n_layer}, d={config700.n_embd}, "
+      f"heads={config700.n_head}, vocab={VOCAB}")
+print(f"实际参数量 = {n700/1e6:.1f} M")
+# 量级核对：600M~850M
+assert 600e6 < n700 < 850e6, "应在 700M 量级"
+print("700M 配置自检通过")
+\`\`\`
+
+\`600M < n700 < 850M\` 的断言允许词表与实现差异，但把量级锁在 700M。配置里 n_head=20、d=1280，每头 64 维，符合 L15 的 n_h×d_h=d_model 约束。这份配置从随机初始化开始——capstone 是从零训练，不是加载基座（那是 L79 的 CPT）。
+
+### 数据规模的现实：14B token 意味着什么
+
+125M 冒烟用几百条合成文本就能看到 loss 下降，但 700M 的正式预算是 14B token——这是三个数量级的差距。14B token 按中文平均 1.5 字每 token 折算，约 20B 汉字，相当于数千本书、上百亿字节的净化文本。这个规模决定了三件事：第一，**数据管线必须能流式读取**，不能把全部语料一次性读进内存——HF 的 \`datasets\` 内存映射或 \`IterableDataset\` 流式加载是必需；第二，**配比要提前算好**（L73），14B token 按 LLaMA 的 A 级配比意味着 Common Crawl 约 9.4B、C4 约 2.1B、Wikipedia 约 0.63B 等，各来源的 token 预算必须提前分配；第三，**token 核算要对得上实际读取量**，不能「以为喂了 14B、实际因数据管线截断只喂了 2B」。
+
+把配比预算写成可跑的核算，确保正式训练各来源 token 之和等于 14B：
+
+\`\`\`python
+llama_mix = {"CommonCrawl":0.67, "C4":0.15, "Wikipedia":0.045,
+             "Books":0.045, "ArXiv":0.025, "StackExchange":0.02,
+             "GitHub+其他":0.045}
+assert abs(sum(llama_mix.values())-1.0) < 1e-6
+alloc = {k: w*D_TARGET for k, w in llama_mix.items()}
+for k, v in alloc.items():
+    print(f"{k:14s} 预算 {v/1e9:6.2f}B token")
+print("各来源合计 =", round(sum(alloc.values())/1e9, 2), "B token")
+assert abs(sum(alloc.values()) - D_TARGET) < 1e3
+print("14B token 配比预算核对通过")
+\`\`\`
+
+这段把 L73 的 A 级配比接到 L82 的 14B 预算：各来源 token 相加必须精确等于 14B，否则训练分布会偏离目标配比。冒烟阶段可以省略这步（用合成数据即可），但正式预算必须核对——这是「先净化配比、再训练」纪律在 capstone 的落地。
+
+### 第三步：多卡 ZeRO 训练脚本
+
+把 L80 的 2 卡 ZeRO 脚本扩展到 700M。要点：torchrun 拉多进程、DeepSpeed ZeRO-2 分片优化器与梯度、DistributedSampler 分发不重复数据、记录每步 loss。下面是完整训练脚本 \`train_700m.py\`（结构可运行）与配套配置、启动命令。
+
+\`\`\`python
+# train_700m.py —— 从零 700M + 多卡 ZeRO-2 训练（结构骨架，可运行逻辑）
+import os, math, torch, torch.distributed as dist, deepspeed
+from torch.utils.data import Dataset, DataLoader
+from transformers import GPT2LMHeadModel
+
+local_rank = int(os.environ.get("LOCAL_RANK", 0))
+dist.init_process_group("nccl")
+torch.cuda.set_device(local_rank)
+world = dist.get_world_size()
+rank = dist.get_rank()
+
+# 从零初始化 700M（配置见第二步；真实项目从 config700 构造）
+model = GPT2LMHeadModel(config700)
+
+class TokenStream(Dataset):
+    """示意：真实项目返回 L74 清洗、L73 配比后的 token 块。"""
+    def __len__(self): return 4096
+    def __getitem__(self, i):
+        ids = torch.randint(1, VOCAB, (1024,))
+        return {"input_ids": ids, "labels": ids.clone()}
+
+ds = TokenStream()
+sampler = torch.utils.data.DistributedSampler(
+    ds, num_replicas=world, rank=rank, shuffle=True, seed=0)
+loader = DataLoader(ds, batch_size=2, sampler=sampler, num_workers=0)
+
+engine, opt, _, _ = deepspeed.initialize(
+    model=model, model_parameters=model.parameters(), config="ds_700m.json")
+
+losses = []
+step = 0
+engine.train()
+for batch in loader:
+    batch = {k: v.cuda(local_rank) for k, v in batch.items()}
+    out = engine(**{k: batch[k] for k in ("input_ids", "labels")})
+    loss = out.loss                       # GPT2LMHeadModel 内部已 shift 交叉熵
+    engine.backward(loss)
+    engine.step()
+    step += 1
+    if step % 20 == 0:
+        losses.append(loss.item())
+        if rank == 0:
+            print(f"[rank0] step {step}, loss {loss.item():.4f}, "
+                  f"PPL {math.exp(min(loss.item(),20)):.2f}")
+    if step >= 200: break                 # 冒烟：200 步；正式按 14B token 对应步数
+
+# 各 rank 的 loss 序列应一致（梯度同步）；rank0 保存
+assert all(math.isfinite(l) for l in losses), "loss 不应出现 NaN/Inf"
+if rank == 0:
+    torch.save(losses, "loss_700m.pt")
+print(f"rank {rank} 完成 {step} 步, 记录 {len(losses)} 个 loss 点")
+\`\`\`
+
+DeepSpeed 配置 \`ds_700m.json\` 与启动命令：
+
+\`\`\`json
+{
+  "train_batch_size": 16,
+  "gradient_accumulation_steps": 4,
+  "optimizer": {"type": "AdamW", "params": {"lr": 3e-4, "betas": [0.9, 0.95]}},
+  "fp16": {"enabled": true},
+  "zero_optimization": {"stage": 2, "allgather_partitions": true,
+                        "reduce_scatter": true, "contiguous_gradients": true},
+  "gradient_clipping": 1.0
+}
+\`\`\`
+
+\`\`\`bash
+# 2 卡 ZeRO-2 冒烟；正式训练把 nproc_per_node 与 batch 调大
+torchrun --standalone --nproc_per_node=2 train_700m.py
+# 验收信号：两 rank loss 同步下降、无 NCCL timeout、峰值显存 < 单卡预算
+\`\`\`
+
+这里有三个 capstone 专属的检查点：① \`gradient_accumulation_steps=4\` 把等效 batch 提到 16（每卡 batch 2 × 2 卡 × 4 累积），大模型训练靠梯度累积凑大 batch；② \`gradient_clipping=1.0\` 防梯度爆炸——700M 比 125M 更不稳，必须裁剪；③ \`assert all(isfinite)\` 把「不发散」写成硬断言，NaN/Inf 立即暴露。这份脚本产出 \`loss_700m.pt\`，供下一步验收。
+
+### 第四步：loss 曲线与困惑度验收
+
+拿到 loss 序列后，做第一组验收断言：**loss 明显下降、困惑度下降、不发散**。这是 L78/L79 判据的放大版。用可跑代码读回 loss，算首末段均值对比、困惑度换算、尖峰检测。
+
+\`\`\`python
+import torch, math
+losses = torch.load("loss_700m.pt")
+n = len(losses)
+assert n >= 5, "至少要有 5 个 loss 记录点"
+head = sum(losses[:max(2, n//5)]) / max(2, n//5)          # 首 20% 均值
+tail = sum(losses[-max(2, n//5):]) / max(2, n//5)         # 末 20% 均值
+print(f"首段 loss 均值 {head:.4f}, 末段 {tail:.4f}, 降幅 {head-tail:.4f}")
+print(f"困惑度 {math.exp(head):.2f} -> {math.exp(tail):.2f}")
+
+# 验收断言一：loss 明显下降（末段低于首段）
+assert tail < head * 0.98, "训练后 loss 应明显下降"
+# 验收断言二：无发散尖峰（相邻点不出现数量级跳变）
+spikes = [abs(losses[i+1]-losses[i]) for i in range(n-1)]
+assert max(spikes) < 3.0, "相邻 loss 跳变过大，可能发散"
+# 验收断言三：全程有限值
+assert all(math.isfinite(l) for l in losses)
+print("loss 下降 / 困惑度下降 / 不发散 三组验收断言通过")
+\`\`\`
+
+三组断言对应三个失败模式：断言一失败说明训练没学到东西（查学习率、数据、shift）；断言二失败说明发散（查裁剪、学习率、并行同步）；断言三失败说明数值崩了（查 fp16 溢出、学习率过大）。只有三组全过，才能说「训练有效」。注意这里验收的是**趋势与稳定性**，不是「loss 降到 0」那种不现实目标——绝对值随语料与规模变，趋势才可复现。
+
+### 训练稳定性：700M 比 125M 更容易翻车
+
+模型从 125M 放大到 700M，训练稳定性是坎。参数越多，梯度尺度与损失曲面越复杂，几个在 125M 上无所谓的细节到 700M 就会致命。第一，**学习率要重新标定**：小模型能用的 5e-4 在 700M 上容易发散，脚本里降到 3e-4 并配 warmup（前若干步线性升温），让优化器先稳定再全速。第二，**必须开梯度裁剪**：\`gradient_clipping=1.0\` 把范数超限的梯度缩回去，防止偶发大梯度把权重一步推飞——125M 可以不裁剪，700M 不裁几乎必炸。第三，**数值精度要盯**：fp16 训练下 loss 尖峰常来自半精度溢出，若反复出现 NaN，先切到 bf16（动态范围更大）再查其他原因。第四，**checkpoint 要勤存**：大模型训练动辄数天数周，必须定期存盘，否则一次中断从头再来。
+
+把稳定性设置写成可跑的自检，确认关键开关都开了：
+
+\`\`\`python
+cfg = {"lr": 3e-4, "warmup": True, "grad_clip": 1.0,
+       "precision": "fp16", "save_every": 500}
+assert cfg["lr"] <= 5e-4, "700M 学习率不应过大"
+assert cfg["warmup"], "必须开 warmup"
+assert cfg["grad_clip"] > 0, "必须开梯度裁剪"
+assert cfg["save_every"] > 0, "必须定期存 checkpoint"
+print("训练稳定性开关自检通过:", cfg)
+# 若 loss 反复 NaN，优先把 precision 从 fp16 切到 bf16 再排查
+\`\`\`
+
+这组自检把「稳定性」从经验变成可核对的开关清单。任何一项不满足（比如忘了开裁剪），在放大训练前就该报警——capstone 要求你对每个开关负责，而不是等炸了再回头找。
+
+### 第五步：token/参数核算对齐 Chinchilla
+
+第二组验收：**实际训练的 token 数是否对齐 Chinchilla 预算**。用「步数 × 等效 batch token」算出实际 D，除以参数量得实际 D/N，与目标 20 对照。若显著低于 20，说明欠训练；若刻意高于 20（过训练），必须标注那是 B 级场景选择、不担关键结论。
+
+\`\`\`python
+# 核算实际训练 token：冒烟 200 步 vs 正式按 14B token
+BATCH_TOKENS = 16 * 1024     # 等效 batch 16 × seq 1024
+steps_smoke = 200
+steps_full = int(D_TARGET / BATCH_TOKENS) + 1
+D_smoke = steps_smoke * BATCH_TOKENS
+D_full = steps_full * BATCH_TOKENS
+
+for tag, D in [("冒烟200步", D_smoke), ("正式预算", D_full)]:
+    print(f"{tag}: 步数 {steps_smoke if '冒烟' in tag else steps_full}, "
+          f"D≈{D/1e9:.2f}B token, D/N≈{D/N_TARGET:.1f}")
+print(f"正式预算目标 D/N≈{D_full/N_TARGET:.1f} (应为 A 级 20 附近)")
+assert abs(D_full/N_TARGET - 20) < 1.0, "正式预算应对齐 Chinchilla 20 token/参数（A）"
+assert D_smoke < D_full, "冒烟只是子集，token 远小于正式预算"
+print("token/参数核算对齐 Chinchilla（A 级）通过")
+\`\`\`
+
+这里要讲清一个 capstone 常见的困惑：**冒烟 200 步的 D/N 远小于 20，是否违反 Chinchilla？** 不违反——冒烟的目的是验证管线，不是产出可用模型；它本就只用 14B token 的一小部分。Chinchilla 约束的是「正式预算」的 N/D 配比，不是「冒烟步数」。把两者分清：冒烟看「能不能跑、loss 降不降」，正式预算看「D/N 是否计算最优」。断言只对 \`D_full\` 要求对齐 20，正是这个道理。
+
+:::deep
+
+### 数字自检：从 loss 反推困惑度，再核对预算自洽
+
+capstone 的「数字自检」要求你能在几个量之间来回换算、发现不一致。给一组验收数字，做交叉校验：
+
+\`\`\`python
+# 交叉校验：loss -> PPL -> 等效候选 -> 预算自洽
+L_final = tail                       # 第四步的末段 loss
+ppl_final = math.exp(L_final)
+print(f"末段 loss {L_final:.3f} -> PPL {ppl_final:.2f}")
+# 若词表 32000，随机基线 loss=ln(32000)≈10.37, PPL≈32000
+random_loss = math.log(VOCAB)
+print(f"随机基线 loss=ln({VOCAB})={random_loss:.2f}, PPL={VOCAB}")
+assert L_final < random_loss * 0.6, "训练 loss 应远低于随机基线"
+# 预算自洽：C=6ND 应等于 算力×步数×每步FLOPs 的量级
+C_from_plan = 6 * N_TARGET * D_full
+print(f"规划算力 6ND = {C_from_plan:.2e}, 与设计指标 {C_TRAIN:.2e} 一致")
+assert abs(C_from_plan - 6*N_TARGET*D_TARGET)/(6*N_TARGET*D_TARGET) < 0.01
+print("数字交叉校验通过")
+\`\`\`
+
+这段把三个独立来源的数字——loss、困惑度、词表随机基线、预算算力——放在一起校验：训练 loss 必须远低于随机基线（否则等于没学），规划算力必须与第一步设计指标自洽（否则预算算错）。这种「交叉核对」是 capstone 区别于单课练习的核心：你不只要会跑每一步，还要能证明这些数字彼此说得通。
+
+:::
+
+### 第六步：能力探针复核与验收清单
+
+最后用 L81 的探针做能力复核，确认「loss 降」伴随「能力涨」，并把全部验收项汇成清单。在 700M 模型上跑分类探针（few-shot），对比随机基线与训练后；再给一张可勾选清单，五项全勾才算 M8 出口达成。
+
+\`\`\`python
+# 能力探针复核（接 L81 的 probe_classification；这里用训练后的 model700）
+def ask_700m(prompt):
+    ids = tok.encode(prompt).ids                 # tok 为训练时的同一个分词器
+    out = model700.generate(torch.tensor([ids]), max_new_tokens=6,
+                            do_sample=False, pad_token_id=1)
+    return tok.decode(out[0].tolist())
+
+acc700, _ = probe_classification(ask_700m)
+print(f"700M few-shot 分类探针准确率 = {acc700:.2f}")
+# 对照：随机模型通常接近 1/类别数（2 分类约 0.5）
+assert acc700 >= 0.5, "训练后 few-shot 准确率不应低于随机猜测基线"
+print("能力探针复核通过（loss 下降伴随能力不低于随机基线）")
+\`\`\`
+
+能力探针给出「拟合度之外的第二证据」：即使 loss 下降，若探针准确率还在随机水平，说明模型只学会了分布、没学会任务——需要回头查数据质量与配比。把探针与 loss 一起看，才符合 L81「困惑度与能力分开看」的纪律。
+
+M8 出口验收清单：
+
+- [ ] 700M 配置与参数量在 600M 到 850M 量级（第二步断言）。
+- [ ] 多卡 ZeRO 训练跑通，各 rank loss 同步、无 NCCL 超时、无 NaN（第三步）。
+- [ ] loss 明显下降、困惑度下降、无发散尖峰（第四步三组断言）。
+- [ ] 正式预算 D/N 对齐 Chinchilla 20 token/参数（A 级，第五步）。
+- [ ] 能力探针不低于随机基线，loss 与能力双证据齐全（第六步）。
+
+### 常见翻车点与收束
+
+三个最容易翻车的地方。第一，**token 核算错位**：把「等效 batch token」算错（漏乘梯度累积或序列长），导致 D/N 核算失真——第五步的 \`BATCH_TOKENS = 16 × 1024\` 必须与 \`ds_700m.json\` 的 \`train_batch_size\` 和 block size 一致。第二，**并行没真生效**：程序跑完但两卡 loss 不同、显存没降，多半是 sampler 重复或 DeepSpeed 配置没加载——回到 L80 的三个通信信号排查。第三，**拿 B 级当 A 级**：capstone 主线按 Chinchilla 20（A）走，若你做过训练并上调 D/N，那是 B 级场景选择，必须标注「第三方复算、不担关键结论」，不能混进 A 级预算。
+
+:::tip
+
+### 收束与出口
+
+M8 的出口判据：能用 L77 规划器算出 700M 的 N/D（14B token、6e22 算力、8.4GB 状态显存），从零写配置并核对参数量，用 torchrun + ZeRO 跑通多卡训练，用三组断言验收 loss 下降/困惑度下降/不发散，用 token/参数核算对齐 Chinchilla（A 级 20），再用能力探针做第二证据。达成即完成 M8 预训练模块，具备从零规划、从零训练、多卡扩展、效果验收的完整能力。后续 M9 及以后会在这个基座上做更大规模的对齐与推理优化。若数字对不上，按第四步三组断言与第五步交叉校验逐条排查：先查 loss 数值、再查预算自洽、最后查并行信号——把每个数字归因到它的来源，才说明真把 M8 拆透了。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'M8 capstone 把哪些模块串成一条链路？',
+        options: [
+          '只做数据清洗',
+          '目标(L72)+配比(L73)+清洗(L74)+算力规划(L77)+从零训练(L78)+多卡ZeRO(L80)+能力探针(L81) 综合',
+          '只做能力探针',
+          '只做 tokenizer',
+        ],
+        answer: 1,
+        explain:
+          'capstone 综合整模块：用 Chinchilla 规划 700M 的 N/D，清洗配比数据，从零搭模型，用多卡 ZeRO 训练，最后用 loss/困惑度/token 核算与能力探针验收。',
+        concept: 'm8-capstone',
+      },
+      {
+        text: '700M 参数按 Chinchilla（A）20 token/参数，应配多少训练 token？',
+        options: ['约 1.4B token', '约 14B token', '约 140B token', '约 1.4T token'],
+        answer: 1,
+        explain:
+          'D=20N=20×700M≈14B token。这是 Chinchilla 计算最优点（A 级）；冒烟阶段用子集验证管线，正式预算按 14B 量级。',
+        concept: 'm8-capstone',
+      },
+      {
+        text: '验收「loss 降/困惑度」时，合理的断言是？',
+        options: [
+          'loss 必须降到 0',
+          '末段 loss 显著低于首段、困惑度随之下降，且无发散；绝对值按数据与规模定',
+          '困惑度越高越好',
+          '只要跑完就行',
+        ],
+        answer: 1,
+        explain:
+          '验收看趋势与稳定性：loss 明显下降、PPL 下降、训练过程不发散（无 NaN/尖峰）；不设「降到 0」这种不现实目标，具体数值随语料与规模变。',
+        concept: 'm8-capstone',
+      },
+      {
+        text: '多卡 ZeRO 训练里，判断并行「正确」而非只「没报错」的信号是？',
+        options: [
+          '程序没崩就行',
+          '各 rank loss 同步下降、显存确实分片下降、无 NCCL 超时、sampler 互不重复',
+          '显存越高越好',
+          '只用单卡',
+        ],
+        answer: 1,
+        explain:
+          '真正的正确性信号：多 rank loss 同步、显存分片后下降、集合通信不超时、DistributedSampler 保证数据不重复——这些比「没报错」更能证明并行生效。',
+        concept: 'm8-capstone',
+      },
+    ],
+    [
+      ['capstone', '模块综合交付，把分散技能串成一条可复现、可验收的链路'],
+      ['token/参数核算', '用 D/N 比对照 Chinchilla 20 token/参数，检查预算是否计算最优'],
+      ['困惑度验收', '用 PPL=exp(L) 的下降趋势判断训练有效，而非绝对值'],
+      ['loss 发散', '训练中 loss 突增、NaN 或尖峰，说明学习率/数值/并行有问题'],
+      ['验收断言', '可执行的检查（assert），把「训练成功」变成可复现的判据'],
+    ],
+    [
+      '把 700M 的 token 预算算成 140B 或 1.4T——Chinchilla 20 token/参数给出的是约 14B。',
+      '验收只设「loss 降到 0」——不现实；应看趋势下降、困惑度下降与不发散。',
+      '多卡训练只看「没报错」——必须查各 rank loss 同步、显存分片、sampler 不重复。',
+      'capstone 里照抄 L76 的 B 级过训练比当关键结论——Chinchilla 20 是 A 级，过训练值是 B 级，等级分清。',
+    ],
+  ),
+  'capstone',
+)

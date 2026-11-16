@@ -1,0 +1,201 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L100 = withKind(
+  L(
+    'L100',
+    44,
+    'RLAIF / Constitutional AI：模型自评',
+    3,
+    ['L96'],
+    ['rlaif'],
+    [
+      '讲清 RLAIF 用模型自评替代人标',
+      '解释 Constitutional AI 的宪法原则',
+      '对照 RLHF 谱系',
+      '说明可扩展性与偏差',
+    ],
+    `### 人标扩展性的天花板
+
+L96 的 RLHF 用人类偏好对训练奖励模型，但瓶颈很现实：高质量标注员贵、慢、且规模受限。想要覆盖海量 prompt 与多样回答，人标成本线性上升；更重要的是某些安全场景（如红队越狱样本）让人标员反复接触有害内容并不可行。RLAIF（Reinforcement Learning from AI Feedback）的出发点是：**把「标注员」这一步换成 AI 模型自己**——由模型（通常是一个能力足够强、且被指示按规则打分的「标注模型」）对候选回答排序，产出偏好对，再接回 RLHF 的 RM/PPO 或 DPO 流程。 Constitutional AI（arXiv:2212.08073）是这条路线最系统的实现。
+
+:::deep
+
+### CAI 的两阶段：SL + RL
+
+Constitutional AI 把「按原则对齐」拆成两段，对应两种监督信号：
+
+**第一阶段 SL（监督式自我批评与修订）**：给模型一个可能有害的 prompt，让它先产出初始回答 r0；然后指示模型「依据宪法原则批评 r0 的问题」，再指示它「按批评修订成 r1」。把 (prompt, r1) 当作监督数据微调模型。这一步让模型学会**按原则自我纠错**，而纠错的质量由宪法定义。
+
+**第二阶段 RL（基于 AI 偏好的强化学习）**：对同一 prompt 采样多个候选回答，让标注模型按宪法原则 pairwise 排序，产出 chosen/rejected，走 RLAIF 流程（CAI 论文用 PPO + AI 偏好奖励）。这一步把「符合宪法」变成可优化的奖励信号。
+
+两段合起来的含义：SL 教会模型「怎么改」，RL 教会模型「按什么标准选」。宪法原则同时是修订的标尺与偏好的标尺，贯穿两阶段。
+
+:::
+
+### 宪法原则：少量、可读、可执行
+
+「宪法」不是法律条文，而是**一小组自然语言原则**，例如「不应协助造成严重伤害」「不应欺骗用户」「 refusal 要得体、不要过度拒答」。它的设计要点：
+
+- **可读可审计**：原则是人写的自然语言，出错能被人类发现与修改，比黑箱奖励信号更可控。
+- **少量且聚焦**：原则太多会互相冲突、自评信号摇摆；实践中保持少量核心规则，覆盖主要行为维度。
+- **可组合**：不同产品可换不同宪法（客服宪法、医疗宪法），同一套 RLAIF 管线复用。
+
+下面用代码模拟「按宪法原则给回答打分」：把原则实现为可检测的谓词，AI 自评就是按这些谓词给候选回答排序。
+
+\`\`\`python
+# RLAIF 简化：用一组宪法原则给回答打分，代替人标偏好对
+PRINCIPLES = {
+    "harmless": lambda a: -1.0 if "harmful" in a.lower() else 0.0,
+    "helpful": lambda a: min(len(a.split()), 50) / 50.0,   # 长度当粗略有用性代理（示意）
+}
+
+def ai_reward(answer):
+    return sum(f(answer) for f in PRINCIPLES.values())
+
+a = "Here is a detailed answer with several useful steps and clear examples."
+b = "harmful instructions follow"
+print(f"AI 打分 A={ai_reward(a):.3f}  B={ai_reward(b):.3f}")
+assert ai_reward(a) > ai_reward(b), "宪法打分应偏好无害且有用的回答"
+\`\`\`
+
+打分高的作为 chosen、低的作为 rejected，就得到 AI 生成的偏好对。真实系统里打分由一个经过指令微调的标注模型完成，这里用规则函数只是把「原则 → 偏好」的机制**显式化**。
+
+**自我批评与修订的代码形态**
+
+SL 阶段的自批评修订也可以写成可跑的最小示例：模型按原则检出问题，再修订。
+
+\`\`\`python
+# Constitutional AI 的 SL 阶段：按宪法自我批评并修订回答
+def self_critique_and_revise(answer, principles):
+    flags = [p for p in principles if p in answer.lower()]
+    revised = answer
+    for p in flags:
+        revised = revised.replace(p, "[已按宪法移除]")
+    return revised, flags
+
+principles = ["harmful", "deceptive"]
+raw = "This is a harmful and deceptive trick."
+revised, flags = self_critique_and_revise(raw, principles)
+print("检出原则:", flags)
+print("修订后:", revised)
+assert flags == ["harmful", "deceptive"], "应检出两条违规"
+assert "harmful" not in revised, "修订应移除违规内容"
+\`\`\`
+
+真实 CAI 里「批评」和「修订」都由同一个语言模型在 prompt 指示下完成，修订后的回答作为 SFT 目标。关键不是这段代码本身，而是它揭示的机制：**宪法原则被写进 prompt，模型自己产出监督信号**，人类只需设计原则与抽检。
+
+### 与 RLHF 谱系的对照
+
+把 L96 的 RLHF、L98 的 DPO、本课 RLAIF 放在一条谱系上：
+
+- **RLHF**：偏好来自人 → 训 RM → PPO。信号最贴近真实人类，但贵、慢、难扩展。
+- **DPO**：偏好来自人 → 免 RM 直接偏好损失。简化了优化，但**偏好来源仍是人**，标签成本没变。
+- **RLAIF / CAI**：偏好来自 AI 按宪法自评 → 接 RM/PPO 或 DPO。标签成本骤降、可扩展，但偏差继承自标注模型与宪法设计。
+
+可以看到 RLAIF 改的是**偏好信号的来源**，而不是优化算法本身——它和 DPO 是正交的两个维度：可以「人标 + DPO」，也可以「AI 标 + DPO」。本课的谱系意义在于把「谁提供偏好」这一维明确拆出来。
+
+实践中两条轴常组合使用：先用 RLAIF 生成海量 AI 偏好对覆盖长尾与安全场景，再让人标员只对关键子集做高质量复核，形成「AI 广撒网 + 人精加工」的混合标注。评估时也要分开归因——若对齐后行为变差，先判断是**优化算法**问题还是**偏好标签**问题，办法是把同一批偏好数据分别用人标与 AI 标跑一遍对照，看差异来自哪一环。这套分离实验是把 RLAIF 用稳的关键，否则偏差来源混在一起、根本无法定位。
+
+### 可扩展性与偏差：一枚硬币的两面
+
+AI 自评的收益是可量化的——省人力、可并行、能覆盖人标不敢碰的有害场景。下面用一组**量级示意**成本数字（标注单价随时间变动，不担关键结论）说明规模差异。
+
+\`\`\`python
+# 谱系对照：人标成本 vs AI 自评成本（量级示意，随时间变动，不担关键结论）
+def labeling_cost(n_pairs, human_cost_per_pair=3.5, ai_cost_per_pair=0.02):
+    return {
+        "RLHF(人标)": round(n_pairs * human_cost_per_pair, 2),
+        "RLAIF(AI自评)": round(n_pairs * ai_cost_per_pair, 2),
+    }
+
+n = 100_000
+cost = labeling_cost(n)
+print("10 万偏好对标注成本(示意, 随时间变动):", cost)
+print(f"AI 自评约为人标的 {cost['RLAIF(AI自评)']/cost['RLHF(人标)']:.2%}")
+assert cost["RLAIF(AI自评)"] < cost["RLHF(人标)"], "AI 自评应显著更便宜"
+\`\`\`
+
+但便宜的代价是**偏差固化**：标注模型自身的偏见、宪法原则的盲区会被批量复制进偏好数据，再被 RL 放大。更隐蔽的是「原则投机」——模型学会在**被原则检测到的维度**上表现好，而非真正理解精神，比如把拒绝话术套模板。缓解手段：① 原则由多人设计并定期审计；② 用独立人评抽检 AI 标签、估算一致性；③ 人标与 AI 标混合，关键场景保人类兜底。还要警惕「标注模型与被测模型同源」带来的共同盲区——两者若出自同一系列，会共享同样的训练偏差，自评等于自我确认，此时必须引入异源模型或人类做交叉校验，否则偏差在闭环里越滚越大。下一课 L103 讲安全对齐时会看到，红队循环正是这种「AI 攻击 + 人/模型修复」的持续校准思路。
+
+:::tip
+
+### 一句话记住 RLAIF / CAI
+
+RLAIF 把偏好标签的**来源**从人换成 AI，Constitutional AI 用**宪法原则**同时驱动自批评修订（SL）与 AI 偏好排序（RL）。它改的是「谁来标注」，与 DPO 改「怎么优化」正交。优势是可扩展、省人力、能覆盖危险场景；风险是偏差固化与原则投机，必须靠原则审计 + 人评抽检持续校准。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'RLAIF 与 RLHF 的根本差别在于？',
+        options: [
+          'RLAIF 不用强化学习',
+          'RLAIF 用 AI 模型生成的偏好标签替代人类标注员的偏好标签',
+          'RLAIF 不需要 prompt',
+          'RLAIF 只能用闭源模型',
+        ],
+        answer: 1,
+        explain:
+          'RLAIF（Reinforcement Learning from AI Feedback）把人类标注员换成 AI 自评：由模型按规则给候选回答排序、产出偏好对，再走与 RLHF 相同的 RM/PPO 或 DPO 流程。',
+        concept: 'rlaif',
+      },
+      {
+        text: 'Constitutional AI（arXiv:2212.08073）中的「宪法」指？',
+        options: [
+          '国家法律条文',
+          '一组自然语言原则，指导模型自我批评、修订并按其生成 AI 偏好标签',
+          '模型权重文件',
+          '训练数据许可证',
+        ],
+        answer: 1,
+        explain:
+          '宪法是一小组可解释的自然语言规则（如「有害内容应拒绝」「不可欺骗」），模型据此自我批评修订（SL 阶段）并自评偏好（RL 阶段）。',
+        concept: 'rlaif',
+      },
+      {
+        text: 'Constitutional AI 的训练流程通常是？',
+        options: [
+          '只有 SFT 一步',
+          '监督式自我批评修订（SL）+ 基于 AI 偏好的强化学习（RL）两阶段',
+          '只做 PPO，不做 SFT',
+          '完全无监督',
+        ],
+        answer: 1,
+        explain:
+          '先让模型按宪法自我批评并修订回答，用修订结果做监督微调（SL 阶段）；再让 AI 按宪法对回答排序产出偏好，走 RL 阶段（CAI 论文用 RLAIF）。',
+        concept: 'rlaif',
+      },
+      {
+        text: 'RLAIF 可扩展性强但的主要风险是？',
+        options: [
+          '永远比 RLHF 差',
+          '把标注模型自身的偏差固化进偏好标签，错误原则会被系统性放大',
+          '完全不消耗算力',
+          '无法生成偏好对',
+        ],
+        answer: 1,
+        explain:
+          'AI 自评省人力、可扩展，但标签继承标注模型的偏差与盲区；若宪法原则有漏洞或模型误判，错误会被批量复制进偏好数据并被策略放大。',
+        concept: 'rlaif',
+      },
+    ],
+    [
+      ['RLAIF', 'Reinforcement Learning from AI Feedback，用 AI 模型产出的偏好标签替代人类标注'],
+      [
+        'Constitutional AI',
+        'Anthropic 提出的对齐框架（arXiv:2212.08073），用一组宪法原则驱动自批评与 AI 自评',
+      ],
+      ['宪法原则', '少量可读的自然语言规则，定义「什么样的回答是可接受的」，是自评的判据来源'],
+      ['自我批评与修订', '模型依据宪法指出自身回答的问题并改写，构成 SL 阶段的监督信号'],
+      ['自评偏好', 'AI 按宪法对多个候选回答排序，生成 chosen/rejected 偏好对供 RL 使用'],
+    ],
+    [
+      '以为 RLAIF 不需要任何人类输入——宪法原则本身仍由人设计，且需要人抽检 AI 标签质量。',
+      '把宪法写成几十条互相冲突的规则——原则过多或矛盾会让自评信号摇摆，通常保持少量、可执行。',
+      '忽略标注模型偏差——AI 自评会系统性放大其自身偏见，必须定期用独立人评校准。',
+      '误认为 RLAIF 一定优于 RLHF——它胜在规模与成本，特定主观任务上人类偏好仍更可靠。',
+    ],
+  ),
+  'framework',
+)

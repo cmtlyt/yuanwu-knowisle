@@ -1,0 +1,180 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L69 = withKind(
+  L(
+    'L69',
+    33,
+    'R1 推理链：纯 RL 激励推理与蒸馏',
+    4,
+    ['L62'],
+    ['r1-reasoning'],
+    [
+      '讲清纯 RL 激励推理免人工标注轨迹',
+      '解释 rule-based reward 可验证任务判分',
+      '说明涌现 self-reflection/verification',
+      '对照推理蒸馏给小模型，与 M10 GRPO 呼应（正文说明，非前置）',
+    ],
+    `### 一个不同性质的问题
+
+L62 到 L68 都在讲「结构」与「工程」：MLA 改注意力、DeepSeekMoE 改前馈、MTP 改训练目标、并行与 FP8 改系统。R1（arXiv:2501.12948，Nature 收录）问的是另一个问题：**推理能力从哪来**。传统做法是收集人工撰写的推理轨迹做监督微调，但高质量轨迹昂贵、有限，还可能把模型锁死在标注者的思路里。R1 给出的答案是：对可验证任务，用强化学习直接激励模型自己找出能得分的推理方式，不需要人手把手教它怎么想。
+
+### 纯 RL 激励：R1-Zero 的起点
+
+R1-Zero 从 V3 基座出发，**跳过 cold-start 监督微调**，直接做强化学习。它不在 SFT 阶段喂「标准答案式的思考过程」，而是把问题抛给模型，让模型自由生成回答，再用奖励信号告诉它「这样答对不对」。经过足够多的 RL 迭代，模型不仅答对率上升，还自发出现更长的思维链、自我检查与修正——论文把这种突然出现有效反思行为的时刻称为 aha moment。这件事的意义在于：推理不一定是「教」出来的，它可以被「激励」出来，只要奖励信号能可靠地区分对错。
+
+### rule-based reward：让奖励可靠
+
+纯 RL 的成败取决于奖励信号。R1 用**规则奖励**而不是奖励模型：对数学题，比对最终答案与标准答案是否一致；对代码题，运行测试用例看是否通过；对格式，检查推理过程是否被正确包裹在指定标记里。这些任务都有一个共同点——**可验证**，存在客观的对错判据。规则奖励的好处是不会被「钻空子」：奖励模型可能被模型学会输出看似讨喜实则错误的答案骗过（reward hacking），而答案对照与测试用例是硬判据。代价是它只适用于可验证任务，对开放式写作这类没有标准答案的场景不直接适用。这与 DeepSeekMath 7B 在 MATH 上做到 51.7%（A 级，数学基准成绩）一脉相承：数学是可自动判分的理想 RL 场地。
+
+:::deep
+
+### 组内相对优势：与 M10 的 GRPO 呼应
+
+R1-Zero 用的优化方法是 GRPO（Group Relative Policy Optimization）。做法是对同一个提示采样一组 G 个回答，用规则奖励给每个回答打分，然后在**组内**把奖励减去均值、除以标准差，得到每个回答的相对优势，再用这个优势去更新策略——表现高于组内平均的回答被鼓励，低于平均的被抑制。它不需要单独训练一个评论家（critic）模型来估计价值，省掉一大块显存与工程复杂度；组内相对比较又天然适合「同一题多答、对错的差异就在组里」的可验证任务。这套方法并不是 R1 专属，它是通用强化学习算法，M10 的 GRPO（L99）会专门展开它的推导与实现——这里只需记住 R1 把它用在了数学与代码的可验证任务上，正文交叉引用，不把它列为前置。
+
+:::
+
+### 涌现反思与完整版 R1
+
+在纯 RL 压力下，模型的思维链会自然变长，并出现两类关键行为：**self-reflection**（回头检查前面的推理）与 **verification**（主动验证结论）。这不是人工写进训练数据的，而是「更长的思考带来更高答对率」这一奖励压力筛选出来的策略。不过 R1-Zero 的可读性较差，于是完整版 R1 加入冷启动数据与多阶段 RL：先用少量高质量数据把输出格式与可读性稳住，再做面向可验证任务的 RL，配合拒绝采样筛选优质轨迹。最后，把 R1 的推理轨迹用于**蒸馏**，迁移到 1.5B 到 70B 的小模型——蒸馏版把大模型的推理模式压缩进小身板，部署成本大幅下降，这是 R1 影响力如此之大的重要原因。
+
+### 可跑代码：规则奖励函数
+
+把「答案对照 + 格式检查」写成可跑的奖励函数，演示 rule-based reward 如何对可验证任务自动判分。
+
+\`\`\`python
+import re
+
+def extract_answer(text):
+    """从回答里抽出 \\\\boxed{} 中的最终答案。"""
+    m = re.findall(r"\\\\boxed\\{([^}]*)\\}", text)
+    return m[-1].strip() if m else None
+
+def format_ok(text):
+    """检查推理是否被标记包裹。"""
+    return "<think>" in text and "</think>" in text
+
+def rule_reward(text, gold):
+    """规则奖励 = 格式分 + 答案正确性分。"""
+    r_format = 0.5 if format_ok(text) else 0.0
+    pred = extract_answer(text)
+    r_correct = 1.0 if pred is not None and pred == gold else 0.0
+    return r_format + r_correct
+
+right = "<think>逐步推理</think> 答案是 \\\\boxed{42}"
+wrong = "<think>逐步推理</think> 答案是 \\\\boxed{17}"
+no_fmt = "答案是 \\\\boxed{42}"
+for label, t in [("对", right), ("错", wrong), ("无格式", no_fmt)]:
+    print(f"{label:4s} → reward={rule_reward(t, '42'):.1f}")
+assert rule_reward(right, "42") == 1.5
+assert rule_reward(no_fmt, "42") == 0.5
+print("规则奖励能可靠区分对错与格式")
+\`\`\`
+
+### 可跑代码：GRPO 组内相对优势
+
+演示 GRPO 如何把一组回答的奖励归一化成相对优势，断言优势均值为零、高于均值者为正。
+
+\`\`\`python
+import numpy as np
+
+def group_relative_advantage(rewards):
+    """组内归一化：减均值、除标准差；标准差为 0 时退化为 0。"""
+    r = np.asarray(rewards, dtype=float)
+    std = r.std()
+    if std < 1e-9:
+        return np.zeros_like(r)
+    return (r - r.mean()) / std
+
+rewards = [1.5, 1.5, 0.5, 0.0]           # 同一题的 4 个采样回答
+adv = group_relative_advantage(rewards)
+print(f"奖励 {rewards} → 相对优势 {np.round(adv, 3)}")
+print(f"优势均值 = {adv.mean():.2e}")
+assert abs(adv.mean()) < 1e-9, "组内相对优势均值应为 0"
+assert adv[0] > 0 and adv[-1] < 0, "高于均值者为正、低于为负"
+print("GRPO 无需 critic：用组内相对比较得到更新信号")
+\`\`\`
+
+### 与 SFT 路线的对照
+
+把 R1 的路线与纯 SFT 对照，差异才清楚。纯 SFT：需要人工撰写高质量推理轨迹，成本高、覆盖窄，模型学的是「模仿标注者的思路」。R1-Zero 纯 RL：不需要轨迹标注，靠可验证任务的规则奖励激励，模型自己发现更有效的思考方式，还能涌现反思与验证。完整版 R1 则把两者结合——用少量冷启动数据稳住格式，再用 RL 拉开能力，最后蒸馏扩散到小模型。这条路线把「推理能力」从一种需要昂贵标注的资源，变成一种可以被算力与奖励设计激励出来的性质。至此 M7 十课的主线齐了：结构（MLA、解耦 RoPE、DeepSeekMoE）、目标（MTP）、系统（并行、DualPipe、FP8）、考据（mFformer）、推理（R1）。下一课 L71 是 capstone，把这些机制落到一段可跑的 MLA 复现与验收断言上。
+
+:::tip
+
+### 一句话记住 R1
+
+R1 把「推理从哪来」的答案从「人工标注轨迹」改成「可验证任务的规则奖励 + RL 激励」。R1-Zero 纯 RL 涌现长思维链与 self-reflection/verification（aha moment），完整版加冷启动与多阶段 RL，再蒸馏到 1.5B 至 70B。GRPO 用组内相对优势、免 critic，与 M10（L99）呼应（正文交叉引用，非前置）。来源 arXiv:2501.12948、Nature 收录，可写死（A 级）。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'R1-Zero 获得推理能力的关键做法是？',
+        options: [
+          '大量人工标注的推理轨迹做 SFT',
+          '在基座上直接做纯 RL，用规则奖励判分，不标注轨迹',
+          '只增大模型规模',
+          '只用更多预训练数据',
+        ],
+        answer: 1,
+        explain:
+          'R1-Zero（arXiv:2501.12948）跳过冷启动 SFT，纯 RL 加规则奖励，让推理行为自发涌现，免人工轨迹标注。',
+        concept: 'r1-reasoning',
+      },
+      {
+        text: 'R1 使用 rule-based reward 的主要原因是？',
+        options: [
+          '规则奖励算得快',
+          '数学/代码等可验证任务能用答案对照或测试用例自动判分，避免奖励模型被钻空子',
+          '规则奖励更平滑',
+          '规则奖励不需要基座',
+        ],
+        answer: 1,
+        explain:
+          '可验证任务有客观对错：数学对最终答案、代码跑测试、格式看标记，规则奖励直接判分，不依赖可被 reward hacking 的奖励模型。',
+        concept: 'r1-reasoning',
+      },
+      {
+        text: 'R1-Zero 训练中观察到的涌现现象是？',
+        options: [
+          '模型变得更小',
+          '更长的思维链、自我反思与验证，即所谓 aha moment',
+          '遗忘语言能力',
+          '只会背答案',
+        ],
+        answer: 1,
+        explain:
+          '纯 RL 下模型自发延长思考、出现 self-reflection 与 verification 行为，是推理能力被激励涌现的标志。',
+        concept: 'r1-reasoning',
+      },
+      {
+        text: 'R1 把推理能力给小模型的方式是？',
+        options: [
+          '对每个小模型重新做纯 RL',
+          '用 R1 的推理数据蒸馏到 1.5B 至 70B 的小模型',
+          '只开源不蒸馏',
+          '降低小模型温度',
+        ],
+        answer: 1,
+        explain:
+          '完整版 R1 经冷启动与多阶段 RL 后，把推理轨迹用于蒸馏，得到 1.5B 至 70B 的蒸馏模型，迁移推理模式。',
+        concept: 'r1-reasoning',
+      },
+    ],
+    [
+      ['R1-Zero', '直接在基座上做纯 RL、不做冷启动 SFT 的版本，推理行为自发涌现'],
+      ['rule-based reward', '规则奖励：数学对答案、代码跑测试、格式看标记，对可验证任务自动判分'],
+      ['GRPO', 'Group Relative Policy Optimization：同提示采样一组输出、组内归一化得优势，无需 critic'],
+      ['涌现反思', 'self-reflection 与 verification：训练中自发出现的检查与修正行为，即 aha moment'],
+      ['推理蒸馏', '把 R1 的推理轨迹用于蒸馏，迁移到 1.5B 至 70B 小模型'],
+    ],
+    [
+      '以为 R1 靠人工标注的推理轨迹——R1-Zero 是纯 RL、免轨迹标注。',
+      '以为 rule-based reward 适用于所有任务——它依赖可验证的对错信号。',
+      '把蒸馏模型与 R1-Zero 混为一谈——蒸馏版是迁移推理模式的小模型。',
+      '把 GRPO 当成 R1 独有——它是通用强化学习方法，M10（L99）会专门讲。',
+    ],
+  ),
+  'theory',
+)

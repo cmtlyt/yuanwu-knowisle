@@ -1,0 +1,267 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L111 = withKind(
+  L(
+    'L111',
+    50,
+    '从 LoRA 到可服务模型端到端 capstone',
+    5,
+    ['L108', 'L109', 'L110'],
+    ['m11-capstone'],
+    [
+      '搭建 merge→导出/量化双路→vLLM 起服务流程',
+      '跑通 OpenAI 兼容 API 冒烟',
+      '做吞吐/精度验收',
+      '给出端到端验收断言',
+    ],
+    `### 综合交付：从 LoRA 到可服务模型
+
+这是 M11 的收束课，也是整门「LLM 架构深度课」后训练与部署两模块的终点。M10 把人类偏好对齐进模型，产出的是 LoRA 增量；M11 要把它变成**用户能通过 API 调用的在线服务**。整条链路横跨七课：L105 的 \`merge_and_unload\` 代数折回与规范保存、L106 的 GGUF 导出与量化档位、L107 的 ONNX/TensorRT 编译、L108 的服务化与 OpenAI 兼容端点、L109 的推理量化、L110 的吞吐调优与压测。本课把这些散点串成一条**端到端、可复现、带验收断言**的流水线：LoRA 合并 → 双路导出（GGUF 与 HF 直载）→ vLLM 起服务 → API 冒烟 → 吞吐与精度验收。交付物不是「模型跑起来了」，而是每一环都有可执行代码、可判读数字，最终由一组断言给出「可发布」结论。
+
+为什么不厌其烦地强调「可复现」与「断言」？因为部署环节的错误往往**静默**：合并精度没处理好，模型能加载但生成悄悄变差；量化档位选太低，服务正常返回但质量掉点；分词器版本错配，输出看似通顺实则语义偏移。这些错误都不会抛异常，只有靠「合并前后输出等价性」「留出基准掉点阈值」「实际文本冒烟」这类显式检查才能抓住。整门课的训练与部署经验，最终浓缩成一句工程纪律：**任何「我觉得没问题」都要变成一条能跑的断言**。本课的每段代码都配了断言，正是这条纪律的落地。
+
+**双路导出的设计**
+
+同一份合并权重有两条部署路线，它们不是竞争关系而是**按场景分叉**：
+
+- **路线 A：GGUF + llama-server**——把合并模型转成 GGUF 并量化到 Q4_K_M，用 llama-server 起服务。优势是单文件、便携、CPU 与消费级显卡都能跑，适合本地助手、边缘设备与离线演示。
+- **路线 B：HF 直载 + vLLM**——把合并后的 HF 目录直接交给 vLLM，靠 PagedAttention 与 continuous batching 提供高并发吞吐，适合线上生产服务。
+
+两条路线共享同一个起点（L105 的标准权重），所以合并与规范保存是共同的、不可跳过的前置。分开做的价值在于：你可以在同一份权重上同时产出「便携版」与「高性能版」，按部署环境选用，而不用维护两套训练产物。理解这一点，才知道 capstone 的「双路」不是冗余，而是同一资产的两种变现方式。
+
+两条路线的取舍也值得讲透：GGUF 路线的成本在转换与量化（几分钟 CPU 计算），收益是极低的运行门槛与极强的便携性——一个 \`.gguf\` 文件拷到任意机器就能跑；HF 直载路线的成本是需要一块像样的 GPU 与正确的服务配置，收益是 PagedAttention 与连续批处理带来的成倍吞吐。对同一个 7B 模型，前者能在 8GB 显卡甚至纯 CPU 上提供几个并发，后者能在 24GB 卡上提供几十个并发。两者不存在对错，取决于你的用户在哪、要多少并发。把两条路线都跑通、都冒烟，是这份 capstone 最实在的交付——它意味着你的模型既能「随手演示」，也能「扛住流量」。
+
+### 阶段一：合并与规范保存
+
+第一步把 M10 的 LoRA 适配器折回基座。按 L105 的代数式 W_merged = W₀ + (α/r)·BA，在 fp32 中累加再降到目标 dtype，并用同一输入验证「双分支」与「单矩阵」输出等价。随后把权重保存为 safetensors（这里用 npy 示意），连同 config.json 与 tokenizer 文件构成三件套。
+
+\`\`\`python
+import numpy as np, json, os
+np.random.seed(0)
+d, r = 16, 4
+W0 = np.random.randn(d, d).astype(np.float32) * 0.08
+A = np.random.randn(r, d).astype(np.float32) * 0.05
+B = np.random.randn(d, r).astype(np.float32) * 0.05
+alpha = 8.0
+
+def merge_and_unload(W0, A, B, alpha, r):
+    return W0.astype(np.float32) + (alpha / r) * (B @ A).astype(np.float32)
+
+W_merged = merge_and_unload(W0, A, B, alpha, r)
+x = np.random.randn(d).astype(np.float32)
+assert np.allclose(W0 @ x + (alpha/r) * B @ (A @ x), W_merged @ x, atol=1e-5)
+print("折回等价性通过；增量范数:", round(float(np.linalg.norm(W_merged - W0)), 4))
+
+out = "./served-model"
+os.makedirs(out, exist_ok=True)
+np.save(os.path.join(out, "model.weights.npy"), W_merged.astype(np.float16))
+json.dump({"model_type":"llama","hidden_size":d,"torch_dtype":"float16"},
+          open(os.path.join(out, "config.json"), "w"), indent=2)
+json.dump({"vocab_size":32000,"model_max_length":4096},
+          open(os.path.join(out, "tokenizer_config.json"), "w"), indent=2)
+assert len(os.listdir(out)) == 3, "三件套应齐备"
+print("合并产物:", sorted(os.listdir(out)))
+\`\`\`
+
+等价性断言是这阶段的**关键验收**：若合并前后输出差异超过浮点舍入量级，说明折回实现有误（缩放因子、矩阵顺序或 dtype 出了问题），后面的所有步骤都建立在错误权重上。增量范数量化了这个 LoRA 改了多少模型——接近零意味着适配器几乎没学到东西，值得回查 M10 的训练。
+
+合并阶段还有两个高频陷阱值得单独点名。其一是**幂等性**：若对已经合并过的权重再次调用 \`merge_and_unload\`，会把同一份增量加两次，模型输出明显异常。工程上应在产物目录打上「已合并」标记，或用配置文件记录合并状态，避免重复操作。其二是**dtype 传播**：基座权重、LoRA 增量与目标 dtype 三者不一致时，先在 fp32 里统一再降精度最稳；若在各处混用 fp16 与 bf16，累加误差会悄悄累积，等价性断言可能恰好在容差边缘通过，却在长文本生成里暴露为漂移。把容差设为 \`atol=1e-5\` 这样的显式值，而不是依赖默认，是这一步的好习惯。
+
+### 阶段二：双路导出——GGUF 与 HF 直载
+
+路线 A 按 L106 的两步走：\`convert_hf_to_gguf.py\` 把合并目录转成 F16 母版，\`llama-quantize\` 从母版量化到 Q4_K_M。档位表是 llama.cpp 官方的 A 级数据，可写死；Q4_K_M 约 4.85 bpw、体积约 F16 的 30%，是体积与质量的甜点位。路线 B 不需要转换——vLLM 直接读 HF 目录。下面把档位表与双路决策固化成可跑代码。
+
+\`\`\`python
+QUANTS = {"F16": (16.0, 1.00), "Q8_0": (8.5, 0.53),
+          "Q5_K_M": (5.69, 0.36), "Q4_K_M": (4.85, 0.30), "Q2_K": (3.35, 0.21)}
+BASE = 14.0   # 7B 模型 F16 约 14GB（量级示意，不担关键结论）
+for name, (bpw, ratio) in QUANTS.items():
+    print(f"{name:8s} bpw={bpw:5.2f}  体积≈{BASE*ratio:5.2f}GB")
+assert QUANTS["Q4_K_M"][1] < 0.35, "Q4_K_M 应压到约 30%"
+
+route = {
+    "GGUF + llama-server": "单文件、CPU/消费卡可跑、便携",
+    "HF 直载 + vLLM":      "PagedAttention + 连续批处理、高并发吞吐",
+}
+for k, v in route.items():
+    print(f"路线 {k}: {v}")
+assert len(route) == 2, "应同时准备便携与高性能两条路线"
+print("Q4_K_M 甜点位约 4.2GB；同一权重也可直接交给 vLLM")
+\`\`\`
+
+选档的纪律（L106）：显存充裕用 Q8_0、Q6_K，通用默认用 Q4_K_M，极紧才降到 Q3_K_M 或 Q2_K，且任何档位都要在真实任务上做质量抽测。F16 母版务必单独留存——量化不可逆，想升档只能回到母版重做。
+
+档位决策不能只查体积表：Q4_K_M 是通用甜点位，但若你的任务涉及精确数学推理、长文一致性或专业术语，建议把 Q5_K_M 与 Q8_0 也量化出来做对照，用真实任务上的质量抽测决定升不升档。抽测集要覆盖任务的典型分布与边界情况，至少包含中英文各一组；只拿一两句「你好」式的 prompt 测不出量化差异。把每档的体积、质量分数、抽测记录列成一张表，档位选择就从「凭感觉」变成「有据可查的决策」——这张表也应随模型一起归档，供后续升级或排查时参考。
+
+### 阶段三：vLLM 起服务与 API 冒烟
+
+路线 B 用 vLLM 起 OpenAI 兼容端点，命令里固定 \`gpu_memory_utilization\` 与 \`max_model-len\`，并开启 chunked prefill。路线 A 用 llama-server 加载 GGUF，暴露同类端点。两者起来后，都用同一套 OpenAI SDK 冒烟——这正是 L108 强调的「一套 SDK 走天下」。
+
+\`\`\`bash
+# 路线 B：HF 合并模型直接起 vLLM OpenAI 兼容端点
+python -m vllm.entrypoints.openai.api_server \\
+  --model ./served-model --served-model-name final-llm \\
+  --host 0.0.0.0 --port 8000 --gpu-memory-utilization 0.90 \\
+  --max-model-len 8192 --enable-chunked-prefill
+# 路线 A：GGUF + llama-server（本地便携）
+# llama-server -m ./model-Q4_K_M.gguf --port 8080
+\`\`\`
+\`\`\`python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:8000/v1", api_key="EMPTY")
+r = client.chat.completions.create(
+    model="final-llm",
+    messages=[{"role": "user", "content": "用一句话解释对齐税"}],
+    max_tokens=64, temperature=0.0,
+)
+text = r.choices[0].message.content
+print("API 冒烟回复:", text)
+assert isinstance(text, str) and len(text) > 0, "应返回非空文本"
+assert r.usage.total_tokens > 0, "应返回 token 统计"
+print("token 统计:", r.usage.prompt_tokens, r.usage.completion_tokens)
+\`\`\`
+
+冒烟要看**实际文本**而非只看 HTTP 200：量化档位错误、分词器不匹配、dtype 解析异常都可能让服务正常返回却输出乱码或重复 token。\`temperature=0.0\` 固定输出便于复现，两条路线各冒烟一次，确认便携版与高性能版行为一致。
+
+冒烟用例的设计也有讲究：至少覆盖三类输入——**常规问答**（验证基本生成能力）、**任务相关 prompt**（验证对齐后的行为，如拒绝有害请求、按格式输出）、**长上下文**（验证 KV 与上下文长度配置）。只测第一类最容易漏掉问题：一个量化档位错误的模型可能日常聊天看着正常，却在长 prompt 下重复循环，或在安全边界上失守（L103）。冒烟的 \`usage\` 字段同样要看——输入/输出 token 数异常往往意味着分词器或上下文截断配置有问题。把冒烟用例固化成脚本随服务一起交付，每次重新部署都跑一遍，比人工点几下可靠得多。
+
+**阶段四：吞吐与精度验收**
+
+服务可用之后，按 L110 做固定并发压测，记录吞吐与 P50/P95/P99；同时用留出基准做精度验收，确认量化没有带来不可接受的掉点。吞吐与 P99 是「与」关系：吞吐看整体产能、P99 看长尾体验，任一不达标都不得发布。
+
+\`\`\`python
+import random
+random.seed(0)
+
+def percentile(xs, p):
+    ys = sorted(xs)
+    return ys[min(len(ys) - 1, int(len(ys) * p))]
+
+def bench(n, lat_samples, out_toks, conc):
+    lats = [random.choice(lat_samples) for _ in range(n)]
+    tput = n * out_toks / ((sum(lats) / conc) / 1000.0)
+    return {"tput": round(tput), "p50": percentile(lats, .5),
+            "p95": percentile(lats, .95), "p99": percentile(lats, .99)}
+
+res = bench(1000, [45, 52, 61, 70, 88, 120, 200], 200, 16)
+print("吞吐/延迟:", res)
+assert res["p50"] <= res["p95"] <= res["p99"]
+assert res["p99"] < 2000, "P99 应低于 2 秒红线"
+assert res["tput"] > 1000, "吞吐应达到最低门槛"
+
+# 精度验收：量化前后基准掉点（量级示意，不担关键结论）
+base   = {"MMLU": 63.8, "GSM8K": 47.9}
+served = {"MMLU": 63.5, "GSM8K": 47.6}
+drops  = {k: served[k] - base[k] for k in base}
+print("精度变化:", drops)
+assert all(v >= -1.0 for v in drops.values()), "基准掉点超过 1 分"
+\`\`\`
+
+压测纪律（L110）在这里全部适用：固定语料、输出长度、采样参数、并发档位与版本记录，数字才可复现。精度验收必须用**留出基准**——用训练数据测不到量化的真实退化。若掉点超标，正确的反应是升档（Q4_K_M 升 Q8_0）或排查分词器/量化配置，而不是放宽阈值。
+
+吞吐与精度的张力还体现在档位选择上：更高档位（Q8_0）精度好但权重更大、KV 与带宽压力更高，吞吐可能下降；更低档位（Q2_K）吞吐好却掉点明显。所以「最佳档位」其实是「在精度阈值约束下吞吐最高的那一档」——先在低档位跑压测拿吞吐，再从低到高逐档测精度，找到第一个满足精度阈值的最低档，就是你的最优点。这套「吞吐定上界、精度定下界」的夹逼，比单独看任一指标科学得多，也是把 L106、L109、L110 三课串起来的实际用法。
+
+### 端到端验收断言
+
+把前面所有环节的关键判定汇总成一段**放行断言**，覆盖合并、导出、冒烟、吞吐、精度五个维度，全部为真才给出可发布结论。
+
+\`\`\`python
+checks = {
+    "合并等价": bool(np.allclose(W0 @ x + (alpha/r)*B@(A@x), W_merged @ x, atol=1e-5)),
+    "三件套齐备": len(os.listdir(out)) == 3,
+    "GGUF 档位正确": QUANTS["Q4_K_M"][1] < 0.35,
+    "API 冒烟非空": isinstance(text, str) and len(text) > 0,
+    "P99 达标": res["p99"] < 2000,
+    "吞吐达标": res["tput"] > 1000,
+    "精度不掉": all(v >= -1.0 for v in drops.values()),
+}
+for k, v in checks.items():
+    print(f"[{'PASS' if v else 'FAIL'}] {k}")
+assert all(checks.values()), "端到端验收未全过，不得发布"
+print(f"M11 capstone 通过：{sum(checks.values())}/{len(checks)} 项")
+\`\`\`
+
+这段断言是整门课部署能力的**总闸门**：它不关心你用了哪个框架版本、哪张卡，只关心「模型是否被正确合并、是否正确导出、服务是否真的能答、性能与精度是否达标」。把断言脚本、压测实验卡、量化档位决策记录一起归档，别人拿到就能复现你的发布结论。这里特别提醒：断言的阈值要写进版本管理，和模型权重一起打标签。若某天有人为了「让 CI 变绿」悄悄把 P99 红线从 2000 毫秒改成 5000 毫秒，发布流程就失去了意义——阈值本身就是质量契约，改动应当经过评审，而不是顺手改数字。把阈值、模型 hash、量化档位与压测数字绑定成一个发布记录，才是真正可审计的交付，也让每一次上线都有据可查、可回滚。
+
+**常见翻车与排查**
+
+按出现频率排：① **拿带适配器的模型直接部署**——目录里有 \`adapter_config.json\` 说明还没合并，回到 L105；② **合并后输出异常**——先查是否低精度直接累加（L105 的数值精度），再查 dtype 与 config 是否一致；③ **服务返回乱码**——查分词器是否与训练一致、量化档位是否过低、冒烟 prompt 是否覆盖中英文；④ **吞吐上不去**——按 L24 的四因子与 L110 的三旋钮排查：KV 是否成为瓶颈、分块预取是否开、\`gpu_memory_utilization\` 是否合理；⑤ **精度掉点超标**——升档重测，而非改阈值。这五类覆盖了 M11 部署环节绝大多数问题，排查顺序建议从「文件格式/合并」到「服务配置」再到「性能与精度」，由底层到上层，避免在上层反复调参却问题是出在合并阶段。
+
+:::tip
+
+### 收束与出口
+
+M11 的出口判据：能从 LoRA 合并出标准权重并规范保存、能走通 GGUF 与 HF 直载双路导出、能起 OpenAI 兼容服务并冒烟、能用吞吐与精度双指标验收、能把全程写成端到端断言。整门课到这里闭环：M1 到 M8 讲模型架构与推理优化，M10 把偏好对齐进模型，M11 把对齐后的模型变成可服务资产。三张总闸门要记牢——**M10 看偏好胜率、KL 与通用基准不掉；M11 看合并等价、服务冒烟与吞吐/精度双达标**；任何一环都靠「可跑代码 + 可判读数字 + 可执行断言」说话，而不是「看起来能跑」。带着这套工程纪律，你可以把任意一个开源模型从权重文件走到生产 API。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'M11 capstone 的端到端链路正确顺序是？',
+        options: [
+          '起服务 → 合并 → 量化 → 验收',
+          'LoRA 合并 → 双路导出（GGUF/HF 直载）→ vLLM 起服务 → API 冒烟 → 吞吐/精度验收',
+          '只做量化不需要合并',
+          '验收 → 量化 → 起服务',
+        ],
+        answer: 1,
+        explain:
+          '先按 L105 合并得到标准权重，再走 GGUF 量化或 HF 直载两条导出路线，起 OpenAI 兼容服务、冒烟，最后做吞吐与精度验收。',
+        concept: 'm11-capstone',
+      },
+      {
+        text: '「双路导出」的两条路线分别服务于？',
+        options: [
+          'GGUF 给本地/边缘便携部署，HF 直载给 vLLM 高并发服务',
+          '两条路线完全一样',
+          'GGUF 用于训练',
+          'HF 直载不能起服务',
+        ],
+        answer: 0,
+        explain:
+          '同一份合并权重可转成 GGUF 配 llama-server（单文件、CPU 可跑），也可直接交给 vLLM（PagedAttention 高吞吐），按场景选。',
+        concept: 'm11-capstone',
+      },
+      {
+        text: '端到端验收中「P99 低于红线」与「吞吐达标」的关系是？',
+        options: [
+          '只要吞吐高即可，P99 无所谓',
+          '二者是「与」关系，须同时满足：吞吐看整体产能、P99 看长尾体验（L110）',
+          '只要 P99 低即可',
+          '二者互斥',
+        ],
+        answer: 1,
+        explain:
+          '吞吐与延迟存在张力，必须同时设门槛：吞吐保证产能、P99 保证最慢用户体验，任一不达标都不得发布。',
+        concept: 'm11-capstone',
+      },
+      {
+        text: '精度验收中量化后基准掉点被判失败，正确的处理是？',
+        options: [
+          '忽略掉点，只要模型能跑',
+          '换更高档位（如 Q4_K_M 升 Q8_0）或检查量化/分词器配置，重测直到掉点在阈值内',
+          '把阈值改成通过',
+          '删除基准测试',
+        ],
+        answer: 1,
+        explain: 'L106/L109 强调量化是体积换质量，掉点超标说明档位太低或配置有误，应升档或排查而非放宽验收。',
+        concept: 'm11-capstone',
+      },
+    ],
+    [
+      ['合并（merge）', '把 LoRA 增量折回基座得到标准权重（L105），是所有部署路线的共同起点'],
+      ['双路导出', '同一合并权重走 GGUF 量化（便携）与 HF 直载（vLLM 高吞吐）两条部署路线'],
+      ['OpenAI 兼容 API', '统一的 /v1/chat/completions 端点，应用用一套 SDK 对接任意后端（L108）'],
+      ['P99 红线', '99 分位延迟上限，保障长尾用户体验（L110），与吞吐共同构成服务验收'],
+      ['端到端验收断言', '把合并、导出、冒烟、吞吐、精度写成可执行判定，全绿才发布'],
+    ],
+    [
+      '直接拿带 LoRA 适配器的模型去导出或起服务——必须先 merge_and_unload 得到标准权重。',
+      '只验证服务能返回 200，不看实际文本与 token 统计——可能正常返回乱码。',
+      '精度验收用训练数据——必须用留出基准，否则测不到量化带来的真实退化。',
+      '吞吐与 P99 只看一个——二者存在张力，必须同时达标才算服务可用。',
+    ],
+  ),
+  'capstone',
+)

@@ -1,0 +1,249 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L58 = withKind(
+  L(
+    'L58',
+    27,
+    '同规模 ~125M 四架构可执行对比实验',
+    4,
+    ['L55', 'L57'],
+    ['arch-compare-exp'],
+    [
+      '写出可跑的四架构对比脚本',
+      '固定 ~125M 实测吞吐·峰值 KV/显存·同语料 loss',
+      '测 4K/16K 长上下文退化曲线',
+      '产出可复现数据表',
+    ],
+    `### 实验设计：为什么要固定约 125M
+
+前面几课用矩阵、判据、成本模型做了大量「纸面选型」，但纸面分数终究要落到真机数据上。这一课动手跑一个可复现的四架构对比实验：在同一参数规模（约 125M）、同一语料、同一硬件上，跑 Transformer（稠密自回归基线）、MoE（稀疏专家）、SSM（状态空间）、线性注意力四类模型，实测吞吐、峰值 KV/显存、同语料 loss，并扫 4K 至 16K 上下文看退化曲线。实验设计的核心纪律是**控制变量**：固定参数规模后，三个指标的差异才能归因到架构本身；否则「MoE 更快」可能只是因为它更小、「SSM 显存低」可能只是参数少。约 125M 是刻意选的——足够小到单机几分钟能跑完、又足够大到能显出架构差异（KV、路由、递推的开销在这个尺度已可测）。本课的脚本骨架用 PyTorch 与 HuggingFace 生态（架构复用 M2 至 M4 的 A 级实现），所有数字标注为「示意量级、随硬件与语料变」，结论靠可复现脚本与数据表结构，不靠某个绝对值。
+
+### 四个模型与参数计数
+
+先把四个模型定义出来，并用参数计数把规模钉到约 125M。Transformer 是标准稠密基线（d_model 与层数配到 125M）；MoE 用 8 选 2 的稀疏 FFN（总参接近 125M、激活参仅一小部分）；SSM 用 Mamba 风格的选择性状态空间层；线性注意力用核方法近似 softmax（注意力从平方降到线性）。下面的骨架定义关键模块并计数，断言四者参数在同一量级。
+
+\`\`\`python
+import torch, torch.nn as nn
+
+def count_params(model):
+    return sum(p.numel() for p in model.parameters())
+
+class FFN(nn.Module):
+    def __init__(self, d, mult=4):
+        super().__init__()
+        self.up = nn.Linear(d, mult * d); self.down = nn.Linear(mult * d, d)
+    def forward(self, x):
+        return self.down(torch.nn.functional.gelu(self.up(x)))
+
+class DenseBlock(nn.Module):
+    """M2 基线：GQA 注意力 + 稠密 FFN。"""
+    def __init__(self, d, n_h, kv_h):
+        super().__init__()
+        self.q = nn.Linear(d, d); self.k = nn.Linear(d, (d//n_h)*kv_h)
+        self.v = nn.Linear(d, (d//n_h)*kv_h); self.o = nn.Linear(d, d)
+        self.ffn = FFN(d)
+    def forward(self, x):
+        return x + self.o(self.q(x)) + self.ffn(x)   # 注意力/FFN 逻辑简化，规模计数用
+\`\`\`
+
+\`\`\`python
+# 配置到约 125M（示意：用 FFN 主导参数，便于控制规模）
+D, L, H, KV = 768, 12, 12, 4
+dense = nn.ModuleList([DenseBlock(D, H, KV) for _ in range(L)])
+n_dense = count_params(dense)
+print(f"稠密 Transformer 参数量≈{n_dense/1e6:.1f}M")
+# 目标：12 层 × (4·d² FFN + 注意力) ≈ 125M 量级
+assert 90e6 < n_dense < 160e6, "应把规模控制在约 125M 量级"
+
+class MoEBlock(nn.Module):
+    """M3/M4：8 专家 FFN，每 token top-2 激活。"""
+    def __init__(self, d, n_exp=8, top_k=2):
+        super().__init__()
+        self.experts = nn.ModuleList([FFN(d) for _ in range(n_exp)])
+        self.gate = nn.Linear(d, n_exp); self.top_k = top_k
+    def forward(self, x):
+        logits = self.gate(x); idx = logits.topk(self.top_k, -1).indices
+        out = sum(self.experts[i](x) for i in idx.unbind(-1)) / self.top_k
+        return x + out
+\`\`\`
+
+参数计数这段代码把「约 125M」从口号变成断言：稠密块用 FFN 主导参数、12 层配到 125M 量级；MoE 块用 8 专家门控，总参接近但每 token 只激活 2 个专家。SSM 与线性注意力块用同样的规模配置，保证对比公平。
+
+### 实测吞吐、峰值显存与同语料 loss
+
+有了模型，接下来测三个指标。吞吐用固定 batch、固定序列长跑若干 step，测 tokens/s（注意用实测有效值而非理论峰值）；峰值显存用 \`torch.cuda.max_memory_allocated\`，区分权重、KV、激活；同语料 loss 用固定的一小段语料、固定种子跑前向，比较四个架构的拟合能力。下面给出可跑的测量脚本骨架。
+
+\`\`\`python
+import time
+
+def measure_throughput(model, seq, batch, steps=20, warmup=5):
+    model.cuda().eval()
+    x = torch.randint(0, 50257, (batch, seq)).cuda()
+    with torch.no_grad():
+        for _ in range(warmup):
+            _ = model(x)
+        torch.cuda.synchronize(); t0 = time.time()
+        for _ in range(steps):
+            _ = model(x)
+        torch.cuda.synchronize(); dt = time.time() - t0
+    return batch * seq * steps / dt       # tokens/s（实测有效值）
+
+def peak_memory_gb(model, seq, batch):
+    torch.cuda.reset_peak_memory_stats()
+    x = torch.randint(0, 50257, (batch, seq)).cuda()
+    with torch.no_grad(): _ = model(x)
+    return torch.cuda.max_memory_allocated() / 1e9
+\`\`\`
+
+\`\`\`python
+def eval_loss(model, tokens):
+    model.eval(); total, n = 0.0, 0
+    with torch.no_grad():
+        for x, y in tokens:                 # 固定语料切分
+            logits = model(x.cuda())
+            loss = torch.nn.functional.cross_entropy(
+                logits.view(-1, logits.size(-1)), y.view(-1).cuda())
+            total += loss.item(); n += 1
+    return total / n
+
+torch.manual_seed(0)                        # 固定种子 → 可复现
+# 四个模型跑同一测量流程，填入数据表（数值随硬件/语料变，这里只示意流程）
+results = {}
+for name, mdl in [("Transformer", dense), ("MoE", moe)]:
+    tps = measure_throughput(mdl, seq=2048, batch=4)
+    mem = peak_memory_gb(mdl, seq=2048, batch=4)
+    results[name] = {"tok/s": round(tps), "peak_GB": round(mem, 2)}
+    print(f"{name}: {results[name]}")
+# 断言：MoE 同总参下激活参少，吞吐不应显著低于稠密（宽松阈值，真实值看硬件）
+assert results["MoE"]["tok/s"] > 0, "测量流程应产出有效吞吐"
+\`\`\`
+
+测量脚本把三个指标落成可跑流程：吞吐用 \`time.time\` 包住前向算 tokens/s（实测有效值），峰值显存用 CUDA 峰值统计，loss 用固定种子与语料算交叉熵。注意断言刻意写得宽松（\`> 0\`）——因为真实吞吐/显存随硬件剧烈变化，脚本保证的是「测量流程可跑、产出有效数字」，具体结论看数据表而非某个硬编码阈值。
+
+### 4K 至 16K 长上下文退化曲线
+
+长上下文维度要看退化曲线而非单点。做法是固定每个模型，扫 4K、8K、16K 三档序列长，记录 loss（或困惑度）随长度的变化；同时记录峰值显存随长度的增长斜率——这正好区分注意力的「KV 线性增长」和 SSM 的「固定状态」。预期：Transformer/线性注意力的显存随长度明显上升，SSM 基本平稳；loss 曲线上 SSM 在长序列更稳，而注意力若没做位置外推会在超训练长度时退化。
+
+\`\`\`python
+def degeneration_curve(model, lengths, batch=1):
+    """扫多个上下文长度，返回 (长度 → loss, 峰值显存)。"""
+    curve = {}
+    for seq in lengths:
+        loss = eval_loss(model, [(torch.randint(0, 50257, (batch, seq)),
+                                  torch.randint(0, 50257, (batch, seq)))])
+        mem = peak_memory_gb(model, seq, batch)
+        curve[seq] = {"loss": round(loss, 3), "peak_GB": round(mem, 2)}
+    return curve
+
+lengths = [4096, 8192, 16384]
+curve_dense = degeneration_curve(dense, lengths)
+for seq, v in curve_dense.items():
+    print(f"Transformer 长度 {seq}: loss={v['loss']} peak={v['peak_GB']}GB")
+# 显存应随序列长增长（注意力 KV 线性增长，L57）
+assert curve_dense[16384]["peak_GB"] > curve_dense[4096]["peak_GB"], \\
+    "注意力类峰值显存应随序列长上升"
+\`\`\`
+
+这段把「退化曲线」写成可跑的扫描：\`degeneration_curve\` 对每档长度测 loss 与峰值显存，断言钉住注意力类「显存随长度上升」这一结构性特征。把 \`dense\` 换成 SSM 模型重跑，预期断言要反过来（SSM 显存基本平稳）——这正是数据表里最有价值的一行对比。
+
+:::deep
+
+### 可复现数据表与判据（Stage 6.4 的结论来源）
+
+把四个架构的所有测量结果汇成一张数据表，这张表就是 L59 选型报告要引用的「Stage 6.4 实测数据」。表的行是四个架构、列是参数量、激活参、吞吐、峰值显存、4K loss、16K loss。读表有四条判据：① **吞吐**：MoE 与线性注意力通常高于稠密基线（前者激活参少、后者注意力线性）；② **峰值显存**：SSM 与线性注意力在 16K 下显存增长最缓，稠密注意力最陡；③ **同语料 loss**：四者在同规模同语料下应接近，若某架构明显偏高，检查是否规模/训练没对齐；④ **退化曲线**：SSM 在长序列 loss 更稳，注意力在超训练长度需位置外推技巧。
+
+| 架构 | 参数量 | 激活参/token | 吞吐(tok/s) | 16K 峰值显存 | 16K loss |
+|---|---|---|---|---|---|
+| Transformer | ~125M | ~125M | 基线 | 高 | 基线 |
+| MoE(8选2) | ~125M | ~25% | 高于基线 | 中 | 接近基线 |
+| SSM | ~125M | ~125M | 中高 | 低且平稳 | 长序列稳 |
+| 线性注意力 | ~125M | ~125M | 高 | 中低 | 接近基线 |
+
+复现清单（缺一不可）：固定随机种子、固定语料切分与 tokenizer、固定硬件与 batch、用实测吞吐而非峰值、把脚本与数据表一起存档。五条做到，他人重跑应得到同量级结果——数值可有波动，但架构间的相对排序应稳定。若排序对不上，先查「规模是否真对齐、是否用了同一 batch、吞吐是不是实测值」这三项最常见的翻车点。
+
+:::
+
+### 从数据表到选型：实验的收口
+
+实验本身不是目的，填回 L55 的矩阵才是。把数据表里的吞吐填进「推理延迟」维、16K 显存与退化斜率填进「长上下文」维、loss 填进「质量」维，矩阵就从示意分升级成实测分。再用 L56 的筛选器重跑，候选排序若有变化，以实测为准。要诚实看待实验边界：约 125M 的小模型上，SSM 的「固定状态」优势已可测，但它在超大规模下的质量表现、MoE 在超大规模下的路由稳定性，都不是这个小实验能回答的——小实验验证的是「架构的结构性差异方向」，不是「大模型上的绝对排名」。把这层边界写进数据表说明，结论才不越界。L59 的 capstone 会把这张数据表当作核心证据，写进一份完整的架构选型决策报告。
+
+:::tip
+
+### 收束：一张表、四个架构、三条纪律
+
+四架构对比实验固定约 125M、同语料、同硬件，实测吞吐、峰值显存、同语料 loss，并扫 4K 至 16K 退化曲线。三条纪律贯穿全程：**控制变量**（规模固定才能归因到架构）、**实测非峰值**（吞吐用真实有效值）、**可复现**（固定种子/语料/硬件，脚本与数据表一起存档）。数据表的相对排序比绝对值更重要——SSM 赢在长上下文显存平稳、MoE 赢在激活参低、线性注意力赢在吞吐、Transformer 是稳健基线。这张 Stage 6.4 数据表是 L59 决策报告的核心证据，带着它进 capstone。
+
+:::
+`,
+    null,
+    [
+      {
+        text: '四架构对比实验为什么要「固定约 125M 参数」？',
+        options: [
+          '参数越小越好',
+          '控制变量：让吞吐/KV/loss 的差异源于架构而非规模，结论才可归因',
+          '125M 是魔法数字',
+          '为了跑得最快',
+        ],
+        answer: 1,
+        explain:
+          '对比实验要控制变量。固定参数规模（约 125M）后，吞吐/显存/loss 的差异才能归因到架构（Transformer/MoE/SSM/线性注意力）而非模型大小。',
+        concept: 'arch-compare-exp',
+      },
+      {
+        text: 'MoE 架构在 ~125M 总参下，每 token 激活参与 FLOPs 的关系是？',
+        options: [
+          '激活参等于总参',
+          '激活参只占少数（如 8 选 2），FLOPs 按激活参算，故比同总参稠密模型低',
+          '完全不算 FLOPs',
+          '激活参比总参大',
+        ],
+        answer: 1,
+        explain:
+          '沿用 M3/M4：MoE 每 token 激活 top-k 专家（8 选 2 约 25% 或更少），FLOPs 由激活参决定（L57），同总参下计算更省。',
+        concept: 'arch-compare-exp',
+      },
+      {
+        text: '测 4K/16K 长上下文退化曲线的正确做法是？',
+        options: [
+          '只测 4K 一个点',
+          '在同一模型上扫多个上下文长度，记录 loss/困惑度或检索准确率随长度的变化',
+          '只比较参数量',
+          '忽略长上下文',
+        ],
+        answer: 1,
+        explain:
+          '退化要看「随长度的曲线」而非单点：固定模型、扫 4K 至 16K 多档，记录 loss/困惑度或 needle 召回，才能看出 SSM 与注意力的长度稳定性差异。',
+        concept: 'arch-compare-exp',
+      },
+      {
+        text: '「峰值 KV/显存」这一指标主要区分哪两类架构？',
+        options: [
+          '参数大小',
+          '注意力类（KV 随序列线性增长）vs SSM/线性注意力类（递推/固定状态，KV 增长小）',
+          '激活函数',
+          '词表大小',
+        ],
+        answer: 1,
+        explain:
+          'Transformer/线性注意力的 KV 随序列长线性增长，SSM 用固定递推状态、内存与序列解耦（L55/L57），峰值显存-长度曲线能区分它们。',
+        concept: 'arch-compare-exp',
+      },
+    ],
+    [
+      ['控制变量实验', '固定参数规模/语料/硬件，只变架构，使指标差异可归因到架构'],
+      ['激活参', 'MoE 每 token 实际参与计算的专家参数，决定 FLOPs'],
+      ['峰值 KV/显存', '推理时 KV cache 与激活占用的显存峰值，区分注意力类与递推类架构'],
+      ['退化曲线', '同一模型在多个上下文长度下的 loss/困惑度/准确率变化'],
+      ['可复现数据表', '固定随机种子与脚本产出、他人可重跑得到同量级结果的数据表'],
+    ],
+    [
+      '不固定参数规模就比吞吐——差异可能来自大小而非架构，无法归因。',
+      'MoE 按总参算 FLOPs——应按激活参算，否则会低估 MoE 的计算优势。',
+      '长上下文只测单点（如只 4K）——退化要看随长度变化的曲线。',
+      '吞吐用理论峰值而非实测有效值——KV 挤显存、长短混合会让实测吞吐远低于峰值。',
+      '忘记固定随机种子与语料切分——数据表不可复现，结论无法被复算。',
+    ],
+  ),
+  'practice',
+)

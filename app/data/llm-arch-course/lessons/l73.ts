@@ -1,0 +1,214 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L73 = withKind(
+  L(
+    'L73',
+    34,
+    '数据配比：GPT-3 vs LLaMA',
+    2,
+    ['L72'],
+    ['data-mixing'],
+    [
+      '对照 GPT-3 Wikipedia 高轮数与 Common Crawl',
+      '讲清 LLaMA 配比（CC 67%/C4 15%/…）',
+      '解释采样权重为何重要',
+      '标注 LLaMA 官方 A 级来源',
+    ],
+    `### 光有清洗还不够：为什么要有配比
+
+上一课 L72 把训练目标钉死为 next-token 交叉熵：模型会忠实地拟合它看到的分布。于是问题立刻变成——**你让模型看什么分布？** 真实世界可供抓取的文本，来源极其不均：Common Crawl 这类网页语料有上万亿 token，Wikipedia 几百亿，ArXiv 论文、Books、代码托管各占一小块。如果按「抓到多少训多少」直接混合，模型见到的分布几乎被网页垃圾主导，高质量的小源被淹没。数据配比（data mixing）要解决的正是这件事：**人为设定各来源在总 token 中的目标占比，再用采样权重去实现它**。
+
+这一步在预训练里的地位，仅次于目标函数和算力。同样一个 1T token 的语料池，配比不同，模型能力轮廓会明显不同——代码占比高的模型更会写程序，论文占比高的更懂推理与术语。GPT-3 与 LLaMA 都把配比作为核心设计写进论文，且都是 A 级来源，因此这一课的数字可以写死、直接引用。
+
+### GPT-3 的配比：Wikipedia 高轮数与 Common Crawl 欠采样
+
+GPT-3（S-GPT3，A 级）的做法可以用一句话概括：**对高质量源过采样、对低质量大源欠采样**。它混合了 Common Crawl、WebText2、Books1/Books2、Wikipedia 几个来源。 token 体量上，Common Crawl 是绝对的巨无霸（清洗后仍达数千亿量级），Wikipedia 则小一到两个数量级。若按原始 token 数混合，Wikipedia 的权重会低到几乎不起作用。
+
+GPT-3 的解决方案是给每个来源设一个**采样权重**，训练时按权重抽取，而不是把全部语料平铺一遍。具体表现：Wikipedia 被重复训练约 2 到 4 轮（不同版本口径略有差异），WebText2 约 2 轮，而 Common Crawl 只训约 0.4 到 0.6 轮——即大量网页文本根本没被用到。这样虽然在原始 token 数上 Common Crawl 占绝对多数，但**在模型实际见到的 token 分布里**，高质量源的占比被显著抬升。这就是「Wikipedia 高轮数、Common Crawl 欠采样」的实质：轮数是实现配比的工具，配比才是目的。
+
+一个必须建立的直觉是：**权重决不等于原始 token 占比**。GPT-3 论文里给的最优混合，是让高质量源的权重高于其自然占比，用有限的高质量 token 反复「喂」给模型，同时用海量低质量网页填充多样性。后面 L77 规划算力、L78 真正训练时，我们都会回到这套「目标占比 → 采样权重 → 实际 token 预算」的换算。
+
+:::deep
+
+### 采样权重是怎么落到训练循环里的
+
+在工程上，配比不是一句口号，而是落在数据加载器的采样分布里。设来源 k 有 N_k 个文档，目标权重为 w_k（所有 w_k 归一化为和为 1），总共要训 D 个 token。做法有两种：
+
+- **按权重决定每个来源贡献多少 token**：来源 k 贡献 w_k · D 个 token。若它的文档不够，就重复采样（过采样，等效轮数 = w_k·D / N_k）；若太多，就只抽一部分（欠采样）。
+- **按权重作为每次抽样的概率**：每抽一个训练样本时，先按概率 w_k 选来源，再从该来源均匀抽一条。大数定律下，长期占比收敛到 w_k。
+
+两种方法等价，前者便于精确控制 token 预算（L77 用），后者实现简单（StreamingDataset 常用）。关键是 w_k 必须显式设定，而不是让「语料文件大小」隐式决定。
+
+:::
+
+### LLaMA 的配比：A 级数字逐项拆解
+
+LLaMA（arXiv:2302.13971，A 级来源）给出了一个被 industry 反复引用的配比。它的 1T token（65B/33B）与 1.4T token（7B/13B）训练，混合如下，**这些数字来自 A 级论文，可直接写死引用**：
+
+| 来源 | 目标占比 | 说明 |
+|---|---|---|
+| Common Crawl | 约 67% | 主力，经过严格去重与质量过滤的低质网页 |
+| C4 | 约 15% | 第二大类，清洗过的网页语料 |
+| Wikipedia | 约 4.5% | 高质量百科，覆盖 20 种语言 |
+| Books | 约 4.5% | 图书文本 |
+| ArXiv | 约 2.5% | 论文预印本 |
+| StackExchange | 约 2% | 技术问答 |
+| GitHub 及其他 | 其余约 4.5% | 代码等 |
+
+三个读法：第一，**Common Crawl 是绝对主力**（约 67%），它提供规模与多样性；第二，**高质量源占比小但刻意保留**（Wikipedia、Books、ArXiv、StackExchange 合计约 13.5%），它们提供知识密度与推理质量；第三，LLaMA 特别强调**只用公开可获取数据**，并对 Common Crawl 做了激进的去重（见 L74）——这说明配比与清洗是配套的：先有干净的数据，配比才有意义。
+
+必须标注来源等级：LLaMA 这些配比数字挂 **A 级 arXiv:2302.13971**，是论文正文明确给出的，可以作为关键结论引用；与之相对，L76 的过训练 token/参数比是 B 级第三方复算，不能当关键结论——这个对比要清楚。
+
+### 采样权重为何重要：一个可跑的配比计算器
+
+把「目标占比 → 各来源 token 预算 → 等效轮数」写成可跑脚本。给定总 token 预算 D 和各来源的文档 token 数，算出每个来源该贡献多少 token、需要过采样还是欠采样、等效训练几轮。这个脚本在 L77 规划算力、L78 准备数据时直接复用。
+
+\`\`\`python
+# LLaMA A 级配比（arXiv:2302.13971），目标占比归一化
+llama_mix = {
+    "CommonCrawl": 0.67,
+    "C4": 0.15,
+    "Wikipedia": 0.045,
+    "Books": 0.045,
+    "ArXiv": 0.025,
+    "StackExchange": 0.02,
+    "GitHub+其他": 0.045,
+}
+s = sum(llama_mix.values())
+assert abs(s - 1.0) < 1e-6, f"配比应归一化为 1，当前 {s:.4f}"
+print("配比归一化和 =", round(s, 4))
+
+# 总预算 D=1T token，各来源应贡献的 token
+D = 1e12
+budget = {k: w * D for k, w in llama_mix.items()}
+for k, b in budget.items():
+    print(f"{k:14s} 目标占比 {llama_mix[k]*100:5.1f}%  ->  贡献 {b/1e9:7.1f} B token")
+print("校验：总贡献 =", round(sum(budget.values())/1e12, 3), "T token")
+assert abs(sum(budget.values()) - D) < 1e3
+\`\`\`
+
+\`\`\`python
+# 过采样 / 欠采样：各来源文档量不同，看它要训几轮才够贡献目标 token
+corpus_tokens = {   # 各来源可用文档 token 数（示意，反映「量」的差异）
+    "CommonCrawl": 5.0e12,   # 海量 -> 欠采样
+    "C4": 7.5e11,
+    "Wikipedia": 6.0e10,     # 小 -> 过采样
+    "Books": 5.0e10,
+    "ArXiv": 2.0e10,
+    "StackExchange": 1.0e10,
+    "GitHub+其他": 1.0e11,
+}
+print("来源            目标B    可用B   等效轮数")
+for k, need in budget.items():
+    have = corpus_tokens[k]
+    epochs = need / have
+    flag = "过采样" if epochs > 1.05 else ("欠采样" if epochs < 0.95 else "一遍")
+    print(f"{k:14s} {need/1e9:6.1f} {have/1e9:7.1f}   {epochs:5.2f}  {flag}")
+# 结论：Wikipedia 等小源等效轮数 >1（反复训），Common Crawl <1（大量丢弃）
+\`\`\`
+
+这两段把「配比」从百分比落到可执行预算：归一化断言保证权重合法，贡献 token 表给出各来源的硬指标，等效轮数表则揭示了过采样/欠采样的实际力度——Wikipedia 要训好几轮，Common Crawl 只用了一小部分。这正是 GPT-3「Wikipedia 高轮数、Common Crawl 欠采样」那套逻辑在 LLaMA 配比上的数值化重现。
+
+再看按概率抽样时，配比如何在大量抽取后收敛到目标权重（工程上验证采样器是否正确）：
+
+\`\`\`python
+import random
+random.seed(0)
+keys = list(llama_mix.keys())
+probs = [llama_mix[k] for k in keys]
+N = 200000
+cnt = {k: 0 for k in keys}
+for _ in range(N):
+    cnt[random.choices(keys, weights=probs, k=1)[0]] += 1
+for k in keys:
+    observed = cnt[k] / N
+    print(f"{k:14s} 目标 {llama_mix[k]*100:5.1f}%  实测 {observed*100:5.1f}%")
+    assert abs(observed - llama_mix[k]) < 0.012, "大数下实测占比应收敛到目标权重"
+print("采样器配比校验通过")
+\`\`\`
+
+### 配比的工程判据与常见翻车点
+
+把这一课落成可执行的判断顺序。第一，**先定来源质量分级**：高质量小源（百科、论文、书）权重高于其自然占比，低质量大源（网页抓取）权重低于自然占比——这是 GPT-3 与 LLaMA 的共同结论，有 A 级支撑。第二，**权重必须显式归一化**：写脚本时断言 \`sum(w)=1\`，否则总预算会悄悄漂移。第三，**配比与清洗配套**：LLaMA 的 67% Common Crawl 是「去重清洗后」的网页，没清洗的高权重网页只会放大噪声——L74 的清洗管线是 L73 配比的前提。第四，**别照抄别人的配比当最优**：LLaMA 的配比适配它的语料池与目标语言，你的语料分布不同，应以此为起点做小规模消融，而不是当成普适常数。
+
+一个高频误区是把「训练 token 总数」当成唯一指标，忽视配比。实际上 D 相同、配比不同，模型能力轮廓会变。L77 会用一个算力规划脚本把「预算 → N（参数）与 D（token）」算出来，但 D 内部怎么分给各来源，仍要靠本课这套配比逻辑。把两者分清：**算力决定能训多少 token，配比决定这些 token 是什么**。
+
+:::tip
+
+### 一句话收束数据配比
+
+预训练把模型训成「它看到的分布」，所以配比是核心设计变量。GPT-3（A）对高质量小源过采样、对 Common Crawl 欠采样，Wikipedia 高轮数正是手段；LLaMA（arXiv:2302.13971，A 级）给出可写死的配比：Common Crawl 约 67%、C4 约 15%、Wikipedia 约 4.5%、Books 约 4.5%、ArXiv 约 2.5%、StackExchange 约 2%。配比靠采样权重实现——权重决定各来源在总 token 中的占比，进而塑造能力。记住：算力决定训多少，配比决定训什么；LLaMA 数字是 A 级，可当关键结论，与 L76 的 B 级过训练值形成对照。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'GPT-3 的数据配比里，Wikipedia 被高轮数重复采样的根本原因是？',
+        options: [
+          '它 token 总量最大',
+          '它质量高但总量相对小，过采样以提升其在训练中的权重',
+          '它最容易下载',
+          '它 token 数超过 Common Crawl',
+        ],
+        answer: 1,
+        explain:
+          'GPT-3 对高质量但体量小的 Wikipedia 做约 2 到 4 轮过采样、对体量巨大的 Common Crawl 欠采样，用采样权重校正「质高量小」源在混合语料中的占比。',
+        concept: 'data-mixing',
+      },
+      {
+        text: 'LLaMA（arXiv:2302.13971，A 级）官方报告的训练数据配比，大致是？',
+        options: [
+          'Wikipedia 占 67%、C4 占 15%',
+          'Common Crawl 约 67%、C4 约 15%、Wikipedia 约 4.5%、Books 约 4.5%、ArXiv 约 2.5%、StackExchange 约 2%',
+          '全部来自 Wikipedia',
+          'Common Crawl 占 100%',
+        ],
+        answer: 1,
+        explain:
+          'LLaMA 论文给出的 1T/1.4T token 混合里，Common Crawl 约 67%、C4 约 15%、Wikipedia 约 4.5%、Books 约 4.5%、ArXiv 约 2.5%、StackExchange 约 2%，其余为 GitHub 等（arXiv:2302.13971，A 级）。',
+        concept: 'data-mixing',
+      },
+      {
+        text: '为什么「采样权重」对预训练效果至关重要？',
+        options: [
+          '它只影响下载速度',
+          '它决定各来源在总 token 中的占比，直接塑造模型见到的分布与下游能力',
+          '它与 loss 无关',
+          '它只影响 tokenizer',
+        ],
+        answer: 1,
+        explain:
+          '同一批语料，不同采样权重会让模型见到完全不同的分布；高质量源权重过低则能力被稀释，低质量源权重过高则污染分布，权重是配比的核心变量。',
+        concept: 'data-mixing',
+      },
+      {
+        text: '关于数据配比，下列哪个说法符合 A 级来源的结论？',
+        options: [
+          '数据越多越好，配比无所谓',
+          '多源加权混合、对高质量源过采样，是 GPT-3 与 LLaMA 共同的做法（均有 A 级论文支撑）',
+          '只用单一来源效果最好',
+          'Wikipedia 因为量大所以被欠采样',
+        ],
+        answer: 1,
+        explain:
+          'GPT-3（S-GPT3，A）与 LLaMA（2302.13971，A）都采用多源加权混合：对高质量小源过采样、对低质量大源欠采样，配比是被论文验证过的关键设计。',
+        concept: 'data-mixing',
+      },
+    ],
+    [
+      ['数据配比', '各来源语料在总训练 token 中所占的目标比例'],
+      ['采样权重', '决定每个来源被抽中概率的参数，用于在混合时实现目标配比'],
+      ['过采样', '对高质量但体量小的来源重复采样，提高其在训练中的占比'],
+      ['欠采样', '对体量大而质量相对低的来源降低采样概率，如 Common Crawl'],
+      ['数据轮数 epoch', '同一份语料被完整训练的次数，过采样本质是提高某源的等效轮数'],
+    ],
+    [
+      '把「token 总量最大」当成「权重最高」——GPT-3 里 Common Crawl 量最大却被欠采样，Wikipedia 量小却过采样。',
+      '把 LLaMA 配比记反——Common Crawl 约 67% 是绝对主力，Wikipedia 只有约 4.5%，不是主角。',
+      '以为配比对结果影响不大——同样的语料池，权重不同会显著改变模型分布与下游能力，是 A 级论文专门报告的设计。',
+      '引用 LLaMA 数字不标来源——必须标注 arXiv:2302.13971（A 级），不能当成未经核验的二手经验。',
+    ],
+  ),
+  'framework',
+)

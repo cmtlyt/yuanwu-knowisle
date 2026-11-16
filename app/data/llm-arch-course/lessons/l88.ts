@@ -1,0 +1,170 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L88 = withKind(
+  L(
+    'L88',
+    38,
+    'LoRA/QLoRA/DoRA/GaLore 四法选型',
+    4,
+    ['L86', 'L87'],
+    ['peft-select'],
+    ['从显存/质量/多任务三维对比四法', '给出选型判据', '说明 GaLore 备选定位', '产出对照表'],
+    `### 为什么需要四法选型：没有免费的午餐
+
+L85 到 L87 给了三把「可 merge 的低秩」武器：LoRA、QLoRA、DoRA；L92 还会讲 GaLore 这条不同路线的备选。它们不是同一维度的强弱排序，而是在**显存预算、质量、多任务切换**三个轴上各占不同位置。选型的本质是：先认清你的硬约束（显存够不够、要不要零延迟、是不是多任务），再在剩下的候选里按质量排序。这一课把四法放进统一的三维框架，产出一张对照表和一棵可执行的决策树，并说明 GaLore 的备选定位。所有结论挂 S-LoRA/QLoRA/DoRA/GaLore（A 级）。
+
+### 四法机制速回顾
+
+先把四法的「一句话机制」对齐，避免后面混淆：
+
+- **LoRA**：冻结 W₀，注入低秩增量 (α/r)BA，只训 A/B；可 merge，零延迟；参数约 0.01% 到 0.5%。
+- **QLoRA**：在 LoRA 基础上把冻结基座量化到 4bit（NF4 + 双重量化），LoRA 分支仍 bf16；显存最省。
+- **DoRA**：把权重拆成幅度 m 与单位方向，BA 只更新方向、m 单独学；相近参数下更稳更强，可 recombine 零延迟。
+- **GaLore**：**不冻结基座**，把全参梯度投影到低秩子空间再更新，优化器状态因此约省 1/4；推理就是原模型，无 merge 概念（L92 详解）。
+
+注意 LoRA/QLoRA/DoRA 都是「冻结基座 + 旁路或分解」，GaLore 是「不冻基座 + 低秩梯度」——这是两条根本不同的路线，选型时第一刀就切在这里。
+
+### 三维对比：显存、质量、多任务
+
+把四法（外加全参作参照）放进三轴，得到一个可查阅的对照表：
+
+| 方法 | 训练显存 | 相对质量 | 多任务切换 | 推理延迟 | 基座是否冻结 |
+|---|---|---|---|---|---|
+| 全参微调 | 最高（约16B/参数） | 上限参照 | 每任务一份全权重 | 无额外 | 否 |
+| LoRA | 低（仅 BA + 冻结权重） | 强 | 换 BA 小文件，最轻 | 零（merge） | 是 |
+| QLoRA | 最低（4bit 基座约0.5B/参数） | 接近 LoRA | 换 BA，轻 | 零（merge） | 是 |
+| DoRA | 低（LoRA + 幅度向量） | 最强（相近参数） | 换 BA+m，轻 | 零（recombine） | 是 |
+| GaLore | 中（优化器省约1/4） | 接近全参 | 每任务一份全权重 | 无额外 | 否 |
+
+三个读表要点：① **显存轴**：QLoRA < LoRA≈DoRA < GaLore < 全参，QLoRA 是单卡装大模型的唯一现实选项；② **质量轴**：全参是上限，DoRA 在可合并方法里最强，LoRA/QLoRA 接近，GaLore 因全参更新也接近全参；③ **多任务轴**：可合并的三法（LoRA/QLoRA/DoRA）都只换小文件，远优于需要整份权重的全参与 GaLore。
+
+\`\`\`python
+# 把对照表变成可查询的结构，并按硬约束筛选候选
+METHODS = {
+    "full":   dict(vram=5, quality=5, multitask=1, merge=True),
+    "lora":   dict(vram=2, quality=4, multitask=5, merge=True),
+    "qlora":  dict(vram=1, quality=4, multitask=5, merge=True),
+    "dora":   dict(vram=2, quality=5, multitask=5, merge=True),
+    "galore": dict(vram=3, quality=5, multitask=1, merge=False),
+}  # 1=最优/最省，5=最差/最贵；quality 1=最强 5=最弱此处用反向标注见下
+
+# 质量改为「越高越好」，其余「越低越好」，统一成打分
+qual = {"full":5, "lora":4, "qlora":4, "dora":5, "galore":5}
+def candidates(vram_budget, need_multitask, need_zero_latency):
+    out = []
+    for name, m in METHODS.items():
+        if m["vram"] > vram_budget:            continue  # 显存超预算
+        if need_multitask and m["multitask"] > 3: continue  # 多任务要轻切换
+        if need_zero_latency and not m["merge"]: continue   # 要零延迟必须可合并
+        out.append((qual[name], name))
+    return [n for _, n in sorted(out, reverse=True)]
+
+print("单卡紧显存+多任务+零延迟:", candidates(vram_budget=2, need_multitask=True, need_zero_latency=True))
+print("显存充足+质量优先+不要求切换:", candidates(vram_budget=5, need_multitask=False, need_zero_latency=False))
+assert "qlora" in candidates(1, True, True)
+assert "full" not in candidates(2, True, True)
+print("结论：硬约束先筛掉不合格项，再按质量排序，避免唯心选型")
+\`\`\`
+
+### 选型判据：一棵可执行的决策树
+
+把三维约束压成顺序判断，遇到具体任务照着走一遍即可：
+
+1. **显存够不够装基座？** 先把 L83 的 16 字节/参数（全参）或 L86 的 4bit 存储账算出来。若目标模型连 bf16 都装不下，直接进入 QLoRA 分支（4bit 是唯一能让单卡装大模型的选项）。
+2. **是不是一基座多任务？** 若是，优先可 merge 的 LoRA/QLoRA/DoRA——每任务一份小 BA，切换只换文件（L90）。全参与 GaLore 每任务一份全权重，多任务成本陡增。
+3. **质量要求与秩预算？** 在可合并三法里：资源紧/显存瓶颈选 QLoRA；显存够、追求质量选 DoRA；一般情况 LoRA 是稳妥默认。DoRA 相对 LoRA 参数几乎不增，可作为「免费升级」优先试。
+4. **基座能不能冻？** 若任务要求重排底层特征、且「不冻基座」比「可切换」更重要（如单一任务的极致质量、显存又不是瓶颈），才考虑 GaLore 或全参。这是 L83「何时才该全参」判据在四法框架里的对应位置。
+
+:::deep
+
+### 决策树里最容易跳错的一步：第 2 步与第 4 步的优先级
+
+很多人一上来就问「LoRA 还是 DoRA」，跳过了「是不是多任务」这一刀。若你的服务要同时承载十几个领域、频繁切换，那么**多任务成本**是硬约束，全参与 GaLore 直接出局——此时再纠结 DoRA 比 LoRA 强几个点意义不大，因为「每任务一份全权重」的存储和切换代价已经否决了它们。反过来，若你是单一任务、显存充足、只要最高质量，那么多任务维度权重为零，DoRA 与 GaLore/全参重新进入候选。判据的顺序反映了约束的刚性：**先排除物理上不可行或工程上不可接受的，再在可行集里比质量**。把顺序记牢，选型就不会被「哪个方法最强」这种无上下文的问题带偏。
+
+:::
+
+### GaLore 的备选定位：第三条路
+
+GaLore（L92 详解）在这张表里是特殊的：它既不冻结基座（像全参），又通过低秩梯度投影把优化器显存压到约全参的 1/4（像 PEFT 的省显存）。这让它占据一个独特生态位——**当你不想冻结基座（担心 LoRA 表达力不够），又付不起全参优化器显存**时，GaLore 是中间路线。
+
+但它是「备选」而非默认，原因有三：① LoRA/QLoRA 生态更成熟（HF peft、bitsandbytes 直接支持），工程落地快；② GaLore 的多任务切换成本高（不冻基座 → 每任务一份全权重），不适合一基座多适配器；③ GaLore 的收益是「优化器显存约省 1/4」，而 LoRA 的收益是「可训参数省 10⁴ 倍」——量级上 LoRA 的省法更彻底。所以 GaLore 的定位是：小模型、单任务、显存中等、且想保留全参更新能力的场景（L92 给了小模型显存/收敛对照）。
+
+### 产出对照表：一页纸选型卡
+
+把上面的框架压成一张可直接使用的选型卡，按硬约束对号入座：
+
+- **单卡装大模型（显存是死约束）** → QLoRA。4bit 基座是唯一解，质量接近 LoRA（L86）。
+- **一基座多任务 + 零延迟** → LoRA 默认；想提质就上 DoRA（可 recombine，零延迟）。
+- **显存够 + 单任务 + 追最高质量（可合并）** → DoRA，相近参数下稳定超 LoRA。
+- **不冻基座 + 显存中等 + 单任务** → GaLore，优化器约省 1/4、逼近全参（L92）。
+- **显存充足 + 大数据 + 领域远 + 评测证明 PEFT 不够** → 全参微调（L83 判据，L93 实操）。
+
+:::tip
+
+### 选型一句话：先约束、后质量
+
+四法不是强弱榜，而是三轴上的不同坐标。记住顺序：**先按显存预算和多任务/延迟硬约束筛掉不合格项，再在可行集里按质量排序**。可合并三法（LoRA/QLoRA/DoRA）在「一基座多任务 + 零延迟」上天然占优；QLoRA 是显存死约束下的唯一解；DoRA 是质量优先的免费升级；GaLore 是「不冻基座、显存仍紧」的备选；全参是资源与数据都够、PEFT 不够时的最后手段。带着这张卡进 L89——那里的端到端实现选的就是 LoRA + 4bit（QLoRA）这条最主流的路径。
+
+:::
+`,
+    null,
+    [
+      {
+        text: '显存最省、最可能把大模型塞进单卡的方法是？',
+        options: ['LoRA', 'QLoRA（4bit 基座 + 双重量化）', 'DoRA', '全参微调'],
+        answer: 1,
+        explain:
+          'QLoRA 把冻结基座压到 4bit（约 0.5 字节/参数），是四法里显存最低的一档，单 48GB 可微调 65B。',
+        concept: 'peft-select',
+      },
+      {
+        text: '在「质量优先、且要求零推理延迟」时，最合适的升级选项是？',
+        options: ['Prompt Tuning', 'DoRA（方向/幅度解耦，可 merge 回单矩阵）', 'Adapters', '只训最后一层'],
+        answer: 1,
+        explain: 'DoRA 在相近参数量下稳定超 LoRA，且分解是恒等式、部署前可 recombine 成单矩阵，零额外延迟。',
+        concept: 'peft-select',
+      },
+      {
+        text: 'GaLore 与 LoRA 最本质的区别是？',
+        options: [
+          'GaLore 量化了权重',
+          'GaLore 不冻结基座，而是把全参梯度投影到低秩子空间；LoRA 冻结基座只训低秩增量',
+          'GaLore 只训词嵌入',
+          '两者完全相同',
+        ],
+        answer: 1,
+        explain:
+          'GaLore 保留全参、更新全参，只是把梯度投到低秩子空间以省优化器显存（约 1/4）；LoRA 冻结基座、只训旁路的 BA。',
+        concept: 'peft-select',
+      },
+      {
+        text: '一基座多任务、需要频繁切换适配器的场景，首选项应具备的核心属性是？',
+        options: [
+          '可训参数越多越好',
+          '每个任务只需存一份小的、可 merge 的增量（如 LoRA 的 BA）',
+          '必须为每任务存一份全权重',
+          '推理必须有额外延迟',
+        ],
+        answer: 1,
+        explain:
+          'LoRA 每任务仅几十 MB 的 BA，切换只换小文件；配合 merge 零延迟，天然适合一基座多适配器（L90）。',
+        concept: 'peft-select',
+      },
+    ],
+    [
+      ['QLoRA', '4bit 基座 + bf16 LoRA，显存最省的一档，适合单卡装大模型'],
+      ['LoRA', '冻结基座 + 低秩增量，可 merge 零延迟，一基座多任务切换成本最低'],
+      ['DoRA', '幅度/方向解耦后方向做 LoRA，质量优先且可合并，是 LoRA 的升级档'],
+      ['GaLore', '把全参梯度投影到低秩子空间，不冻结基座、优化器显存约省 1/4'],
+      ['选型三维', '显存预算、质量要求、多任务切换成本，四法对比的三个主轴'],
+    ],
+    [
+      '以为 QLoRA 一定比 LoRA 质量差——QLoRA 省的是存储、计算回到 bf16，质量接近普通 LoRA。',
+      '把 GaLore 当成 LoRA 的变体——GaLore 更新全参、只是梯度低秩投影，与冻结基座的 LoRA 根本不同。',
+      '以为 DoRA 推理更慢——它可 recombine 成单矩阵，与 LoRA 一样零延迟。',
+      '只看显存不看多任务成本——QLoRA 显存最省，但多任务切换的工程复杂度高于 LoRA。',
+      '把 GaLore 当默认首选——它是「不冻基座、显存仍紧」时的备选，一般 LoRA/QLoRA 更成熟。',
+    ],
+  ),
+  'framework',
+)

@@ -1,0 +1,284 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L71 = withKind(
+  L(
+    'L71',
+    33,
+    '复现 MLA 低秩 KV 压缩 capstone',
+    5,
+    ['L63', 'L65', 'L66', 'L69'],
+    ['m7-capstone'],
+    ['搭建可跑的 MLA 低秩 KV 压缩复现', '实现解耦 RoPE', '核算 KV 缓存节省', '给出压缩比≈93.3% 验收断言'],
+    `### 交付物与验收口径
+
+这是 M7 的收束课。前面九课把所有机制分别讲透：L63 推导 MLA 把 K、V 联合压到低秩 c_KV，L64 用解耦 RoPE 解决压缩与位置的冲突，L65 把前馈换成细粒度专家，L66 用 MTP 加密训练信号，L67 与 L70 把 671B 摊到 2048 卡并藏起通信，L68 立了来源纪律，L69 讲 R1 的纯 RL 推理。本课把这些收成**一段可跑、可验收的复现**：用 numpy 手写 MLA 的低秩 KV 压缩与解耦 RoPE，跑通一次带因果掩码的前传，核对缓存里只放 c_KV 与共享 k^R，最后按论文配置算出压缩比并给出接近 93.3% 的验收断言。来源按 spec 标 A 级（S-DSV2/DSV3），数字以官方论文为准。
+
+验收分两层，缺一不可。**功能层**：前传要跑通，输出形状正确，缓存内容符合「c_KV 加共享 k^R」，因果掩码生效（后面的位置不能看到前面）。**数值层**：按论文配置 n_h = 32、d_h = 128、d_c = 512、d_rope = 64 算 KV 降幅，断言它接近官方 93.3%。两层分开是刻意的：功能演示用小维度保证任何人都能在本机秒级跑完，数值断言用论文真实配置对账，绝不为让断言通过而改小维度、篡改数字——这是 L68 来源纪律在代码里的延续。
+
+:::deep
+
+### 复现的三块拼图和一条数据流
+
+MLA 复现看着复杂，拆开只有三块拼图。第一块是**联合低秩压缩**：下投影 W^DKV 把每个位置的隐藏态 h 压成 c_KV，上投影 W^UK、W^UV 再把 c_KV 还原成各头 K、V。第二块是**解耦 RoPE**：内容侧 K、V 不旋转、继续走压缩通道；位置侧从 h 另算一个维度很小、跨头共享的 k^R，单独施加 RoPE；Q 也对称拆成内容 q^C 与旋转 q^R。第三块是**打分合并**：每个头的 logit 是内容点积 q^C·k^C 加旋转点积 q^R·k^R，再按总维度 d_h + d_rope 缩放，旋转项因 k^R 共享而广播到各头。
+
+数据流是这样的：输入隐藏态 h，先压出 c_KV 并缓存；再上投影出 K、V 供注意力用；同时从 h 算出共享旋转键 k^R 并缓存；Q 侧算出内容 q^C 与共享旋转 q^R；打分时内容项逐头算、旋转项共享算，相加、缩放、加因果掩码、softmax，最后对 V 加权求和。整个过程中**随序列增长的缓存只有 c_KV 与 k^R 两块**，其余都是常数大小的权重矩阵与一次性计算。抓住这条数据流，下面的每一段代码就都有明确的位置。
+
+:::
+
+### 第一步：配置与 KV 账
+
+先把配置与baseline的 KV 账写清。标准 MHA 每 token 每层的 KV 是 K、V 各 n_h 个头、每头 d_h 维，合计 2·n_h·d_h 个元素；MLA 每 token 只缓存 d_c 维的 c_KV 与 d_rope 维的共享 k^R，合计 d_c + d_rope。账算对了，后面的断言才有基准。
+
+\`\`\`python
+import numpy as np
+
+# 论文配置：用于数值验收（A 级，DeepSeek-V2 arXiv:2405.04434）
+PAPER = dict(n_h=32, d_h=128, d_c=512, d_rope=64, layers=61, seq=8192, bpe=2)
+# 演示配置：维度小、可秒级跑通，仅验证机制
+DEMO = dict(n_h=4, d_h=8, d_c=16, d_rope=4)
+
+def kv_per_token(n_h, d_h, d_c, d_rope, bpe=2):
+    """每 token 每层的 KV 字节数。"""
+    mha = 2 * n_h * d_h * bpe             # K、V 各 n_h*d_h 个元素
+    mla = (d_c + d_rope) * bpe            # c_KV + 共享 k^R
+    return mha, mla
+
+mha_bpt, mla_bpt = kv_per_token(PAPER["n_h"], PAPER["d_h"], PAPER["d_c"], PAPER["d_rope"])
+print(f"论文配置 KV/token：MHA {mha_bpt} B，MLA {mla_bpt} B")
+assert mla_bpt < mha_bpt / 10, "MLA 每 token KV 应不足 MHA 十分之一"
+print(f"每 token 压缩到 {mla_bpt/mha_bpt:.2%}")
+\`\`\`
+
+### 第二步：解耦 RoPE 的实现
+
+位置部分单独实现。RoPE 把向量两两配对、按位置角旋转；这里把前一半与后一半配对，频率随维度指数衰减。注意旋转只作用在共享的小旋转键上，不碰低秩内容 c_KV——这正是「解耦」的代码体现。
+
+\`\`\`python
+def build_freq(dim, theta=10000.0):
+    """RoPE 频率：每对维度一个角速度。"""
+    half = dim // 2
+    return 1.0 / (theta ** (np.arange(half) / half))
+
+def apply_rope(x, positions, freq):
+    """x: (T, dim)；前后两半配对做二维旋转。"""
+    half = x.shape[-1] // 2
+    a, b = x[:, :half], x[:, half:]
+    ang = positions[:, None] * freq[None, :]
+    cos, sin = np.cos(ang), np.sin(ang)
+    return np.concatenate([a * cos - b * sin, a * sin + b * cos], axis=-1)
+
+# 数值自检：旋转保范数（二维旋转不改长度），位置不同结果不同
+rng = np.random.default_rng(0)
+freq = build_freq(DEMO["d_rope"])
+v = rng.normal(size=(3, DEMO["d_rope"]))
+pos = np.array([0, 1, 7])
+vr = apply_rope(v, pos, freq)
+print("旋转前后范数：", np.round(np.linalg.norm(v, axis=1), 3),
+      "→", np.round(np.linalg.norm(vr, axis=1), 3))
+assert np.allclose(np.linalg.norm(v, axis=1), np.linalg.norm(vr, axis=1), atol=1e-6)
+assert not np.allclose(vr[0], vr[1]), "不同位置应得到不同旋转结果"
+print("解耦 RoPE 的旋转函数通过自检")
+\`\`\`
+
+### 第三步：组装 MLA 注意力与缓存
+
+把三块拼图装成一个类。权重矩阵用随机数初始化（职责是验证机制，不是训练收敛）。\`compress\` 做低秩压缩，\`up_project\` 还原各头 K、V，\`rope_keys\` 产出共享旋转键，\`forward\` 完成打分、因果掩码、softmax 与输出，并把缓存明确设为 c_KV 加 k^R。
+
+\`\`\`python
+class MLAAttention:
+    """教学版 MLA：联合低秩压缩 + 解耦 RoPE + 因果注意力。"""
+    def __init__(self, n_h, d_h, d_c, d_rope, seed=0):
+        g = np.random.default_rng(seed)
+        self.n_h, self.d_h, self.d_c, self.d_r = n_h, d_h, d_c, d_rope
+        self.d_model = n_h * d_h
+        self.freq = build_freq(d_rope)
+        s = self.d_model ** -0.5
+        self.W_DKV = g.normal(size=(self.d_model, d_c)) * s   # h -> c_KV
+        self.W_UK  = g.normal(size=(d_c, n_h * d_h)) * s      # c_KV -> K
+        self.W_UV  = g.normal(size=(d_c, n_h * d_h)) * s      # c_KV -> V
+        self.W_DQ  = g.normal(size=(self.d_model, d_c)) * s   # h -> q 低秩
+        self.W_UQ  = g.normal(size=(d_c, n_h * d_h)) * s      # -> 各头 q^C
+        self.W_KR  = g.normal(size=(self.d_model, d_rope)) * s # h -> k^R（共享）
+        self.W_QR  = g.normal(size=(self.d_model, d_rope)) * s # h -> q^R（共享）
+
+    def compress(self, h):
+        """(T, d_model) -> (T, d_c)：只缓存这块。"""
+        return h @ self.W_DKV
+
+    def up_project(self, c):
+        """(T, d_c) -> K,V:(T, n_h, d_h)。"""
+        T = c.shape[0]
+        K = (c @ self.W_UK).reshape(T, self.n_h, self.d_h)
+        V = (c @ self.W_UV).reshape(T, self.n_h, self.d_h)
+        return K, V
+
+    def rope_keys(self, h, positions):
+        """共享小旋转键：每个 token 一份，跨头广播。"""
+        k_r = apply_rope(h @ self.W_KR, positions, self.freq)   # (T, d_r)
+        q_r = apply_rope(h @ self.W_QR, positions, self.freq)
+        return q_r, k_r
+
+    def forward(self, h, positions):
+        T = h.shape[0]
+        c = self.compress(h)                                   # 缓存 1：c_KV
+        K, V = self.up_project(c)
+        q_c = (h @ self.W_DQ @ self.W_UQ).reshape(T, self.n_h, self.d_h)
+        q_r, k_r = self.rope_keys(h, positions)                # 缓存 2：k^R
+        content = np.einsum("qhd,khd->qkh", q_c, K)           # (T,T,n_h)
+        rotary = (q_r @ k_r.T)[..., None]                     # (T,T,1) 广播到各头
+        logits = (content + rotary) / ((self.d_h + self.d_r) ** 0.5)
+        logits -= np.triu(np.ones((T, T)), 1)[..., None] * 1e9  # 因果掩码
+        w = np.exp(logits - logits.max(axis=1, keepdims=True))
+        w /= w.sum(axis=1, keepdims=True)
+        out = np.einsum("qkh,khd->qhd", w, V).reshape(T, -1)
+        return out, (c, k_r)                                   # 只返回两块缓存
+
+# 功能冒烟：小维度跑通，核对输出形状与缓存内容
+g = np.random.default_rng(7)
+T = 8
+model = MLAAttention(**DEMO, seed=1)
+h = g.normal(size=(T, model.d_model))
+out, (c_cache, kr_cache) = model.forward(h, np.arange(T))
+print(f"输出 {out.shape}，c_KV {c_cache.shape}，k^R {kr_cache.shape}")
+assert out.shape == (T, model.d_model)
+assert c_cache.shape == (T, model.d_c) and kr_cache.shape == (T, model.d_r)
+# 因果性：把未来位置的输入改掉，前面位置的输出应不变
+h2 = h.copy(); h2[5:] = g.normal(size=h2[5:].shape)
+out2, _ = model.forward(h2, np.arange(T))
+assert np.allclose(out[:5], out2[:5], atol=1e-6), "因果掩码应遮住未来信息"
+print("MLA 前传 + 解耦 RoPE + 缓存 + 因果性全部通过")
+\`\`\`
+
+:::deep
+
+### 为什么缓存里「只有两块」是关键断言
+
+上面 \`forward\` 的返回值刻意只给出 c_KV 与 k^R，而不是展开后的 K、V。这不是代码简洁问题，而是 MLA 成立的充要条件。如果缓存里出现形状为 (T, n_h, d_h) 的 K 或 V，说明上投影的结果被存了下来——那等于把 MLA 省的 KV 又原样还回去，压缩比断言必然失败。反过来，只要缓存是 (T, d_c) 与 (T, d_rope) 两块，无论 d_c 取多少，生成时都能用常数大小的 W^UK、W^UV 把它们还原成各头 K、V，把「搬显存」换成「算矩阵乘」。所以功能层的断言 \`c_cache.shape == (T, d_c)\` 与 \`kr_cache.shape == (T, d_rope)\`，和数值层的压缩比断言是一对：前者保证机制对，后者保证收益真。漏掉前者，你可能写出一个「账面省 KV、实际缓存全量 K/V」的假复现。
+
+:::
+
+### 第四步：核算 KV 节省与 93.3% 验收断言
+
+现在用论文配置算真实的 KV 节省，并给出核心验收断言。注意这里的容差选择：1 − 576/8192 = 92.97%，与官方 93.3% 差约 0.3 个百分点，来自维度取整与论文按全部实现细节核算的差异，所以用 1 个百分点容差表达「接近」，而不是篡改维度去凑精确值。
+
+\`\`\`python
+def kv_reduction(n_h, d_h, d_c, d_rope):
+    mha = 2 * n_h * d_h
+    mla = d_c + d_rope
+    return 1 - mla / mha, mla / mha
+
+red, remain = kv_reduction(PAPER["n_h"], PAPER["d_h"], PAPER["d_c"], PAPER["d_rope"])
+print(f"论文配置 KV 降幅 = {red:.2%}，剩余 = {remain:.2%}（官方 93.3%，A 级）")
+assert abs(red - 0.933) < 0.01, "压缩比应接近 93.3%（容差 1 个百分点）"
+assert remain < 0.10, "MLA 缓存应不足 MHA 十分之一"
+print("核心验收断言通过：压缩比 ≈ 93.3%")
+\`\`\`
+
+把层数与序列长度乘进去，看整段上下文的显存，并核对吞吐 5.76 倍的方向一致性。
+
+\`\`\`python
+def kv_gb(tokens, layers, per_token_elems, bpe=2):
+    return tokens * layers * per_token_elems * bpe / 1e9
+
+mha_gb = kv_gb(PAPER["seq"], PAPER["layers"], 2 * PAPER["n_h"] * PAPER["d_h"])
+mla_gb = kv_gb(PAPER["seq"], PAPER["layers"], PAPER["d_c"] + PAPER["d_rope"])
+print(f"seq={PAPER['seq']} layers={PAPER['layers']}: MHA {mha_gb:.1f} GB → MLA {mla_gb:.1f} GB")
+concurrency_x = mha_gb / mla_gb
+throughput_x = 5.76   # 论文报告最大生成吞吐提升（A 级）
+assert mha_gb > 10 * mla_gb
+assert 1 < throughput_x < concurrency_x, "吞吐提升应小于并发上限提升（边际递减）"
+print(f"并发上限约 {concurrency_x:.1f}×，实测吞吐 {throughput_x}×，方向一致")
+\`\`\`
+
+### 上投影为什么不存 K/V：一次显存与算力的对账
+
+一个反复被问到的问题是：既然生成时反正要算出 K、V，为什么不干脆把它们缓存下来、省掉上投影？答案在于两种资源的性价比不同。缓存 K、V 意味着每生成一个 token 就要从显存搬走 2·n_h·d_h 个元素，而且这部分带宽开销随并发数与序列长度线性放大；上投影则是一次形状为 d_c 乘 n_h·d_h 的矩阵乘，由 Tensor Core 完成，算力随硬件代际快速增长。把带宽压力换成算力开销，正是现代加速器上正确的交换方向。用论文配置算一笔账：展开后的 K、V 每 token 是 8192 个元素，c_KV 加 k^R 只有 576 个；上投影把 576 个元素乘成 8192 个，每个 token 多做约 8192 × 512 次乘加，看起来不小，但它发生在片上、可以和大 GEMM 批量融合，而省下的是跨显存层级的搬运——后者才是 decode 阶段的瓶颈。L63 报告 5.76 倍吞吐提升，本质就是这笔交换的实测结果。复现里 compress 与 up_project 分开写，正是为了让这笔账在代码里可见；若把它们揉成一步、直接缓存输出，反而看不清省在哪。
+
+### 数值缩放与稳定性：为什么按总维度开方
+
+打分除以平方根 d_h + d_rope 不是随手加的系数，而是控制 softmax 饱和度的关键。内容项 q^C·k^C 是 d_h 维点积，旋转项 q^R·k^R 是 d_rope 维点积，两项相加后的方差随总维度 d_h + d_rope 增长；若不缩放，维度越大 logits 绝对值越大，softmax 越接近 one-hot，梯度变小、训练不稳。除以总维度的平方根把方差拉回单位量级，让不同头维度配置下的注意力强度可比。复现里用 self.d_h 加 self.d_r 的平方根、而不是只除内容维度，就是把这个细节写实——很多人只记得内容维度的缩放，忘了旋转项也贡献了方差。另一个容易忽略的点是旋转部分的数值范围：RoPE 用三角函数生成旋转角，频率基 θ 取 10000 量级，长位置下高频维度角度很大，但旋转本身保范数，所以不会放大 logits；真正要盯的是上投影矩阵的初始化尺度，代码里用 d_model 的负二分之一次方缩放随机数，就是为了让点积方差保持在可控范围。功能自检里的「旋转前后范数不变」，验证的正是这条性质。
+
+### 从复现到真实推理栈：接口与工程边界
+
+这段 numpy 复现验证的是机制，不是可直接上线的算子。把它接到真实推理栈时，有几处接口必须换实现。第一，上投影与注意力要融合：真实系统不会先物化 K、V 再算注意力，而是把 W^UK、W^UV 的展开与 FlashAttention 风格的算子融合，边算边读 c_KV，避免额外显存往返。第二，缓存布局要按 block 管理：L21 的 PagedAttention 把 KV 切成 block，MLA 的 c_KV 与 k^R 同样要进 block table，生成时按表取回，而不是像复现里那样用一个整数组。第三，多卡场景下 c_KV 与 k^R 随 TP/PP 分布，读取涉及节点内 all-reduce 与跨阶段传递，L67/L70 的通信重叠在这里兑现。第四，精度要换成 FP8 或 BF16，并给 c_KV 配缩放因子。把这些边界写清楚，复现的价值才不被误读：它证明「低秩压缩加解耦 RoPE 在数学上成立、缓存只有两块」，至于「在 2048 卡上跑多快」是系统课的职责。两段职责分开，才是完整的工程认知。
+
+### 对照实验：关掉解耦会怎样
+
+把解耦 RoPE 的必要性做成一组可跑的对照，能进一步坐实 L64 的结论。第一种错误实现是把 RoPE 直接施加在 c_KV 上：下投影得到 16 维潜向量后按位置旋转，再上投影还原各头 K。由于旋转与上投影不对易，还原出的 K 不再满足相对位置点积性质，打分里的位置信息被揉成噪声——数值上可以对比「正确实现」与「错误实现」在同一组 query 下的 logits，差异会随位置差增大。第二种错误实现是缓存展开后的 K、V：功能完全正确，但缓存形状从按 d_c 与 d_rope 存变成按 n_h 与 d_h 存两块，压缩比断言立刻失败——这正是 L63 强调「解耦是 MLA 落地接口」的含义。第三种是只保留旋转项、丢掉内容项：打分只剩共享的 q^R·k^R，所有头拿到完全相同的注意力分布，多头机制退化为单头。这三种对照分别坐实了解耦的三个作用：保位置性质、保 KV 压缩、保多头区分度。把它们写成断言，MLA 的每一步都不再是可有可无的细节。
+
+### 交付清单与常见翻车点
+
+把 capstone 的交付物钉成一张可勾选清单，出口对着它验收：
+
+- [ ] 一段可跑的 MLA 前传（ compress → up_project → 解耦 RoPE → 打分 → 因果掩码 → 输出）。
+- [ ] 缓存只含 c_KV 与共享 k^R，并有形状断言（功能层）。
+- [ ] 解耦 RoPE 的旋转函数通过「保范数、位置不同结果不同」自检。
+- [ ] 因果性自检：改动未来 token 不影响前面位置的输出。
+- [ ] 压缩比断言：论文配置下降幅接近 93.3%，容差 1 个百分点（数值层）。
+- [ ] 整段上下文 KV 显存账与吞吐 5.76 倍方向一致性核对。
+
+六个勾全打上，M7 综合交付完成。最常见的翻车点有三个。第一，**为凑断言改维度**——把 d_c 调到刚好算出 93.3%，看似通过实则篡改了论文事实；正确做法是保留真实配置、用容差表达近似。第二，**缓存了展开后的 K、V**——功能层断言会立刻抓住它，这也是「假复现」与真复现的分界线。第三，**忽略因果性**——只比对输出形状、不验 masks，可能写出一个「看得见未来」的注意力，数值再漂亮也是错的。把这三条写进测试，复现才真正可信。
+
+:::tip
+
+### 收束：机制与数字必须同时成立
+
+M7 的出口判据是「能对着实现讲机制、能对着数字讲收益」。MLA 复现把这一点压到极致：功能层证明你真的实现了低秩压缩与解耦 RoPE（缓存只有两块、因果性成立），数值层证明这套机制确实换来约 93.3% 的 KV 压缩与正确的吞吐方向。任何一层单独成立都不够——只有账面数字是「纸上复现」，只有代码跑通是「没有收益的玩具」。到这里，从 67B 到 R1 的谱系、MLA、解耦 RoPE、DeepSeekMoE、MTP、并行与 FP8、来源纪律、R1 推理，十课连成一条完整的链。带着这段可跑代码，你已经具备把论文里的架构数字自己算一遍、验一遍的能力。
+
+:::
+`,
+    null,
+    [
+      {
+        text: '本 capstone 的 MLA 复现中，推理缓存里只放什么？',
+        options: ['展开后的各头 K、V', '低秩潜向量 c_KV 加共享小旋转键 k^R', '完整 Q、K、V', '只放 V'],
+        answer: 1,
+        explain:
+          'MLA 缓存 c_KV（维度 d_c）与跨头共享的 k^R（维度 d_rope），远小于 2·n_h·d_h；K/V 用时再上投影。',
+        concept: 'm7-capstone',
+      },
+      {
+        text: '解耦 RoPE 中，旋转部分 k^R 的缓存方式是？',
+        options: ['每个头各存一份', '所有头共享一份，随 token 缓存', '不缓存，每次重算', '只在 prefill 存'],
+        answer: 1,
+        explain: 'k^R 是共享的小向量（维度 d_rope），每个 token 只存一份，打分时广播到各头，额外缓存极小。',
+        concept: 'm7-capstone',
+      },
+      {
+        text: '按论文配置 n_h=32、d_h=128、d_c=512、d_rope=64，KV 降幅约为？',
+        options: ['50%', '约 93%', '约 75%', '约 30%'],
+        answer: 1,
+        explain:
+          '1 − (512+64)/(2·32·128) = 1 − 576/8192 ≈ 92.97%，与官方 93.3%（A 级）同量级；断言用 1 个百分点容差。',
+        concept: 'm7-capstone',
+      },
+      {
+        text: '验收脚本里为什么要区分「功能演示用小维度」与「验收断言用论文配置」？',
+        options: [
+          '小维度跑得快且能验证机制，大维度算账才对得上论文数字',
+          '小维度更准',
+          '论文配置跑不动',
+          '没有区别',
+        ],
+        answer: 0,
+        explain:
+          '功能演示用可快速运行的小维度验证形状与机制；压缩比断言用论文配置算真实账，两者职责不同，避免为跑通而篡改数字。',
+        concept: 'm7-capstone',
+      },
+    ],
+    [
+      ['MLA 复现', '用 numpy 手写低秩压缩、上投影与解耦 RoPE，跑通功能并核算 KV 节省'],
+      ['c_KV', '低秩潜向量，维度 d_c，由下投影 W^DKV 从隐藏态压出'],
+      ['解耦 RoPE', '内容部分不旋转、共享小旋转键 k^R 单独旋转，两部分打分相加'],
+      ['压缩比断言', '对论文配置断言 1 − (d_c+d_rope)/(2·n_h·d_h) 接近 93.3%，容差 1 个百分点'],
+      ['上投影', '生成时用 W^UK、W^UV 把 c_KV 还原为各头 K、V'],
+    ],
+    [
+      '为让断言通过而篡改论文配置维度——应保留真实配置并用容差表达近似。',
+      '把 k^R 按头数复制缓存——它是共享的，只存一份。',
+      '打分时忘记把内容维度与旋转维度合并缩放。',
+      '只做数值账不跑功能前传——必须同时验证形状、因果掩码与缓存内容。',
+    ],
+  ),
+  'capstone',
+)

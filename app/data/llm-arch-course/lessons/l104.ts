@@ -1,0 +1,292 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L104 = withKind(
+  L(
+    'L104',
+    46,
+    '偏好对数据集 + DPO 对齐 capstone',
+    5,
+    ['L101', 'L102'],
+    ['m10-capstone'],
+    ['搭建偏好对数据集构建流程', '跑通 DPO 对齐端到端', '验证偏好胜率/KL 漂移', '给出通用基准不掉的验收断言'],
+    `### 综合交付：从原始反馈到对齐模型
+
+这是 M10 的收束课。前面九课分别打碎了「如何把人类偏好变成模型行为」这个大问题的一个侧面：L96 给三阶段框架、L97 指出对齐税、L98 推导 DPO、L99 引入 GRPO、L100 讨论 AI 自评、L101 给出 trl 实操、L102 对照变体、L103 守住安全边界。本课把散点拼成**一条可复现的端到端链路**：从原始人标/AI 标反馈构建偏好对数据集 → 用 SFT 得到参考策略 → 跑 DPO 对齐 → 用「偏好胜率、KL 漂移、通用基准不掉」三项验收断言把关。交付物不是「跑通了 DPO」，而是**每个环节都有可执行代码与可判读数字**。
+
+回看整个 M10，可以按两根轴归类：一根是**优化算法轴**（PPO → DPO → IPO/KTO → GRPO），决定「怎么把偏好变成梯度」；另一根是**偏好来源轴**（人标 → RLAIF 自评 → 用户反馈），决定「梯度朝哪个方向」。本课选了「人标与 AI 标混合 + DPO」这条最稳的组合作为收束，因为它把复杂度集中在数据构建上，而数据质量是能靠工程流程可控的；GRPO 的在线采样与可验证奖励更适合数学与代码这类特定任务，L101 已给出入口，有需要的团队可以在本课流水线上把 DPO 阶段替换成 GRPOTrainer，三项验收逻辑完全不变。理解这两根轴，才知道 capstone 不是「唯一正确答案」，而是一条可复现、可替换的基线链路。
+
+:::deep
+
+**一条链路上每一环的依赖**
+
+把链路拆开看，后一环的输入严格依赖前一环的输出：
+
+- **偏好对数据集 → DPO**：DPO 的损失只吃 \`(prompt, chosen, rejected)\`，数据质量决定对齐上限（L98 软肋）。没有干净数据，再好的优化也只是把噪声学得更牢。
+- **SFT 参考 → DPO**：DPO 必须算 \`log(π_θ/π_ref)\`，π_ref 由 SFT 阶段产出并冻结（L96 第一阶段）。参考模型没存好，DPO 无从算起。
+- **DPO 模型 → 验收**：训练结束后必须独立验证三项——偏好胜率（对齐是否生效）、KL 漂移（是否偏离太远）、通用基准（是否付出对齐税）。三项是一个「与」关系，缺一项都可能把失败模型放上线。
+
+关键认知：**验收不是训练的附属品，而是决定模型能否发布的大门**。L97 的对齐税与 L98 的过拟合软肋都说明「训练 loss 好看」和「模型真的变好」是两回事，只有独立验收能区分它们。本课最后把三项写成一段可跑的汇总断言，全部通过才给出「可发布」结论。
+
+:::
+
+### 阶段一：偏好对数据集构建
+
+数据源通常有三类：① 人工标注员对同一 prompt 的多个回答排序；② AI 自评（L100 的 RLAIF）批量生成偏好；③ 真实产品里的用户反馈（点赞/点踩、采纳/重写）经清洗后转成偏好。无论来源，构建流程都是**采样候选 → 打分 → 组对 → 过滤 → 切分**五步。
+
+打分可以是绝对分（1 到 5）也可以是成对比较；绝对分更便于统一阈值。组对时取最高分作 chosen、最低分作 rejected，并设一个**最小分差**过滤掉模糊对——分差小的对子标注不确定性高，会让 DPO 学到噪声。但阈值不能设太高，否则只剩「一眼就能分出好坏」的简单对，模型学不到边界案例。最后按 3 比 1 切出训练/测试，**测试偏好对绝对不参与训练**，专门留给验收算胜率。
+
+\`\`\`python
+import random
+random.seed(0)
+
+# 1) 原始反馈池：同一 prompt 的多个候选回答 + 打分（人标或 AI 标）
+raw = [
+    {"prompt": "解释过拟合", "candidates": [
+        {"text": "过拟合是记住训练噪声、泛化变差，可用正则化与早停缓解。", "score": 5},
+        {"text": "模型不行", "score": 1},
+        {"text": "过拟合就是训练误差小、测试误差大。", "score": 4},
+    ]},
+    {"prompt": "写冒泡排序", "candidates": [
+        {"text": "相邻比较交换，每轮把最大值浮到末尾，复杂度 O(n²)。", "score": 5},
+        {"text": "不知道", "score": 1},
+        {"text": "直接调用 sort 就行", "score": 2},
+    ]},
+]
+
+# 2) 组偏好对：最高分作 chosen、最低分作 rejected，过滤分差过小的模糊对
+def build_pairs(raw, min_gap=2):
+    pairs = []
+    for item in raw:
+        cands = sorted(item["candidates"], key=lambda c: c["score"], reverse=True)
+        if cands[0]["score"] - cands[-1]["score"] < min_gap:
+            continue
+        pairs.append({"prompt": item["prompt"],
+                      "chosen": cands[0]["text"], "rejected": cands[-1]["text"]})
+    return pairs
+
+pairs = build_pairs(raw)
+print("构建偏好对:", len(pairs), "被分差过滤:", len(raw) - len(pairs))
+assert len(pairs) == 2, "两条 prompt 应各产出一条有效偏好对"
+assert all(p["chosen"] != p["rejected"] for p in pairs), "chosen 与 rejected 不可相同"
+\`\`\`
+
+这段把「分差过滤」显式成 \`min_gap=2\`：两条 prompt 的最高分与最低分都差 4 分，各产出一条有效对子。真实数据量大几个数量级，但流程完全一致——**能被统一阈值处理的偏好对，才是 DPO 能稳定学习的燃料**。
+
+三类数据源各有偏向：人标质量高但贵且慢，适合做测试集与关键场景；AI 自评（L100）便宜、可海量生成，但偏差继承自标注模型，适合做训练集主体并配合人标抽检；用户反馈真实反映线上分布，却充满噪声，需先做置信度过滤再组对。采样候选时也有讲究：同一 prompt 的回答数太少（如只有 2 个）组不出有区分度的对子，通常生成 4 到 8 个候选再取两端；候选太同质则分差集中、过滤后所剩无几，需在采样时故意引入温度更高的回答增加多样性。测试集的偏好对最好来自人标而非 AI 自评，否则验收会带上与训练同源的偏差——这正是 L100 提到的「标注模型与被测模型同源」陷阱在验收环节的翻版。分差过滤与长度配平之后，还要查一遍 chosen 与 rejected 的有害率：若 chosen 里混进有害内容，DPO 会把它当正面样本强化，直接破坏 L103 的安全边界。
+
+### 阶段二：SFT 参考与 DPO 端到端
+
+有了偏好对，先做 SFT（L101 的 \`SFTTrainer\`）得到能听指令的基座并**冻结为参考策略 π_ref**，再把它交给 \`DPOTrainer\`。DPO 阶段的核心超参是 β（隐式奖励缩放、对应 KL 约束强度）与学习率（比 SFT 小两到三个数量级）。下面用 \`datasets.Dataset\` 切分训练/测试，配置 DPOTrainer，并附一段损失自检确认「训练应让偏好损失下降」。
+
+\`\`\`python
+from datasets import Dataset
+from trl import DPOTrainer, DPOConfig
+from peft import LoraConfig
+import math
+
+ds = Dataset.from_list(pairs)
+split = ds.train_test_split(test_size=0.25, seed=0)
+print("训练/测试偏好对:", len(split["train"]), len(split["test"]))
+
+dpo_cfg = DPOConfig(
+    output_dir="./m10-dpo", beta=0.1, num_train_epochs=2,
+    per_device_train_batch_size=2, learning_rate=5e-7,
+    logging_steps=1, eval_strategy="epoch", save_strategy="epoch",
+)
+peft_cfg = LoraConfig(r=16, lora_alpha=32, lora_dropout=0.05,
+                      target_modules=["q_proj", "v_proj"], task_type="CAUSAL_LM")
+# trainer = DPOTrainer(model=sft_model, ref_model=None, args=dpo_cfg,
+#                      train_dataset=split["train"], eval_dataset=split["test"],
+#                      peft_config=peft_cfg)
+# trainer.train()
+
+def implicit_reward(pi_logp, ref_logp, beta=0.1):
+    return beta * (pi_logp - ref_logp)
+
+def dpo_loss(pw, pl, rw, rl, beta=0.1):
+    diff = implicit_reward(pw, rw, beta) - implicit_reward(pl, rl, beta)
+    return -math.log(1.0 / (1.0 + math.exp(-diff)))
+
+base = dpo_loss(-1.0, -2.0, -1.2, -1.1)
+after = dpo_loss(-0.7, -2.8, -1.2, -1.1)
+print(f"对齐前后 DPO 损失: {base:.4f} -> {after:.4f}")
+assert after < base, "DPO 训练应降低偏好损失"
+\`\`\`
+
+\`ref_model=None\` 让 TRL 用 SFT 模型的冻结副本作参考；若 SFT 阶段用了 LoRA，参考方直接在冻结基座上跑，省一份显存。训练结束后用 \`save_pretrained\` 把 LoRA 合并存盘——具体做法见下一课 L105 的 \`merge_and_unload\` 与 safetensors/config/tokenizer 三件套，M10 的产出由此交接到 M11 的部署链路。
+
+β 的选择值得单独扫一遍：固定学习率 5e-7，取 β=0.05、0.1、0.2 各跑一次短训，按「留出偏好胜率升、KL 漂移可控、通用基准不掉」三指标选点。β 太小隐式奖励被放大、几步就过拟合偏好集；太大则策略几乎不动、对齐无效——这是 L98 讲过的 β 旋钮在 capstone 里的具体落法。另一个实用技巧是**分段早停**：每轮 epoch 结束都在留出集上算一次胜率与基准，记录最优 checkpoint，而不是跑满后用最后一个。DPO 的 loss 曲线常先降后升（过拟合信号），最后一轮未必最好。保存时务必把 tokenizer 与 config 一起写进输出目录（见 L105 的三件套），缺了它们合并后的权重无法被推理框架正确加载。若显存紧张，LoRA 的 r=16 可降到 r=8、target_modules 只留 q_proj，用一点对齐质量换单卡可跑；反过来追求极致对齐则把 r 提到 32 并放开更多投影矩阵，但要留意过拟合风险同步上升。
+
+:::warn
+
+**端到端最容易做废的两步**
+
+第一步是**参考模型没冻结**：DPO 的隐式奖励是相对 π_ref 的 log 比，若参考被一起更新，奖励尺度会漂移、损失失去意义。务必确认 ref 在训练全程不参与反传。
+
+第二步是**测试偏好对泄漏**：若用训练数据算胜率，得到的是模型对见过样本的记亿，不是泛化能力。构建阶段就把测试对子隔离，训练脚本只读 \`train\` 切分。这两步任何一步做错，后面的验收数字全部虚高，所谓「对齐成功」只是自欺欺人。
+
+:::
+
+### 阶段三：三项验收断言
+
+训练完成后，用**留出的测试偏好对**与一组通用基准做三项独立验收。
+
+**验收一：偏好胜率。** 在测试偏好对上，统计「chosen 的隐式奖励高于 rejected」的比例。它衡量对齐是否真的学到了偏好。注意用留出集，且随机基线是 50%。
+
+**验收二：KL 漂移。** 计算对齐后策略相对参考策略的 KL 散度（L96/L98 的约束量）。漂移过大说明策略已远离参考分布、隐式奖励失真、泛化变差；过小则说明几乎没学到偏好。设一个上限作红线。
+
+**验收三：通用基准不掉。** 在 MMLU、GSM8K、HellaSwag 上对比 SFT 与 DPO 的分数，任一掉点超过阈值即判对齐税超标（L97）。
+
+\`\`\`python
+import math
+
+def implicit_reward(pi_logp, ref_logp, beta=0.1):
+    return beta * (pi_logp - ref_logp)
+
+# 验收一：留出偏好对上的胜率（chosen 隐式奖励高于 rejected 的比例）
+def preference_win_rate(test_pairs, pi, ref, beta=0.1):
+    wins = 0
+    for p in test_pairs:
+        dw = implicit_reward(pi[p["prompt"] + "|chosen"],
+                             ref[p["prompt"] + "|chosen"], beta)
+        dl = implicit_reward(pi[p["prompt"] + "|rejected"],
+                             ref[p["prompt"] + "|rejected"], beta)
+        wins += 1 if dw > dl else 0
+    return wins / len(test_pairs)
+
+# 验收二：KL 漂移（对齐后策略 vs 参考）
+def kl_drift(pi_probs, ref_probs):
+    return sum(p * math.log(p / r) for p, r in zip(pi_probs, ref_probs))
+
+# 验收三：通用基准不掉（量级示意，随模型/数据集变动，不担关键结论）
+sft_bench  = {"MMLU": 64.2, "GSM8K": 48.3, "HellaSwag": 78.5}
+dpo_bench  = {"MMLU": 63.8, "GSM8K": 47.9, "HellaSwag": 78.1}
+drops = {k: dpo_bench[k] - sft_bench[k] for k in sft_bench}
+print("通用基准变化:", drops)
+assert all(d >= -1.0 for d in drops.values()), "任一基准掉点超过 1 分即判失败"
+
+pi = {"解释过拟合|chosen": -0.7, "解释过拟合|rejected": -2.8,
+      "写冒泡排序|chosen": -0.6, "写冒泡排序|rejected": -2.5}
+ref = {"解释过拟合|chosen": -1.2, "解释过拟合|rejected": -1.1,
+       "写冒泡排序|chosen": -1.3, "写冒泡排序|rejected": -1.1}
+wr = preference_win_rate(pairs, pi, ref)
+kl = kl_drift([0.4, 0.3, 0.2, 0.1], [0.25, 0.25, 0.25, 0.25])
+print(f"偏好胜率={wr:.0%}  KL漂移={kl:.4f}")
+assert wr >= 0.5, "留出偏好对胜率不应低于随机"
+assert kl < 0.2, "KL 漂移过大，策略偏离参考太远"
+\`\`\`
+
+胜率 100%、KL 约 0.107、基准各掉 0.4 分都在阈值内——三项同时通过。若只把通用基准换成「掉 2 分」的示意数字，\`assert\` 就会失败，提醒你对齐税超标、需要调 β 或补数据。
+
+三项验收的阈值不是越大越好，而是随产品定位调：通用助手把基准掉点阈值卡在 1 分内，垂直客服可放宽到 2 分换更强的领域偏好；KL 上限同理，高风险场景宁可保守。胜率的统计口径也要固定——用留出集的人标偏好对算出的胜率才是无偏估计，若用 AI 自评当裁判，等于让同源标注模型给自己打分，数字会系统性虚高。更稳的做法是双轨：机器算隐式奖励胜率做快速迭代，另抽一批样本做人工盲评（评测员不知道哪个是 DPO 输出）做最终裁决。人工盲评的一致性本身也要监测：两名评测员对同一对子判断不一致的比例若超过两成，说明偏好定义不清，该回到阶段一补标注规范而不是继续训模型。最后，验收要留下可复现的记录——数据集 hash、β 与学习率、checkpoint 路径、三项数字一起存档，否则模型上线后出现问题无法回溯到是哪一轮数据或超参引入的。
+
+### 汇总断言与交付清单
+
+把五项检查汇总成一段**放行判定**，全部为真才判定可发布。
+
+验收失败时按归因排查而不要盲目调参：胜率不达标先查数据，看分差阈值是否过严、标注是否有噪声、测试对是否泄漏，再查学习率与 β；KL 漂移越线说明约束太松，优先降 β 或早停，而不是急着换模型；通用基准掉点则回到 L97 的对齐税思路，补覆盖长尾能力的偏好数据，或在偏好集里加入「良性敏感问题应正常回答」的样本（L103）。三种失败对应三类不同的修复动作，混在一起处理就会陷入「调了参数也不知道有没有用」的循环。把每次失败的原因与修复动作记进实验日志，几轮之后你会得到一份针对自己数据与模型的对齐配方，这比任何通用默认值都值钱。
+
+\`\`\`python
+# 端到端验收汇总：任一项未过，DPO 模型不得发布
+checks = {
+    "偏好对构建": len(pairs) == 2,
+    "DPO 损失下降": after < base,
+    "偏好胜率达标": wr >= 0.5,
+    "KL 漂移受控": kl < 0.2,
+    "通用基准不掉": all(d >= -1.0 for d in drops.values()),
+}
+for k, v in checks.items():
+    print(f"[{'PASS' if v else 'FAIL'}] {k}")
+assert all(checks.values()), "任一验收未过，DPO 模型不得发布"
+print(f"M10 capstone 验收通过：{sum(checks.values())}/{len(checks)} 项")
+\`\`\`
+
+交付清单（M10 出口对着它勾选）：
+
+- [ ] 可复现的偏好对构建脚本（采样 → 打分 → 组对 → 分差过滤 → 切分）。
+- [ ] SFT 参考模型已冻结并存档，DPO 端到端跑通。
+- [ ] 留出偏好对上的胜率达标（不低于随机基线，越高越好）。
+- [ ] KL 漂移有明确上限且未越线。
+- [ ] 通用基准对比表与掉点阈值断言齐备。
+- [ ] 汇总放行判定五项全绿。
+- [ ] 实验日志留痕：数据集版本、β 与学习率、checkpoint 路径、三项验收数字齐全。
+
+清单里最后一条最容易被漏掉，却是上线后唯一能用来回溯的证据——没有它，模型出了问题只能从头重跑整条链路。
+
+:::tip
+
+### 收束与出口
+
+M10 的出口判据：能独立构建干净偏好对、能跑通 SFT 参考加 DPO 对齐、能用**三项验收断言**而不是训练 loss 判定模型好坏。三项里最容易被忽略的是通用基准——L97 的对齐税提醒我们，偏好胜率可以靠牺牲能力「刷」上去，必须有基准兜底。达成即完成 M10，进入 M11：把对齐好的 LoRA 模型合并、导出、量化，最终起成一个可服务的 API。下一课 L105 从 \`merge_and_unload\` 的代数折回讲起，把 M10 的训练产出变成 M11 的部署起点。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'M10 capstone 的端到端链路正确顺序是？',
+        options: [
+          'DPO 训练 → 构建偏好对 → SFT 参考 → 验收',
+          '构建偏好对 → SFT 得到参考策略 → DPO 对齐 → 三项验收',
+          '验收 → DPO 训练 → 构建偏好对',
+          '只需 DPO 训练，不需要数据构建',
+        ],
+        answer: 1,
+        explain:
+          '先构建并清洗偏好对，再用 SFT 得到 π_ref，跑 DPO 对齐，最后验收偏好胜率、KL 漂移与通用基准不掉。',
+        concept: 'm10-capstone',
+      },
+      {
+        text: '构建偏好对时「分差过滤」的目的是？',
+        options: [
+          '让所有回答一样长',
+          '剔除 chosen 与 rejected 差别过小的模糊对，降低标注噪声对 DPO 的污染',
+          '减少 prompt 数量',
+          '把 rejected 都删掉',
+        ],
+        answer: 1,
+        explain: '分差小于阈值的对子标注不确定性高，DPO 会学到噪声信号；设最小分差可提升偏好对信噪比。',
+        concept: 'm10-capstone',
+      },
+      {
+        text: '验收中同时看「偏好胜率」与「通用基准」的原因是？',
+        options: [
+          '两者是同一指标',
+          '防止以通用能力退化换取偏好胜率（对齐税），二者需同时达标',
+          '通用基准比偏好重要，可不看胜率',
+          '偏好胜率比通用重要，可不看基准',
+        ],
+        answer: 1,
+        explain: 'L97 的对齐税说明偏好提升可能伴随通用掉点；必须双指标验收，避免「对齐了却变蠢」。',
+        concept: 'm10-capstone',
+      },
+      {
+        text: 'KL 漂移过大在 DPO 验收中被判失败，根本原因是？',
+        options: [
+          'KL 越大模型越快',
+          '策略偏离参考太远，隐式奖励失真、易过拟合偏好集且泛化差（L98）',
+          'KL 与 DPO 无关',
+          'KL 必须为 0',
+        ],
+        answer: 1,
+        explain:
+          'DPO 用 log(πθ/πref) 当隐式奖励，β 约束漂移；KL 过大说明策略已远离参考分布，偏好拟合过旱、通用能力受损。',
+        concept: 'm10-capstone',
+      },
+    ],
+    [
+      ['偏好对数据集', '由 prompt + chosen + rejected 构成，是 DPO 训练的输入契约'],
+      ['分差过滤', '按 chosen 与 rejected 的评分差过滤模糊对，提升偏好对信噪比'],
+      ['偏好胜率', '在留出偏好对上 chosen 隐式奖励高于 rejected 的比例，衡量对齐是否学到偏好'],
+      ['KL 漂移', '对齐后策略相对参考策略的 KL 散度，约束过大偏离（对应 L98 的 β）'],
+      ['验收断言', '把偏好胜率、KL、通用基准掉点写成可执行判定，任一失败则模型不得发布'],
+    ],
+    [
+      '用训练偏好对算胜率——测的是记忆，必须留出独立测试偏好对。',
+      '只盯偏好胜率不看通用基准——会以对齐税为代价换来虚高的对齐分数。',
+      '分差过滤阈值设太高——留下的全是「简单对」，模型学不到边界案例。',
+      'KL 漂移没设上限——DPO 隐式奖励失真、泛化崩坏，却因 loss 很低被误判成功。',
+    ],
+  ),
+  'capstone',
+)

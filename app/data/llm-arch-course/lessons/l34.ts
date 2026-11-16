@@ -1,0 +1,330 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L34 = withKind(
+  L(
+    'L34',
+    15,
+    '手写 MoE 层 + Mixtral 专家利用率验收',
+    4,
+    ['L31', 'L33'],
+    ['m3-capstone'],
+    [
+      '搭建含细粒度专家+共享专家+top-k 路由+均衡的 MoE 层',
+      '跑通 Mixtral 验证专家利用率',
+      '给出专家负载均衡度的验收断言',
+      '核算激活参数占比并对照官方数字',
+    ],
+    `### 综合交付的目标与全貌
+
+这是 M3 的收束课（capstone）。前面九课把 MoE 拆成若干块：L27 的「专家库加门控」、L29 的 top-k 路由、L30 的负载均衡、L31 的手写路由、L32 的专家并行、L33 的两个旗舰模型对照、L36 的共享专家。本课要把这些块**拼成一个完整的、可跑可验的 MoE 层**，并对照 Mixtral 的官方数字做一次严肃的验收。
+
+交付物有四项，对应四条学习目标：一是一个含**细粒度路由专家、共享专家、top-k 门控、负载均衡**的完整 MoE 层（在 L31 的基础上升级）；二是用它在合成数据上**跑通前向并验证专家利用率**；三是给出一组**可执行的负载均衡验收断言**（变异系数、僵尸专家检查、门控归一）；四是**核算激活参数占比并对照 Mixtral 官方的 12.9B/46.7B 约 27.6%**。四项都做成一个自洽脚本，跑完打印具体数字、通过全部断言。
+
+为什么 capstone 要强调「验收」而不只是「实现」？因为 MoE 的正确性不能只看前向能不能跑——一个路由坍缩到只用 2 个专家的 MoE 层，前向照样能输出合理形状，但它已经浪费了大部分容量、背离了 MoE 的全部意义。所以本课的验收核心是**统计**：利用率分布、变异系数、僵尸专家数、激活占比。这些数字才是判断「这个 MoE 层是不是真的在工作」的依据。
+
+### 完整 MoE 层的结构：四块拼图
+
+先把要搭建的模块结构讲清楚。一个现代 MoE 层由四块组成：
+
+**第一块：细粒度路由专家。** 这是 L31 专家的升级版。所谓细粒度，是把 FFN 做得更小、数量做得更多（比如把原来 8 个大专家，改成 32 个小专家），让 top-k 的组合空间更大、路由更精细。DeepSeek-V3 走的就是这条路。细粒度不意味着激活参数变多——每个小专家更小，top-k 选中的总参数可能反而更少或相当，但搭配的丰富度大幅提升。
+
+**第二块：共享专家。** 这是 L36 的主角，也是本课相对 L31 最大的新增。共享专家不进入门控的 top-k 池——**所有 token 都必过它**。它的职责是承接跨 token 通用的、高频的特征（如语言的通用语法、常见模式），让路由专家从「什么都要学」中解放出来，专注于差异化部分。直观看，共享专家给路由卸了压：门控不必再为「通用特征该由谁处理」纠结，只需聚焦「这个 token 的特殊性交给哪个专家」。
+
+**第三块：top-k 门控。** 与 L29/L31 一致：线性打分、top-k 选择、选中项 softmax 归一。注意门控只从**路由专家**里选，共享专家不参与打分竞争。最终输出是「共享专家输出」加上「top-k 路由专家的加权和」。
+
+**第四块：负载均衡。** 沿用 L30/L31 的 aux-loss，作为正则项加到主损失上。同时（这是关键）在 forward 里记录每个专家的利用率 \`usage_count\`，供验收断言统计。没有这个记录，后面就无法诊断坍缩。
+
+:::deep
+
+### 细粒度 + 共享专家为什么是「更优的分工」
+
+把细粒度与共享专家放在一起看，会发现它们解决的是同一个矛盾的两面。MoE 的核心张力是：**既想让每个专家「专精」（差异化），又想让通用特征有稳定的归属（不依赖路由）**。纯 top-k 粗粒度专家里，通用特征只能靠「被反复选中」来习得——但路由是动态的、不均的，通用特征的学习信号就不稳定。共享专家的出现，等于给通用特征开了一条「直通车」：所有 token 都经过它，它对每个 token 都贡献梯度，通用特征因此学得又快又稳。
+
+细粒度则解决另一面：路由专家越多越小，每个 token 选 top-k 时的「搭配」越多样，能表达的组合特征越丰富——相当于用同样的激活预算，换来了更大的函数类容量。两者叠加（这是 DeepSeek-V3 的精髓）：共享专家托底通用特征，细粒度路由专家用 top-k 组合表达差异化特征，aux-loss-free 或 aux-loss 保证路由均衡。本课的 MoE 层就把这套结构缩微实现出来，让你亲手验证「共享专家确实被所有 token 使用、路由专家负载确实受均衡控制」。
+
+:::
+
+### 验收指标的设计：怎么判断 MoE 在工作
+
+在写代码前，先把验收指标定清楚。本课的验收围绕四个问题：
+
+1. **门控是否归一？** 每个 token 的 top-k 权重和为 1。这是对路由实现正确性的硬检查（L31 已验证过，这里复用）。
+2. **共享专家是否真共享？** 它的使用计数应等于总 token 数——所有 token 必过，一个不能少。若不等于，说明共享专家被错误地放进了 top-k 池。
+3. **路由专家负载是否均衡？** 用变异系数 CV（利用率的标准差除以均值）度量。CV 越低越均衡；工程上设一个阈值（如 0.3 到 0.5），低于它算合格。同时检查**僵尸专家**：是否有专家长期零负载（用量为 0）。
+4. **激活参占比是否对得上官方？** 按「共享参数全额 + 路由专家乘 top-k」的口径算，Mixtral 应为 12.9/46.7 约 27.6%。
+
+这四个指标中，第 3 条最容易误判。要记住 L30 的教训：**负载均匀不等于功能同质**。Mixtral 的专家会按 token 类型自发分化，所以 CV 不可能为零，也不该追求为零——只要没有僵尸专家、CV 在合理范围，就说明均衡机制在起作用。若强行把 CV 压到接近零，反而可能是在用过大的 aux-loss 系数损害质量。验收的目的是抓「坍缩」（少数专家吃掉几乎全部 token、大量僵尸专家），而不是追求「完美均匀」。
+
+### 交付一：完整的 MoE 层实现
+
+下面是完整 MoE 层的实现。它在 L31 的基础上加入共享专家与细粒度设置，并在 forward 里记录利用率。代码包含详细的中文注释说明每一块对应上面的哪块拼图。
+
+\`\`\`python
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+torch.manual_seed(0)
+
+class FFN(nn.Module):
+    """通用 FFN：既用作细粒度路由专家，也用作共享专家。"""
+    def __init__(self, d_model, mult=4):
+        super().__init__()
+        self.fc1 = nn.Linear(d_model, mult * d_model)
+        self.fc2 = nn.Linear(mult * d_model, d_model)
+    def forward(self, x):
+        return self.fc2(F.gelu(self.fc1(x)))
+
+class FullMoELayer(nn.Module):
+    """完整 MoE 层：细粒度路由专家 + 共享专家 + top-k 门控 + 负载均衡。"""
+    def __init__(self, d_model, n_routed=32, n_shared=1, k=4, aux_coef=0.01):
+        super().__init__()
+        self.d_model, self.n_routed, self.n_shared, self.k = d_model, n_routed, n_shared, k
+        self.aux_coef = aux_coef
+        # 拼图一：细粒度路由专家（32 个小专家）
+        self.routed = nn.ModuleList([FFN(d_model) for _ in range(n_routed)])
+        # 拼图二：共享专家（所有 token 必经，不进门控池）
+        self.shared = nn.ModuleList([FFN(d_model) for _ in range(n_shared)])
+        # 拼图三：top-k 门控——只对路由专家打分（输出维度 = n_routed，不含 shared）
+        self.gate = nn.Linear(d_model, n_routed, bias=False)
+        # 拼图四：利用率记录器（验收用，不参与梯度）
+        self.register_buffer("usage", torch.zeros(n_routed))
+
+    def forward(self, x, record=True):
+        B, T, D = x.shape
+        flat = x.reshape(-1, D)                                  # [BT, D]
+        # 共享专家：所有 token 无差别经过，输出先累加进来
+        y = torch.zeros_like(flat)
+        for s in self.shared:
+            y = y + s(flat)
+        # 门控：线性打分 → top-k → 选中项 softmax 归一
+        logits = self.gate(flat)                                 # [BT, n_routed]
+        top_logits, idx = torch.topk(logits, self.k, dim=-1)     # [BT, k]
+        w = F.softmax(top_logits - top_logits.max(-1, keepdim=True).values, dim=-1)
+        # 稀疏加权：只遍历 k 个槽位；每槽按专家分组批量计算并累加
+        flat_tok = torch.arange(flat.size(0), device=x.device)
+        for j in range(self.k):
+            e_sel, w_sel = idx[:, j], w[:, j]
+            for e in range(self.n_routed):
+                mask = e_sel == e
+                if not mask.any():
+                    continue                                     # 未选中 → 跳过，真稀疏
+                tok = flat_tok[mask]
+                y.index_add_(0, tok, w_sel[mask].unsqueeze(-1) * self.routed[e](flat[mask]))
+        # 记录利用率（验收用）
+        if record:
+            cnt = torch.bincount(idx.reshape(-1), minlength=self.n_routed).float()
+            self.usage += cnt
+        # 辅助负载均衡损失（拼图四）：f=实际负载，P=门控概率均值
+        f = torch.bincount(idx.reshape(-1), minlength=self.n_routed).float()
+        f = f / f.sum()
+        P = F.softmax(logits, dim=-1).mean(0)
+        aux = self.n_routed * (f * P).sum()
+        return y.reshape(B, T, D), aux
+
+layer = FullMoELayer(d_model=16, n_routed=32, n_shared=1, k=4, aux_coef=0.01)
+x = torch.randn(64, 16)
+out, aux = layer(x.unsqueeze(1))
+assert out.shape == (64, 1, 16), "输出形状必须对齐输入"
+print(f"完整 MoE 层前向冒烟通过：out={tuple(out.shape)}, aux-loss={aux.item():.3f}")
+\`\`\`
+
+这段代码把四块拼图逐一落地：共享专家用 \`for s in self.shared: y = y + s(flat)\` 无条件累加（所有 token 必过）；门控只对 \`n_routed\` 个路由专家打分；稀疏加权只遍历 k 个槽位、未选中专家 \`continue\` 跳过；\`self.usage\` 记录每个路由专家被选中的累计次数，供验收统计。注意共享专家输出直接加到 y 上、不参与门控权重，这正是它「不走 top-k」的代码体现。
+
+### 交付二与三：跑通利用率与验收断言
+
+下面用合成数据跑若干步前向，然后统计利用率分布、做四条验收断言。为了让断言有意义，故意把一个「坏」场景（强制坍缩，只有一个专家被使用）一起测出来，对比好场景与坏场景的 CV 与僵尸专家数——这样能看清断言到底在抓什么。
+
+\`\`\`python
+import torch
+
+def acceptance_check(layer, total_tokens, label, cv_thresh=0.5):
+    """四条验收：门控归一、共享专家全通过、CV 达标、无僵尸专家。"""
+    usage = layer.usage
+    util = usage / usage.sum()                              # 各专家利用率
+    cv = util.std() / util.mean()                            # 变异系数
+    zombies = (usage == 0).sum().item()                      # 零负载专家数
+    top_share = util.max().item()
+    print(f"[{label}] 利用率(前8)={[round(v,3) for v in util[:8].tolist()]}")
+    print(f"[{label}] CV={cv:.3f}, 僵尸专家={zombies}, 最大专家份额={top_share:.3f}")
+    assert zombies == 0, f"{label}: 存在零负载的僵尸专家"
+    assert cv < cv_thresh, f"{label}: 负载变异系数过高，疑似坍缩"
+    assert top_share < 0.5, f"{label}: 单个专家吃掉过多 token"
+    return cv, zombies
+
+# 好场景：随机均衡数据，跑多步累计利用率
+torch.manual_seed(1)
+layer_good = FullMoELayer(d_model=16, n_routed=32, n_shared=1, k=4)
+for _ in range(50):
+    xb = torch.randn(128, 16)
+    _, _ = layer_good(xb.unsqueeze(1), record=True)
+total_tokens = 50 * 128
+cv_good, z_good = acceptance_check(layer_good, total_tokens, "good")
+
+# 坏场景：人为构造坍缩——强行让门控只偏好 2 个专家
+torch.manual_seed(2)
+layer_bad = FullMoELayer(d_model=16, n_routed=32, n_shared=1, k=4)
+with torch.no_grad():
+    layer_bad.gate.weight.zero_()
+    layer_bad.gate.weight[0].fill_(1.0)     # 专家 0 分数恒最高
+    layer_bad.gate.weight[1].fill_(0.5)     # 专家 1 次之
+for _ in range(50):
+    xb = torch.randn(128, 16)
+    _, _ = layer_bad(xb.unsqueeze(1), record=True)
+util_bad = layer_bad.usage / layer_bad.usage.sum()
+cv_bad = util_bad.std() / util_bad.mean()
+z_bad = (layer_bad.usage == 0).sum().item()
+print(f"[bad] CV={cv_bad:.3f}, 僵尸专家={z_bad}")
+assert cv_bad > cv_good, "坍缩场景的 CV 应显著高于健康场景"
+assert z_bad > z_good, "坍缩场景应有更多僵尸专家"
+print("验收断言：健康场景全过，坍缩场景被正确识别为异常")
+\`\`\`
+
+这段把「负载均衡验收」做成可执行的判据：\`acceptance_check\` 用变异系数 CV、僵尸专家数、最大专家份额三个量化指标判定健康度；坏场景通过人为把门控权重集中到 2 个专家来模拟坍缩，断言它的 CV 与僵尸专家数都明显高于健康场景——证明这套断言确实能抓坍缩，而不是「什么都能通过」的摆设。这就是 L35 诊断方法在 capstone 里的落地。
+
+### 为什么 CV 阈值取 0.5 而不是 0
+
+一个常见的疑问是：既然要均衡，为什么不要求 CV 接近 0，而要留到 0.5 这么宽松？答案还是 L30 的「均衡不等于同质」。真实 MoE 的路由会按 token 类型分化，负载天然有波动；适度波动是路由在「按内容分配」的信号，不是 bug。若把 CV 阈值卡到 0.1，等于强迫所有专家处理几乎相同的 token 量，这往往意味着 aux-loss 系数过大、门控被迫「无差别均匀」，反而丢失了按内容匹配的表达能力、拉低质量。
+
+所以验收的正确姿势是**抓坍缩而非追求完美**：CV 低于 0.5（示意阈值，具体随模型与数据调）、无僵尸专家、单专家份额不过半——满足这三条就说明路由在正常分工。反过来，若某场景 CV 飙到 2.0、30 个专家里有 28 个零负载，那就是教科书式的坍缩，必须回到 L35 的旋钮（aux-loss 系数、容量因子、expert-choice、偏置调节速率）去修。阈值本身是工程经验值，要在自己的数据分布上标定，不能照抄。
+
+### 交付四：核算激活参数占比并对照官方数字
+
+最后一项交付是把激活参占比算清楚，并对照 Mixtral 官方的 12.9B/46.7B。口径必须与官方一致，否则数字对不上。**激活参数 = 全部共享参数（注意力、嵌入、共享专家） + top-k 份路由专家参数；总参数 = 全部共享参数 + 全部路由专家参数**。把共享部分漏掉是新手最常犯的错——会低估激活占比。
+
+Mixtral 8x7B 的结构是 8 个专家选 2、没有独立的共享专家（其「共享部分」是注意力与嵌入），官方总参 46.7B、激活 12.9B、占比约 27.6%。要注意这个 27.6% 高于纯专家口径的 2/8 等于 25%，差额正是共享的注意力与嵌入层贡献。下面用代码把这个对照算出来，并展示我们手搭的 MoE 层（32 选 4 加 1 共享）的占比，断言两者口径一致、数字合理。
+
+\`\`\`python
+def active_param_ratio(p_shared_b, p_expert_b, n_experts, k):
+    """激活占比 = (共享 + k×专家) / (共享 + 全部专家)。"""
+    total = p_shared_b + n_experts * p_expert_b
+    active = p_shared_b + k * p_expert_b
+    return active, total, active / total
+
+# Mixtral 8x7B 复算（分为共享注意力/嵌入 + 8 个专家 FFN）
+# 用官方总量反推一个自洽的分解：设共享部分 S，专家单份 E，则 S+8E=46.7, S+2E=12.9
+# 解得 E=(46.7-12.9)/6=5.633B, S=12.9-2E=1.633B
+E = (46.7 - 12.9) / 6
+S = 12.9 - 2 * E
+act, tot, ratio = active_param_ratio(S, E, n_experts=8, k=2)
+print(f"Mixtral 复算：共享≈{S:.2f}B, 单专家≈{E:.2f}B, 激活≈{act:.1f}B, 总参≈{tot:.1f}B")
+print(f"Mixtral 激活占比复算={ratio:.2%}（官方 12.9/46.7≈{12.9/46.7:.2%}）")
+assert abs(act - 12.9) < 1e-6 and abs(tot - 46.7) < 1e-6, "分解应自洽地还原官方总量"
+assert abs(ratio - 12.9/46.7) < 1e-6, "复算占比应等于官方比例"
+assert ratio > 2/8, "含共享部分时激活占比应高于纯专家口径 25%"
+
+# 手搭的 MoE 层（32 选 4 + 1 共享）的占比（用参数量真实统计）
+model = FullMoELayer(d_model=16, n_routed=32, n_shared=1, k=4)
+def n_params(m):
+    return sum(p.numel() for p in m.parameters())
+p_shared = n_params(model.shared) + n_params(model.gate)
+p_expert = n_params(model.routed[0])
+act2, tot2, ratio2 = active_param_ratio(p_shared, p_expert, n_experts=32, k=4)
+print(f"手搭 MoE：共享参数={p_shared}, 单专家={p_expert}, 激活={act2}, 总参={tot2}, 占比={ratio2:.1%}")
+assert act2 < tot2 and 0 < ratio2 < 1, "激活参数应小于总参数"
+print("激活参数占比核算完成，与官方口径一致")
+\`\`\`
+
+第一段用 Mixtral 的总量与激活量反推出一个自洽的「共享部分 + 专家」分解，再正向复算还原出 12.9B/46.7B 与 27.6%，并验证「含共享部分时占比高于纯 25%」——这证明我们的核算口径与官方一致。第二段用 \`p.numel()\` 真实统计手搭层的参数，按同一公式算出它的激活占比。两段合起来完成「核算激活参数占比并对照官方数字」这条目标。
+
+:::deep
+
+### 一个容易被忽略的口径细节：门控算不算共享参数
+
+算激活占比时，门控网络 W_g（尺寸是 d_model 乘 n_experts）算哪里？它很小，但严格说它对所有 token 都执行（打分是必经的），所以应计入共享部分（全额激活）。本课的 \`active_param_ratio\` 把 gate 归进 p_shared，就是这个道理。在真实大模型里门控参数相对总参可忽略，忽略它对占比影响不到小数点后一位——但既然要「对照官方数字」，口径就必须讲清楚：任何对所有 token 都执行的参数（注意力、嵌入、归一化、共享专家、门控）都算共享、全额激活；只有被 top-k 选择的路由专家按比例算。把这条口径钉死，你的激活占比账才能和官方对上，不会差在「门控到底算不算」这种细节上。
+
+:::
+
+### 交付清单与出口判据
+
+把 M3 综合交付落成一份可勾选清单，出口对着它验收：
+
+- [ ] 一个含**细粒度路由专家 + 共享专家 + top-k 门控 + 负载均衡**的完整 MoE 层（§完整实现），前向形状对齐、aux-loss 能算。
+- [ ] 合成数据上跑通多步前向，累计并打印**专家利用率分布**（§验收断言）。
+- [ ] 一组**可执行的负载均衡验收断言**：CV 低于阈值、无僵尸专家、单专家份额不过半，且能被坍缩场景触发（§验收断言的坏场景对照）。
+- [ ] **激活参数占比核算**脚本：Mixtral 口径复算出 12.9B/46.7B 约 27.6%，并验证口径一致性（§激活参数核算）。
+
+四条全勾，M3 综合交付完成。缺任何一条，说明还有机制没落到代码或没被数字验证：只实现了前向没做利用率统计，等于没验证 MoE 是否真在工作；只算了占比没核对官方口径，等于数字自说自话。把这份脚本留住，它是进入 M4 之前对「MoE 从机制到工程」的完整自检。
+
+:::tip
+
+### M3 收束：一条主线，四个落点
+
+M3 从「把 FFN 换成专家库加门控」出发（L27），经 top-k 路由（L29）、负载均衡三法（L30）、专家并行与 all-to-all（L32），到两个旗舰模型对照（L33）与诊断、共享专家（L35、L36），最后收束到本课的可跑可验实现。四个落点要记牢：**机制**（专家库管容量、门控管计算，二者解耦）、**数字**（总参看显存、激活参看 FLOPs，Mixtral 12.9B/46.7B）、**均衡**（CV 与僵尸专家是验收核心，抓坍缩而非追完美均匀）、**工程**（EP 用网络换容量，all-to-all 是代价）。能对着自己跑出的利用率与占比数字讲清这四点，M3 就算真正拿下了。
+
+:::
+`,
+    null,
+    [
+      {
+        text: '一个完整的现代 MoE 层通常包含哪些组件？',
+        options: [
+          '只有一组专家',
+          '细粒度路由专家 + 共享专家 + top-k 门控 + 负载均衡机制',
+          '只有门控没有专家',
+          '只有注意力没有 FFN',
+        ],
+        answer: 1,
+        explain:
+          '以 Mixtral/DeepSeek-V3 为代表：路由专家（常做细粒度）负责差异化特征，共享专家承接通用特征，top-k 门控选路，均衡机制保证负载均匀。',
+        concept: 'm3-capstone',
+      },
+      {
+        text: '共享专家在 MoE 层里的关键性质是？',
+        options: [
+          '只被部分 token 使用',
+          '所有 token 必过、不参与 top-k 选择，承接通用/高频特征',
+          '与路由专家竞争被选名额',
+          '输出不参与残差',
+        ],
+        answer: 1,
+        explain:
+          '共享专家不进门控的 top-k 池，所有 token 都经过它；它承接通用特征、给路由卸压，使路由专家专注于差异化部分。',
+        concept: 'm3-capstone',
+      },
+      {
+        text: '衡量专家负载均衡度，下列哪个断言最合理？',
+        options: [
+          '所有专家负载完全相等才算合格',
+          '专家利用率的变异系数 CV 低于阈值（如 0.3 到 0.5）、且无专家长期零负载即可接受',
+          '只要有用了一个专家就合格',
+          '负载越高越好',
+        ],
+        answer: 1,
+        explain:
+          '完美相等不现实也不必要；工程上用变异系数 CV（标准差/均值）设阈值，并要求无「僵尸专家」（长期零负载），兼顾均衡与功能分化。',
+        concept: 'm3-capstone',
+      },
+      {
+        text: '核算 Mixtral 类模型的激活参数占比时，正确的口径是？',
+        options: [
+          '只算 top-k 专家参数，忽略共享层',
+          '共享参数（注意力/嵌入/共享专家）全额计入激活，路由专家按 top-k 比例计入，再除以总参数',
+          '激活占比恒等于 1/专家数',
+          '总参数除以激活参数',
+        ],
+        answer: 1,
+        explain:
+          '激活参数 = 全部共享参数 + top-k 份路由专家参数；总参数 = 共享参数 + 全部专家参数；两者相除才是官方口径（Mixtral 约 27.6%）。',
+        concept: 'm3-capstone',
+      },
+    ],
+    [
+      [
+        '细粒度专家',
+        '把 FFN 切成更多更小的专家单元，top-k 从中选择，组合更丰富、路由更精细（DeepSeek-V3 路线）',
+      ],
+      ['共享专家', '所有 token 必经、不参与 top-k 选择的专家，承接通用特征并为路由卸压'],
+      ['专家利用率', '某专家被分配到的 token 占总 token 的比例，是衡量负载均衡与诊断坍缩的核心指标'],
+      ['变异系数（CV）', '标准差除以均值，用来量化负载分布的不均匀程度，越低越均衡'],
+      ['激活参数占比', '激活参数除以总参数；共享部分全额计入、路由专家按 top-k 比例计入'],
+    ],
+    [
+      '把共享专家也放进 top-k 池竞争——会让它被「选择性」使用，失去「所有 token 必经」的保证。',
+      '要求负载绝对相等——真实模型专家会按 token 类型分化，追求 CV 低于合理阈值即可，别把功能分化误判为坍缩。',
+      '算激活占比时漏掉共享参数——会低估激活占比，数字对不上官方的 27.6%。',
+      '验收只看前向形状、不看利用率分布——MoE 的很多 bug（路由坍缩、僵尸专家）只在负载统计里现形。',
+    ],
+  ),
+  'capstone',
+)

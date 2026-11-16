@@ -1,0 +1,189 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L29 = withKind(
+  L(
+    'L29',
+    13,
+    'top-k 门控路由：线性打分→top-k→加权和',
+    3,
+    ['L27'],
+    ['routing'],
+    [
+      '讲清 top-k 门控的三步流程',
+      '解释门控权重归一与稀疏激活',
+      '说明 top-k 取值对容量与通信的影响',
+      '对照稠密 FFN 与稀疏路由的计算差异',
+    ],
+    `### 路由在 MoE 里的位置
+
+上一课把 MoE 拆成「专家库管容量、门控管计算」两件事，这一课专门把门控这只「手」讲透。路由（routing）指的是门控网络为每个 token 决定送往哪些专家的完整过程，它是条件计算真正发生的那一步。在 Transformer 的某一个 MoE 层里，数据流的顺序是这样的：token 的隐藏向量先进入门控网络打分，门控根据分数挑出少数专家，token 被送往这些专家做 FFN 计算，各专家的输出再按门控给的权重加权合成一个输出向量，送回主干流。整个过程的精髓可以浓缩成三步——**线性打分、top-k 选择、加权求和**。看起来简单，但每一步都藏着影响训练稳定性与推理成本的设计决策。
+
+为什么值得单独花一课？因为门的这两个极端都踩过坑：如果门是「全开」（对所有专家加权求和），MoE 就退化成稠密模型，失去了省计算的全部意义；如果门是「硬选且不均」（总是选同几个专家），大部分专家永远学不到东西，模型容量被浪费。一个「好」的门必须同时做到**稀疏**（只选少数专家以省算力）、**归一**（权重之和稳定以免输出尺度乱跳）、**均衡**（让各专家都有活干，这是 L30 的主题）。这一课先把前三步的机制和前两条性质讲清楚，均衡留给下一课。
+
+### 第一步与第二步：线性打分加 top-k 选择
+
+门控网络本身是一个极小的线性层：一个 d 维隐藏向量 x，乘以一个 d 行 N 列的权重矩阵 W_g，得到 N 维的 logits 向量。把 W_g 看成 N 个「专家探针」，第 i 行 W_g[i] 与 x 的内积越大，说明 token x 与第 i 个专家的「匹配度」越高。这里通常不加激活函数（或用很轻的激活），因为后面要直接对 logits 做 top-k 和 softmax。打分完成后，取 logits 中数值最大的 k 个，得到索引集合 S 与对应的原始分数——这就是 top-k 选择。
+
+k 的取值是这一层最核心的旋钮。在 Shazeer 2017 的原始工作里 k 取 2 到 4；GShard 用 top-2；Switch Transformer 激进地取 k 等于 1；Mixtral 8x7B 用 8 选 2（A 级数字）；DeepSeek-V3 也用类似的小 k 配大量细粒度专家。k 越小，每 token 激活的专家越少，专家计算量与 all-to-all 通信量都近似按 k 线性下降，但每个 token 能组合的「专家搭配」也更少、路由方差更大、训练更不稳。k 越大则相反：表达力与稳定性上升，但计算与通信成本跟着涨。经验规律是**k 取 1 或 2 在性价比上最常见**——Switch 证明 k=1 够用，Mixtral 证明 k=2 效果扎实；只有当你有充足算力且专家粒度极细时，才会考虑更大的 k。
+
+:::deep
+
+### 从稠密 FFN 到稀疏路由：FLOPs 的定量对照
+
+把「稀疏路由省计算」写成公式，才能看清省在哪。设隐藏维为 d，专家前馈的中间维为 4d，专家数为 N，每 token 选 k 个。单个专家 FFN 的乘加量约为 d 乘 4d 加 4d 乘 d 等于 8d²。于是：
+
+- 稠密融合 FFN（相当于 N 个专家全上）：每 token 约 8N·d² 次乘加。
+- top-k 稀疏路由：每 token 专家部分约 8k·d² 次乘加，加上门控 W_g 的 N·d 次（极小）。
+
+两者之比约为 k/N。Mixtral 8x7B 的 k=2、N=8，比值是 2/8 等于 1/4——专家部分的 FLOPs 只有稠密融合的四分之一。这正是「46.7B 总参数的模型，推理 FLOPs 只接近 12.9B 激活参数模型」的微观来源。要注意门控开销 N·d 在 d 很大、N 很大时虽占比小但不为零；当专家做得极细（每个专家很小）时，门控开销的相对占比会上升，这是细粒度专家设计里要留意的边际项。
+
+:::
+
+### 第三步：门控权重归一与它的两个作用
+
+选出的 k 个专家各有一个原始 logits 分数，但它们不能直接拿来当权重——分数的绝对值可能很大或很小，直接加权会让输出尺度随打分幅度剧烈波动。所以要对这 k 个分数做 softmax：每个分数取指数、再除以 k 个指数之和，得到一组和为 1 的非负权重。这一步有两个关键作用：
+
+第一，**尺度稳定**。权重归一保证加权和 y 等于各专家输出 E_i(x) 的凸组合（系数和为 1），输出的量级不会被 logits 的绝对大小带跑。这对残差连接尤其重要——MoE 层的输出要和输入残差相加，若输出尺度忽大忽小，深层网络的训练会非常不稳。
+
+第二，**维持稀疏**。softmax 只在选中的 k 项上计算，未选中的 N-k 项权重恒为 0。这一点是「稀疏」的严格保证：如果反过来对全部 N 个 logits 做 softmax 再取 top-k，会在数学上出现矛盾——选中的 k 项权重之和小于 1（因为分母包含了未选中项的指数），既损失了尺度稳定，又因为要给全部 N 项算指数而平白多一份开销。正确做法永远是「先 top-k 截断，再在截断集合内归一」。
+
+### 可跑代码：完整走一遍三步并验证性质
+
+下面用纯 NumPy 把三步流程写全，并逐一验证：门控权重逐 token 和为 1、未选中专家权重恒为 0、稀疏路由的输出确实只由 k 个专家贡献。同时对照一个稠密融合的输出，断言稀疏与稠密的 FLOPs 口径比为 k/N。
+
+\`\`\`python
+import numpy as np
+
+rng = np.random.default_rng(42)
+d, N, k, T = 8, 8, 2, 6
+Wg = rng.standard_normal((d, N))                       # 门控 d->N
+experts = [rng.standard_normal((d, d)) for _ in range(N)]  # 简化的线性「专家」
+
+def topk_route(x):
+    logits = x @ Wg                                    # 第一步：线性打分 [T,N]
+    top_idx = np.argpartition(-logits, k, axis=1)[:, :k]  # 第二步：top-k
+    sel = np.take_along_axis(logits, top_idx, axis=1)
+    sel = np.exp(sel - sel.max(axis=1, keepdims=True))
+    w = sel / sel.sum(axis=1, keepdims=True)           # 第三步：top-k 内 softmax 归一
+    full_w = np.zeros_like(logits)                     # 完整权重矩阵（未选中项为 0）
+    np.put_along_axis(full_w, top_idx, w, axis=1)
+    out = np.zeros_like(x)
+    for t in range(T):
+        for j, e in enumerate(top_idx[t]):
+            out[t] += w[t, j] * (x[t] @ experts[e])    # 只算选中专家
+    return out, logits, full_w, top_idx
+
+x = rng.standard_normal((T, d))
+y, logits, full_w, top_idx = topk_route(x)
+nz = (full_w > 0).sum(axis=1)
+print(f"每 token 非零专家数={nz.tolist()}（应恒为 k={k}）")
+print(f"每 token 门控权重和={full_w.sum(axis=1).round(6).tolist()}")
+assert (nz == k).all(), "每个 token 必须恰好激活 k 个专家"
+assert np.allclose(full_w.sum(axis=1), 1.0), "门控权重必须逐 token 归一"
+sparse_flops = k * d * d
+dense_flops = N * d * d
+print(f"专家 FLOPs 稀疏/稠密 = {sparse_flops/dense_flops:.2f}（应=k/N={k/N:.2f}）")
+assert abs(sparse_flops/dense_flops - k/N) < 1e-9
+\`\`\`
+
+三个断言把本课的三条性质钉死：非零专家数恒等于 k（稀疏）、权重和恒等于 1（归一尺度稳定）、FLOPs 比等于 k/N（省计算）。这段代码也是下一课 L31 手写路由器的雏形——L31 会把它升级成带反向传播和辅助损失的 PyTorch 版本。
+
+:::tip
+
+### 记牢三步与两个性质
+
+**三步**：线性打分（W_g 乘 x 得 logits）→ top-k 截断（取最高的 k 个）→ 加权和（选中项 softmax 归一后合成专家输出）。**两个性质**：稀疏（未选中项权重为 0，省计算）、归一（选中项和为 1，稳尺度）。k 是「计算成本 vs 路由表达力」的旋钮，主流取 1 或 2。抓住这套流程，再看 L30 的三种均衡法就清楚了——它们都是在回答「怎么让这三步里的 top-k 选得更均匀」，并不改动三步本身。
+
+:::
+
+### 数值自检：手算一遍 top-k 与归一
+
+用一个 6 专家、top-2 的具体 logits 向量，手工核对 top-k 选取与 softmax 归一，确认权重和为 1、未选中项为 0。
+
+\`\`\`python
+import numpy as np
+logits = np.array([0.1, 2.0, -0.5, 1.5, 0.3, -1.0])   # 6 专家、单 token
+k = 2
+top = np.argsort(-logits)[:k]                          # 取最大的 2 个索引
+print(f"top-{k} 选中专家索引={top.tolist()}, 分数={logits[top].tolist()}")
+sel = logits[top] - logits[top].max()                  # 减最大值稳定数值
+w = np.exp(sel) / np.exp(sel).sum()
+full = np.zeros_like(logits); full[top] = w
+print(f"门控权重(全6专家)={np.round(full,3).tolist()}, 和={full.sum():.4f}")
+assert full.sum() > 0.999 and full.sum() < 1.001, "选中项权重和应为 1"
+assert (full == 0).sum() == 4, "6 专家选 2，应有 4 个权重为 0（稀疏）"
+assert top.tolist() == [1, 3], "应选中分数最高的专家 1 与 3"
+print("top-k 选取与归一自检通过")
+\`\`\`
+`,
+    null,
+    [
+      {
+        text: 'top-k 门控路由的三步正确顺序是？',
+        options: [
+          '加权和 → top-k → 线性打分',
+          '线性打分 → 选 top-k → 门控权重归一后加权和',
+          'top-k → 线性打分 → 归一',
+          '归一 → top-k → 打分',
+        ],
+        answer: 1,
+        explain:
+          '先用门控线性层对 token 打分得到各专家 logits，再取分数最高的 k 个索引，最后只对这 k 个 logits 做 softmax 归一并加权求和专家输出。',
+        concept: 'routing',
+      },
+      {
+        text: '为什么门控权重要在「选中的 top-k 之内」做 softmax，而不是对全部专家做？',
+        options: [
+          '为了让所有专家都有非零权重',
+          '保证未选中专家权重恒为 0、维持稀疏激活，同时选中项归一使输出尺度稳定',
+          '为了增加计算量',
+          '因为 softmax 不支持超过 k 项',
+        ],
+        answer: 1,
+        explain:
+          '只对 top-k 项做 softmax，未选中项输出权重为 0（稀疏），选中项之和为 1（尺度稳定）；若对全部专家归一则会破坏稀疏性、让所有专家都参与加权。',
+        concept: 'routing',
+      },
+      {
+        text: '增大 top-k 的 k（如从 1 增到 4）通常会带来什么影响？',
+        options: [
+          '每 token 计算量与通信量都下降',
+          '每 token 激活更多专家，计算与 all-to-all 通信量上升，但路由表达力与稳定性可能改善',
+          '对任何指标都没有影响',
+          '总参数量随之翻倍',
+        ],
+        answer: 1,
+        explain:
+          'k 越大每 token 激活的专家越多，专家计算量与 all-to-all 派发量近似按 k 线性上升；好处是专家组合更丰富、路由更稳；总参数不受 k 影响。',
+        concept: 'routing',
+      },
+      {
+        text: '稀疏路由相对稠密 FFN 的核心计算差异是？',
+        options: [
+          '稀疏路由输出维度更大',
+          '稠密 FFN 每 token 过全部参数，稀疏路由每 token 只过 top-k 个专家，FLOPs 近似降为 k/N',
+          '两者 FLOPs 完全相同',
+          '稀疏路由不用矩阵乘',
+        ],
+        answer: 1,
+        explain:
+          '稠密 FFN 对每个 token 施加全部 N 份参数；top-k 路由只施加 k 份，专家 FLOPs 约为稠密的 k/N，剩下一个极小的门控线性层。',
+        concept: 'routing',
+      },
+    ],
+    [
+      ['路由（Routing）', '门控网络为每个 token 决定送往哪些专家的过程，是 MoE 条件计算的核心'],
+      ['门控 logits', '门控线性层 W_g 对 token 打分得到的 N 维未归一分数，top-k 从中选出被激活的专家'],
+      ['top-k 选择', '取 logits 中分数最高的 k 个专家索引，k 远小于专家总数 N，决定稀疏程度'],
+      ['门控权重归一', '只对选中的 k 个 logits 做 softmax，使其和为 1，保证加权和输出的尺度稳定'],
+      ['Softmax（top-k 内）', '仅在被选中专家上计算归一化权重，未选中专家输出权重为 0'],
+    ],
+    [
+      '把 softmax 施加在全部专家 logits 上——会让未选中专家也有权重，破坏稀疏性，等价于稠密融合。',
+      '以为 top-k 的 k 越大越好——k 增大会线性推高专家计算与 all-to-all 通信，需要按算力预算权衡。',
+      '忽略门控打分本身的开销——虽然很小（d 乘 N），但在专家极小时不可完全忽略。',
+      '把 top-k 选择与负载均衡混为一谈——top-k 只决定「选几个」，无法保证「选得均匀」，后者要靠 aux-loss 等机制（L30）。',
+    ],
+  ),
+  'theory',
+)

@@ -1,0 +1,211 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L39 = withKind(
+  L(
+    'L39',
+    17,
+    'Mamba-2 SSD：统一 SSM 与注意力',
+    4,
+    ['L38'],
+    ['mamba2-ssd'],
+    [
+      '讲清 Mamba-2 SSD 对 SSM 与注意力的统一',
+      '解释状态维从 16→256 的意义',
+      '对照 Mamba-2 比 Mamba-1 快 2–8×',
+      '说明结构化状态空间对偶性的工程价值',
+    ],
+    `### 从递推到注意力矩阵：SSD 的对偶性从哪来
+
+L38 把 Mamba 的状态更新写成 $h_t=\\bar A_t h_{t-1}+\\bar B_t x_t$、$y_t=C_t h_t$。Mamba-2 的关键洞察是：**当状态转移 $\\bar A_t$ 是一个标量** $a_t=\\exp(\\Delta_t a)$（其中 $a\\le 0$ 是每头一个的标量），这条递推可以被完全展开成一个注意力形式。把递推从 $t=1$ 一直代回：
+
+$h_t=\\sum_{i\\le t}\\Big(\\prod_{k=i+1}^{t} a_k\\Big)\\,\\bar B_i\\,x_i$
+
+再用 $y_t=C_t^\\top h_t$ 读出，就得到：
+
+$y_t=\\sum_{i\\le t}\\underbrace{\\Big(C_t^\\top \\bar B_i\\,\\prod_{k=i+1}^{t} a_k\\Big)}_{M_{ti}}\\,x_i$
+
+注意 $\\prod_{k=i+1}^{t}a_k=\\prod\\exp(\\Delta_k a)=\\exp\\big(a\\sum_{k=i+1}^{t}\\Delta_k\\big)$。定义**累积步长** $T_t=\\sum_{k\\le t}\\Delta_k$，则 $\\sum_{k=i+1}^{t}\\Delta_k=T_t-T_i$，于是注意力矩阵的每个元素为：
+
+$M_{ti}=C_t^\\top \\bar B_i\\;\\exp\\big(a\\,(T_t-T_i)\\big)\\;\\mathbf{1}[i\\le t]$
+
+这是一个带因果掩码、并按时间间隔指数衰减的矩阵——数学上叫**半可分矩阵（semiseparable）**。它和softmax注意力的区别很清楚：没有 softmax 归一化、权重由 $C_t^\\top\\bar B_i$ 与固定的时间衰减共同决定，而非 $q\\cdot k$ 的动态匹配。下面这段代码用两种等价方式算出同一组 $y$：一路按 SSM 递推，一路按注意力矩阵 $M$ 直接乘，验证 SSD 的对偶性数值一致。
+
+\`\`\`python
+import numpy as np
+np.random.seed(0)
+L, N = 16, 4          # 序列长、状态维
+a = -0.4              # 标量衰减，必须 ≤ 0
+Delta = np.random.uniform(0.1, 0.5, L)
+B = np.random.randn(N, L)     # N×L，每步 B_i
+C = np.random.randn(N, L)     # N×L，每步 C_i
+x = np.random.randn(L)
+
+# 方式一：SSM 递推  h_t = a_t·h_{t-1} + B_t·x_t
+h = np.zeros(N); y_rec = []
+for t in range(L):
+    a_t = np.exp(Delta[t] * a)
+    Bbar_t = Delta[t] * B[:, t]
+    h = a_t * h + Bbar_t * x[t]
+    y_rec.append(C[:, t] @ h)
+y_rec = np.array(y_rec)
+
+# 方式二：SSD 注意力  y_t = Σ_i M_ti · x_i
+T = np.cumsum(Delta)
+M = np.zeros((L, L))
+for t in range(L):
+    for i in range(t + 1):
+        M[t, i] = (C[:, t] @ (Delta[i] * B[:, i])) * np.exp(a * (T[t] - T[i]))
+y_attn = M @ x
+
+print("递推与注意力最大误差:", np.max(np.abs(y_rec - y_attn)))
+assert np.allclose(y_rec, y_attn, atol=1e-10), "SSD 对偶性：两种算法必须数值一致"
+print("结论：带标量衰减的 SSM == 带衰减掩码的结构化注意力")
+\`\`\`
+
+误差在浮点精度内为零，这就是「结构化状态空间对偶性」的字面含义：**同一个 $y$，既能按 SSM 递推逐步算，也能按注意力矩阵一次性算**。这个等价不是近似，而是代数恒等式。
+
+### 状态维 16→256：为什么标量 A 是大状态的钥匙
+
+Mamba-1 的 $A$ 是对角矩阵，对角线有 $N$ 个不同的负值，每一步要做 $N$ 个不同指数的标量衰减、维护 $N$ 维状态；经验上 $N$ 取 16，再大训练不稳、速度也掉。Mamba-2 把 $A$ 简化成 $a\\cdot I$（每头一个标量 $a$），于是 $\\bar A=\\exp(\\Delta a)$ 是标量，衰减对所有状态维**同一**：状态 $h$ 仍是 $N$ 维，但每步更新只是「标量乘 $h$ + 向量加 $B\\bar x$」，复杂度不随 $N$ 的选取方式变坏。这使得把 $N$ 从 16 提到 256 变得安全且划算——更大的状态意味着能压缩、缓存更多历史信息，直接改善召回与记忆容量。下面这段代码对比两种参数化下「每步乘加量」如何随状态维增长，解释为何标量 A 才撑得起 256 维。
+
+\`\`\`python
+def cost_per_step(N, param):
+    """返回每步有效标量乘加次数（示意）。"""
+    if param == 'diagonal':
+        return 3 * N      # 对角 A：N 次不同衰减 + N 次写入 + N 次读出
+    else:                  # scalar A = a·I
+        return 2 * N + 1   # 1 次标量衰减广播 + N 次写入 + N 次读出
+
+for N in (16, 64, 256):
+    diag = cost_per_step(N, 'diagonal')
+    scal = cost_per_step(N, 'scalar')
+    print(f"N={N:3d}  对角A每步≈{diag:4d}  标量A每步≈{scal:4d}  标量A增长更平缓")
+# 关键：标量 A 下增大 N 只是线性增加向量运算，可用一次广播完成衰减，无 N 个独立 exp
+assert cost_per_step(256, 'scalar') < cost_per_step(256, 'diagonal')
+print("断言通过：标量 A 让 256 维状态的每步开销仍受控")
+\`\`\`
+
+数字上，对角 A 在 $N=256$ 时要维护 256 个独立衰减率、做 256 次 \`exp\`，而标量 A 只需一次 \`exp(Δa)\` 再广播到整个状态向量——这正是 Mamba-2 能把状态维翻 16 倍（16→256）而不炸算力的工程根据。
+
+### 分块 SSD：2–8× 提速来自 tensor core
+
+有了注意力形式 $y=C^\\top\\bar B\\exp(a(T_t-T_i))x$，下一步是**怎么算得快**。直接生成完整的 $L\\times L$ 矩阵 $M$ 会退化回 $O(L^2)$，违背线性初衷。Mamba-2 的做法是**分块（chunkwise）算法**：把序列切成若干块，块内用矩阵乘算出局部注意力贡献（这步是标准 GEMM，直接吃满 GPU tensor core），块间只传递一个压缩状态 $h$，块内则利用半可分结构做快速计算。这样既保住线性总复杂度，又把主导计算变成硬件最擅长的矩阵乘。
+
+相比之下，Mamba-1 的定制 CUDA 扫描核虽然也是 $O(L)$，但受限于扫描的串行依赖、tensor core 利用率低。SSD 的分块矩阵乘把利用率拉满，官方报告**训练速度比 Mamba-1 快 2–8×**（A 级数字，来自 Mamba-2 论文）。这里提速的本质不是「数学上少算了」，而是**同样的数学换了更硬件友好的算法组织**——这是深度学习系统里反复出现的主题：算子形态决定硬件效率。
+
+:::deep
+
+### 半可分矩阵：SSD 与经典注意力的结构差异
+
+SSD 的 $M_{ti}=C_t^\\top\\bar B_i\\exp(a(T_t-T_i))\\mathbf{1}[i\\le t]$ 之所以能分块快速算，是因为它满足**半可分（semiseparable）**结构：矩阵任一右下子块的秩不超过状态维 $N$。证明很直接：对任意 $t\\ge i$，
+
+$M_{ti}=\\big(C_t^\\top\\exp(a T_t)\\big)\\cdot\\big(\\exp(-a T_i)\\bar B_i\\big)$
+
+即 $M_{ti}=u_t^\\top v_i$ 的形式——一个秩至多 $N$ 的分解（$u_t=C_t\\exp(aT_t)$、$v_i=\\bar B_i\\exp(-aT_i)$）。半可分矩阵可以用 $O(NL)$ 存储与运算完成「矩阵-向量乘」，而无需物化 $L\\times L$。
+
+这解释了三件事：① **为什么 SSD 是「注意力」**——它确实是 $y=Mx$ 的注意力形式，只是 $M$ 有特殊低秩结构；② **为什么它是「SSM」**——同一个 $M$ 又能由 $N$ 维状态递推生成；③ **为什么能快**——低秩结构让分块 GEMM 与状态传递都高效。理解「半可分」这一个词，就理解了 SSD 这个名字里「对偶性」的全部内容：SSM 与注意力是同一块半可分矩阵的两种算法视角。
+
+:::
+
+### 结构化状态空间对偶性的工程价值
+
+对偶性不只是数学趣闻，它有直接的工程红利。第一，**基础设施复用**：一旦承认 SSD 是一种结构化注意力，注意力领域积累的分块、张量并行、序列并行、KV 分块等技术都能迁移过来，Mamba-2 不必重造一套扫描生态。第二，**统一设计空间**：SSM 与注意力不再是两个物种，而是同一族算子的不同参数化——纯 SSM 是 $M$ 取强衰减极限，线性注意力是 $a=0$ 的退化，标准 softmax 注意力则是另一种 $M$ 的构造。第三，**长上下文可扩展性**：分块算法天然支持超长序列的并行预填充，这对混合架构（L42 起）的长上下文训练至关重要。下面的自检把 SSD 与三种极限参数化摆在一起，看它们如何落在同一框架里。
+
+\`\`\`python
+import numpy as np
+np.random.seed(2)
+L = 8
+Delta = np.ones(L) * 0.3
+B = np.random.randn(1, L); C = np.random.randn(1, L)
+T = np.cumsum(Delta)
+
+def decay_matrix(a):
+    M = np.zeros((L, L))
+    for t in range(L):
+        for i in range(t + 1):
+            M[t, i] = (C[0, t] * B[0, i]) * np.exp(a * (T[t] - T[i]))
+    return M
+
+for label, a in [("强衰减(近似SSM)", -2.0), ("中等衰减", -0.5), ("无衰减 a=0", 0.0)]:
+    M = decay_matrix(a)
+    far = M[L - 1, 0]        # 第 0 个 token 对末尾的影响
+    print(f"{label:16s} a={a:4.1f}  远端权重 M[{L-1},0]={far:+.3e}")
+# a 越负，远端权重越小 → 越接近「只看近处」的 SSM；a=0 时无时间衰减，退化为普通线性注意力
+print("结论：调 a 一个标量，就能在 SSM 与线性注意力之间连续插值")
+\`\`\`
+
+从 $a=-2.0$ 时远端权重几乎为零，到 $a=0$ 时时间衰减消失，一个标量 $a$ 就在「强记忆压缩的 SSM」与「无时间偏置的线性注意力」之间连续插值。这正是统一框架带来的表达力：架构设计从「选 SSM 还是选注意力」变成「在这条连续的衰减轴上取哪个值」。
+
+### 工程判据：何时用 Mamba-2 而非 Mamba-1
+
+落到选型，几条可执行的判据：① **需要长上下文、大 batch 训练**时优先 Mamba-2——2–8× 的训练提速与 tensor-core 友好让你能用同样的卡跑更长的序列；② **任务对记忆容量敏感**（长距离召回、多跳推理）时，256 维状态比 16 维更能装历史，优先 Mamba-2；③ **已有 Mamba-1 定制核且序列不长**时，迁移收益有限，可维持；④ **要接混合架构**时，Mamba-2 的 SSD 与注意力的对偶性让「SSM 层 + 注意力层」拼接更自然（L42/L43 详述）。不论哪条，判断的核心都是「状态维带来的记忆收益」与「分块矩阵乘带来的吞吐收益」能否兑现到你的具体负载上，而不是盲目追新。
+
+:::tip
+
+### 一句话记住 SSD
+
+Mamba-2 把带标量衰减的 SSM 递推展开成 $M_{ti}=C_t^\\top\\bar B_i\\exp(a(T_t-T_i))\\mathbf{1}[i\\le t]$ 这张半可分注意力矩阵——**SSM 是它的递推算法，注意力是它的矩阵算法**，这就是「对偶性」。标量 A 让状态维能从 16 放大到 256，分块矩阵乘让训练快 2–8×。记住「半可分 → 既是 SSM 又是注意力 → 大状态 + tensor core」，就抓住了 Mamba-2 的全部要点。
+
+:::
+`,
+    null,
+    [
+      {
+        text: 'Mamba-2 的 SSD（结构化状态空间对偶性）揭示的核心事实是？',
+        options: [
+          'SSM 与注意力完全无关',
+          '带标量衰减的 SSM 等价于一种带衰减掩码的结构化注意力',
+          '注意力是 SSM 的特例且反过来不成立',
+          'SSD 只用于推理',
+        ],
+        answer: 1,
+        explain:
+          'SSD 证明 h_t=a_t·h_{t-1}+B_t·x_t 展开后 y_t=Σ M_ti·x_i，其中 M_ti=C_t^T·B_i·exp(a·(T_t-T_i))·1[i≤t]，是半可分的衰减掩码注意力。',
+        concept: 'mamba2-ssd',
+      },
+      {
+        text: 'Mamba-2 把状态维从 16 提到 256，关键设计变化是？',
+        options: ['A 从对角矩阵变成标量 a·I（每头一个标量衰减）', '不用状态了', '层数翻倍', '把注意力删了'],
+        answer: 0,
+        explain:
+          'Mamba-1 的对角 A 需维护 N 个不同衰减率，状态维取 16；Mamba-2 令 A=a·I，衰减是标量，能安全把 N 扩到 256 而不增加每步复杂度。',
+        concept: 'mamba2-ssd',
+      },
+      {
+        text: 'Mamba-2 训练比 Mamba-1 快 2–8× 的主要来源是？',
+        options: [
+          '少了几层',
+          'SSD 把递推改写成矩阵乘/分块形式，吃满 tensor core',
+          '精度降到 1bit',
+          '序列变短',
+        ],
+        answer: 1,
+        explain:
+          'SSD 的分块算法把计算组织成矩阵乘，可用 GPU tensor core 高效执行，替代 Mamba-1 的定制扫描核，训练提速 2–8×。',
+        concept: 'mamba2-ssd',
+      },
+      {
+        text: 'SSD 掩码 M_ti 中 exp(a·(T_t-T_i)) 一项的作用是？',
+        options: ['扩大词表', '对越久远的 i 施加越强的时间衰减（a≤0）', '随机初始化', '归一化输出'],
+        answer: 1,
+        explain:
+          'T_t=Σ_{k≤t}Δ_k 是累积步长，T_t-T_i 越大表示 i 越久远；a≤0 时 exp(a·(T_t-T_i)) 越小，实现「越远越衰减」的因果偏置。',
+        concept: 'mamba2-ssd',
+      },
+    ],
+    [
+      ['SSD', 'Structured State Space Duality，结构化状态空间对偶性， SSM 与结构化注意力的等价关系'],
+      ['半可分矩阵', 'semiseparable，SSD 的注意力矩阵 M_ti=C_t^T·B_i·exp(a(T_t-T_i))·1[i≤t]，带时间衰减掩码'],
+      ['标量衰减', 'Mamba-2 令 A=a·I，每头一个标量 a，Ā=exp(Δ·a) 为标量，支撑更大状态维'],
+      ['分块算法', 'chunkwise，把序列切块、块内矩阵乘、块间传状态，使 SSD 吃满 tensor core'],
+      ['累积步长', 'T_t=Σ_{k≤t}Δ_k，把每一步 Δ 累加，用于计算任意两位置间的时间衰减'],
+    ],
+    [
+      '以为 SSD 是「把 SSM 删掉换成 softmax 注意力」——它是结构化（带衰减掩码、无 softmax）注意力的等价改写，不是标准 softmax attention。',
+      '把状态维 16→256 的好处只理解成「参数更多」——真正原因是 A 变标量让大状态在每步仍只需标量乘，效率和稳定都成立。',
+      '认为 2–8× 提速来自「更少计算量」——主要来自把扫描改写为tensor-core 友好的矩阵乘，提升的是硬件利用率。',
+      '忽略 a≤0 的约束——若 a>0，exp(a(T_t-T_i)) 随时间放大，系统不稳定、状态爆炸。',
+    ],
+  ),
+  'framework',
+)

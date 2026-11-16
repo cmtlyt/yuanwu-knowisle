@@ -1,0 +1,200 @@
+import { L, withKind } from '../../course-builders.ts'
+
+export const L32 = withKind(
+  L(
+    'L32',
+    14,
+    '专家并行：all-to-all 分发/回收与 3D/4D 组合',
+    4,
+    ['L28'],
+    ['ep-all2all'],
+    [
+      '讲清专家并行的 all-to-all 分发与回收',
+      '解释 EP×TP×PP×DP 如何组合成 3D/4D',
+      '说明容量因子与 token 丢弃',
+      '估算 all-to-all 通信量与带宽瓶颈',
+    ],
+    `### 从单机路由到多机专家并行
+
+L31 的手写路由跑在一张卡上：所有专家都在本地，token 选中哪个专家就直接调用本机的 FFN。但当专家数上升到几十、几百，单机显存装不下全部专家，必须把专家铺到多台设备上——这就是 L28 提过的专家并行（EP）。EP 带来一个新问题：token 在某台设备上产生，但它选中的专家可能在另一台设备上。怎么把 token 送过去、把结果拿回来？答案就是两趟 all-to-all 通信。这一课把这条多机数据流讲清楚，再往上搭出 3D/4D 并行，最后算清通信这笔账。
+
+理解 EP 要先建立一个心智模型：**token 的「家」和专家的「家」不在一起**。门控在本地算出每个 token 要去哪些专家，这些专家分布在不同设备；于是需要一次全局的「搬家」（dispatch），把 token 送到专家所在地；专家算完，再一次全局的「回信」（combine），把结果送回 token 的家门口累加。两次都是 all-to-all，因为每台设备都要和其他所有设备交换数据——这是 EP 区别于 DP、TP 的根本特征。
+
+### 第一趟 all-to-all：分发（dispatch）
+
+分发的流程是这样的：每张设备上有本机负责的若干 token，门控为每个 token 选出 top-k 个专家索引。设备根据「专家在哪台设备上」把 token 分组，打包发往目标设备。这一步是典型的 all-to-all——每台设备都要向若干其他设备发送数据，同时接收别人发来的 token。目标设备收到后，按专家进一步细分：属于本机专家 i 的 token 送进专家 i 的 FFN 计算。
+
+这里有个关键细节：**top-k 大于 1 时 token 会被复制多份**，分别发往 k 个不同的专家所在设备。所以分发的数据量约等于 token 数乘 k 乘隐藏维——k 越大通信量越大。另外，由于路由是动态的，每台设备每个 step 收到的 token 数都可能不同，无法用静态的定长通信优化；负载均衡（L30）因此不只是训练质量问题，更直接影响通信效率——负载不均会让某些设备收到远超均值的 token，成为整步的瓶颈。
+
+### 第二趟 all-to-all：回收（combine）
+
+专家计算完成后，每个 token 在 k 个专家那儿各有一份输出，每份都乘了对应的门控权重。这些输出散落在 k 台不同的设备上，必须送回 token 原本所属的设备，在那里按 token 累加合成最终输出。这就是第二趟 all-to-all（combine）。它的数据规模与 dispatch 对称：token 数乘 k 乘隐藏维。
+
+两趟 all-to-all 夹着中间的专家 FFN，构成 EP 的完整前向：dispatch 送 token 去专家 → 本地专家计算 → combine 送结果回原处。反向传播时有对应的逆过程（combine 的反向又是一次 all-to-all，dispatch 的反向亦然），所以一步训练里 actually 有四次 all-to-all 级别的通信。这也是为什么 EP 的通信开销在训练中相当可观——它是用网络换显存与专家容量的策略，只有在专家计算足够重、通信占比相对小、或网络足够快时才划算。
+
+:::deep
+
+### 容量因子与 token 丢弃
+
+理想情况下各专家负载均匀，每个专家处理 K 个 token。但真实路由必然有波动：某个专家这步突然被选中远超 K 次。如果给每个专家只分配恰好 K 的缓冲区，多出来的 token 无处安放，只能**丢弃（token dropping）**——这些 token 跳过专家层、直接以残差形式通过，相当于这部分 token 没学到 MoE 层的变换，会造成质量损失。
+
+capacity factor（容量因子）的解法很朴素：给每个专家分配 \`K × 容量因子\` 的缓冲。容量因子取 1.25，意味着留 25% 余量吸收波动，被丢弃的 token 大幅减少。但余量不是白给的——缓冲区按最大容量预分配，容量因子越大显存与通信的 padding 越多。于是容量因子成为一个权衡旋钮：太小（接近 1）丢 token 多、掉点；太大（如 2）浪费显存与带宽。GShard 等早期系统容量因子常取 1.25 到 2；而 Switch 之后很多实现干脆设成「无限容量」（不丢弃），配合更好的均衡手段，代价是负载不均时内存峰值变高。这两条路线——「留余量加丢弃」与「不限容量加均衡」——是工程上的两种取舍。
+
+:::
+
+### EP×TP×PP×DP：搭出 3D/4D 并行
+
+单个 EP 维度只解决「专家放不下」。超大规模训练（如万亿参数）会把多种并行叠起来，形成 3D 甚至 4D 并行：
+
+- **DP（数据并行）**：每个进程组持有完整模型副本、处理不同数据切片，梯度用 all-reduce 同步。解决吞吐。
+- **TP（张量并行）**：把单个大矩阵（如 FFN 的权重）按行或列切到多张卡，每层计算需要 all-reduce 合并。解决单层放不下。
+- **PP（流水线并行）**：把模型的不同层放到不同设备，token 像流水一样依次经过各阶段。解决整个模型放不下。
+- **EP（专家并行）**：把不同专家放到不同设备。解决专家集合放不下。
+
+这四者作用在不同维度上，相互正交。一个典型的大模型配置可能是：节点内 8 卡做 TP（高速 NVLink 支撑高频 all-reduce）、跨节点做 PP 与 EP、最外层再叠 DP。所谓「3D 并行」通常是 TP×PP×DP，「4D」则再加入 EP。DeepSeek-V3 的训练就公开了大规模 EP 配合其他维度的方案（L33 展开）。关键认知：**TP/PP/DP 是稠密模型也需要的通用并行，EP 是 MoE 特有的第四维**；EP 的加入让并行拓扑更复杂，也正因如此，all-to-all 的网络拓扑感知（尽量让通信在高速链路内完成）成为 MoE 训练系统的重要课题。
+
+### 可跑代码：估算 all-to-all 通信量与瓶颈
+
+下面用代码把两笔账算清楚：一是 all-to-all 分发/回收的通信量（随 token 数、隐藏维、k、并行度变化），二是容量因子对 token 丢弃率的影响。断言验证通信量随 k 线性增长、容量因子越大丢弃越少。
+
+\`\`\`python
+def a2a_bytes(num_tokens, d_model, k, dtype_bytes=2):
+    """单趟 all-to-all 的通信量（字节）：每 token 发 k 份、每份 d_model 个激活值。"""
+    per_token = k * d_model * dtype_bytes
+    return num_tokens * per_token
+
+# 场景：一个 MoE 层，EP=8，每卡 token 数、隐藏维、top-k
+T_local, D, k = 4096, 4096, 2
+per_rank = a2a_bytes(T_local, D, k)
+print(f"单卡单趟 all-to-all 通信量 ≈ {per_rank/1e6:.0f} MB")
+print(f"前向两趟(dispatch+combine) ≈ {2*per_rank/1e6:.0f} MB，训练四趟 ≈ {4*per_rank/1e6:.0f} MB")
+# k 翻倍，通信量翻倍
+assert a2a_bytes(T_local, D, 4) == 2 * a2a_bytes(T_local, D, 2), "通信量应随 k 线性增长"
+# 带宽瓶颈：200 GB/s 的 NVLink 传一趟需要多久
+for bw_gbs in (200, 25):                      # 200=NVLink 级，25=普通以太网级（示意）
+    sec = per_rank / (bw_gbs * 1e9)
+    print(f"带宽 {bw_gbs} GB/s：一趟 all-to-all ≈ {sec*1e3:.1f} ms")
+assert a2a_bytes(T_local, D, k) > 0
+
+# 容量因子对 token 丢弃的影响（模拟某专家负载波动）
+import numpy as np
+rng = np.random.default_rng(3)
+T, E = 100000, 8
+assign = rng.integers(0, E, size=T)           # 简化的单专家分配
+counts = np.bincount(assign, minlength=E)
+avg = counts.mean()
+for cf in (1.0, 1.25, 1.5):
+    cap = int(avg * cf)                       # 每专家容量
+    dropped = np.maximum(counts - cap, 0).sum()   # 超出容量的 token 被丢弃
+    print(f"容量因子 {cf}: 容量/专家={cap}, 丢弃 token={dropped} ({dropped/T:.2%})")
+drop_cf15 = np.maximum(counts - int(avg*1.5), 0).sum() / T
+drop_cf10 = np.maximum(counts - int(avg*1.0), 0).sum() / T
+assert drop_cf15 <= drop_cf10, "容量因子越大丢弃越少"
+print("all-to-all 通信与容量因子账计算完成")
+\`\`\`
+
+两段输出揭示两个工程事实：第一，**通信量随 k 与隐藏维线性增长**，一趟 all-to-all 在 4096×4096、k=2 的量级下单卡就要几十 MB，带宽从 200 GB/s 掉到 25 GB/s 时耗时从毫秒级涨到十倍——这就是「网络是 MoE 瓶颈」的定量来源。第二，**容量因子直接换丢弃率**：从 1.0 提到 1.25 再到 1.5，被丢弃的 token 明显下降，代价是显存与 padding 上升。
+
+:::tip
+
+### EP 一句话：用网络换容量
+
+专家并行把专家铺到多机以放下海量参数，代价是两趟 all-to-all（训练四趟）。通信量随 token 数、隐藏维、k 线性增长，且被最慢链路与最重负载设备拖累——所以负载均衡（L30）不只是质量问题，更是性能问题。容量因子在「丢 token 掉点」与「显存带宽浪费」之间取权衡。把这条账记牢，就能理解为什么 MoE 训练对集群网络要求极高，也能看懂 L33 里 DeepSeek-V3 在 EP 通信上做的精细工程。
+
+### 数值自检：通信量随隐藏维与 token 数缩放
+
+再用一段代码核对 all-to-all 通信量的两个线性因子：隐藏维翻倍、token 数翻倍，单趟通信量都应翻倍。这决定了为什么「加宽隐藏维」和「加大 batch」会同时抬高 MoE 的网络压力。
+
+\`\`\`python
+def a2a_mb(tokens, d_model, k, bits=16):
+    return tokens * k * d_model * (bits // 8) / 1e6
+
+base = a2a_mb(4096, 4096, 2)
+print(f"基准单趟 all-to-all = {base:.0f} MB")
+for label, t, d in [("隐藏维×2", 4096, 8192), ("token×2", 8192, 4096)]:
+    v = a2a_mb(t, d, 2)
+    print(f"{label}: {v:.0f} MB（倍数 {v/base:.1f}）")
+    assert abs(v / base - 2.0) < 1e-9, f"{label} 应使通信量翻倍"
+assert a2a_mb(4096, 4096, 4) == 2 * base, "k 翻倍通信量也应翻倍"
+print("all-to-all 通信量缩放自检通过")
+\`\`\`
+
+:::
+`,
+    null,
+    [
+      {
+        text: '专家并行里 all-to-all 分发（dispatch）与回收（combine）分别发生在？',
+        options: [
+          '都在专家计算之前',
+          '分发在专家计算之前把 token 送到目标专家设备，回收在专家计算之后把结果送回原设备',
+          '都在专家计算之后',
+          '只在训练反向时用',
+        ],
+        answer: 1,
+        explain:
+          '门控选出目标专家后，all-to-all dispatch 把 token 发到专家所在设备；专家算完，all-to-all combine 把加权结果送回 token 所属设备累加。',
+        concept: 'ep-all2all',
+      },
+      {
+        text: 'EP×TP×PP×DP 的 3D/4D 并行中，各维度分别主要切分什么？',
+        options: [
+          'EP 切专家、TP 切单层权重、PP 切层、DP 切数据样本',
+          '四者都切数据',
+          'EP 切层、PP 切专家',
+          'TP 切样本、DP 切权重',
+        ],
+        answer: 0,
+        explain:
+          'EP 按专家维度分布、TP 切单层的张量、PP 按层切分流水线、DP 复制模型切分样本；四者正交可组合成 3D 或 4D 并行。',
+        concept: 'ep-all2all',
+      },
+      {
+        text: '容量因子（capacity factor）大于 1 的主要作用是？',
+        options: [
+          '减少专家数量',
+          '给每个专家留多余缓冲区以容纳路由不均带来的峰值 token，避免丢弃',
+          '降低模型精度',
+          '消除 all-to-all 通信',
+        ],
+        answer: 1,
+        explain:
+          '容量因子按平均负载乘以一个大于 1 的系数给专家设缓冲，负载波动时多余 token 仍有位置放，减少因超出容量而被丢弃的 token。',
+        concept: 'ep-all2all',
+      },
+      {
+        text: 'all-to-all 成为瓶颈的根本原因是？',
+        options: [
+          '它只在一张卡内执行',
+          '每个设备要向所有其他设备发送和接收数据，通信量随专家数与 token 数增长，且受最慢链路/最重负载设备制约',
+          '它不涉及网络',
+          '它只传标量',
+        ],
+        answer: 1,
+        explain:
+          'all-to-all 是全连接通信原语，每设备与所有设备双向交换；激活张量按 top-k 复制发送，通信量与 token 数、隐藏维、k 成正比，易受带宽与负载不均拖累。',
+        concept: 'ep-all2all',
+      },
+    ],
+    [
+      ['专家并行（EP）', '把不同专家分布到不同设备，token 按门控结果动态路由到对应设备上的专家'],
+      [
+        'all-to-all dispatch',
+        '全连接通信原语：每个设备把 token 发送给所有目标专家所在设备，实现按路由的分发',
+      ],
+      ['all-to-all combine', '专家计算后把加权输出送回 token 原属设备的逆向全连接通信'],
+      [
+        '容量因子（Capacity Factor）',
+        '专家缓冲大小相对平均负载的倍率，大于 1 提供余量以吸收负载波动、减少 token 丢弃',
+      ],
+      ['3D/4D 并行', 'EP、TP、PP、DP 等正交并行维度的组合，用于超大规模模型训练'],
+    ],
+    [
+      '以为专家并行不产生通信——EP 的核心代价就是两趟 all-to-all，低带宽网络下会严重拖慢。',
+      '把容量因子设成 1——负载稍不均就会大量 token 被丢弃、直接掉点；应留 1.0 到 1.25 的余量。',
+      '忽略负载不均对 all-to-all 的影响——最慢/最重的设备会拖住整步，均衡（L30）与通信性能强相关。',
+      '把 EP 与 TP 的通信混为一谈——TP 是 all-reduce、EP 是 all-to-all，模式与数据量级都不同。',
+    ],
+  ),
+  'theory',
+)
