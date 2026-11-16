@@ -108,12 +108,12 @@
   - 来源：S-Mamba2 · A
 
 ### S2 线性 Transformer 谱系
-- 线性注意力变体、xLSTM（指数门控 + 矩阵记忆）等。
-  - 来源：（B 级，需补官方）
+- 线性注意力变体（Hedgehog 等，B 级待官方）；**xLSTM**（指数门控 + 标量/矩阵记忆，补齐「存储不可改/容量有限/难并行」三大 LSTM 缺陷，xLSTM 7B 主打快推理）。
+  - 来源：S-xLSTM（arXiv:2405.04517）· A；Hedgehog 等 B 级
 
 ### S3 混合架构
-- 生产趋势：「SSM + 少量全注意力」混合模型——**Jamba**（Mamba–Transformer–MoE）、Zamba、Falcon-H1；少量注意力层补回远距离召回。
-  - 来源：B 级（第三方整理，需回各模型官方仓库升级 A）
+- 生产趋势：「SSM + 少量全注意力」混合模型——**Jamba**（每 8 层放 1 层 Transformer + 7 层 Mamba + 部分层 MoE；7B 基座=12B 激活/52B 总参、单 80GB GPU、256K 上下文、长上下文吞吐最高 3×、KV cache 小一个数量级）、Zamba、Falcon-H1；少量注意力层补回远距离召回。
+  - 来源：S-Jamba（arXiv:2403.19887）· A；Zamba/Falcon-H1 仍 B 级（待各官方仓库升级）
 
 ---
 
@@ -235,8 +235,8 @@
 ### S3 GRPO（DeepSeek 系）
 - 去 critic，按同 prompt 一组 rollout 的组内相对奖励更新；DeepSeekMath 7B MATH 51.7%，R1 沿用。
   - 来源：S-GRPO · A
-- RLAIF / Constitutional AI：用模型自评替代人标，信号可规模化（**arXiv 号待补**）。
-  - 来源：S-ConstAI · A（号待补）
+- RLAIF / Constitutional AI：用模型自评替代人标，信号可规模化。
+  - 来源：S-ConstAI（arXiv:2212.08073）· A
 
 ### S4 实操
 - `trl`：SFTTrainer / DPOTrainer / GRPOTrainer，均接受 `peft_config=LoraConfig()`；数据为「prompt + chosen + rejected」偏好对。
@@ -264,7 +264,14 @@
 
 ## 已升级 A 级官方来源（本批次确认）
 
-- **B2 批次（2026-11-16）**：LoRA arXiv:2106.09685、QLoRA arXiv:2305.14314、DoRA arXiv:2402.09353、GaLore arXiv:2403.03507、PEFT 综述 arXiv:2403.14608；InstructGPT arXiv:2212.08073、DPO arXiv:2305.18290、GRPO arXiv:2402.03300；GPT-3 arXiv:2005.1418、Chinchilla arXiv:**2203.15556**（更正自误传的 2203.02155）；打包工具链 S-GGUF / S-TensorRT-LLM / S-OPTIM / S-SAFE（官方仓库/文档，非 arXiv）。
+- **B3 批次（2026-11-16，arXiv 官方 abs 页逐一 WebFetch 核验）**：
+  - LongRoPE arXiv:**2402.13753**（Microsoft，2M 上下文渐进外推）
+  - Jamba arXiv:**2403.19887**（AI21，**非 2403.19897**）
+  - xLSTM arXiv:**2405.04517**（Beck/Hochreiter，**非 2405.09933**）
+  - InstructGPT arXiv:**2203.02155**（**更正 B2-02 误记的 2212.08073**）
+  - Constitutional AI arXiv:**2212.08073**（补定，Bai et al.）
+  - GPT-3 arXiv:**2005.14165**（**更正 2005.1418 错号**，Brown et al.）
+- **B2 批次（2026-11-16）**：LoRA arXiv:2106.09685、QLoRA arXiv:2305.14314、DoRA arXiv:2402.09353、GaLore arXiv:2403.03507、PEFT 综述 arXiv:2403.14608；DPO arXiv:2305.18290、GRPO arXiv:2402.03300；Chinchilla arXiv:**2203.15556**（更正自误传的 2203.02155）；打包工具链 S-GGUF / S-TensorRT-LLM / S-OPTIM / S-SAFE（官方仓库/文档，非 arXiv）。
 
 - RMSNorm arXiv:1910.07467（Zhang & Sennrich 2019）
 - GQA arXiv:2305.13245（Ainslie et al. 2023，EMNLP 2023）
@@ -273,7 +280,8 @@
 
 ## 仍待补 A 级官方页（下批次检索升级）
 
-- LongRoPE arXiv:2402.13753、Mamba 官方 arXiv 2402.03684 官方页可达性确认
-- Jamba / Zamba / Falcon-H1 官方仓库（升级 M4 S3 到 A 级）
+- ~~LongRoPE arXiv:2402.13753~~ → **已补 A 级**（B3）
+- ~~Jamba arXiv:2403.19887~~ → **已补 A 级**（B3）；Zamba / Falcon-H1 仍 B 级（待各官方仓库）
+- ~~xLSTM arXiv:2405.04517~~ → **已补 A 级**（B3）；Hedgehog / 线性注意力其余谱系仍 B 级
+- Mamba 官方 arXiv 2402.03684 官方页可达性确认
 - Llama 官方 arXiv（2307.09288 / 2407.21783）官方页可达性确认
-- M4 S2 线性注意力谱系（Hedgehog / Transformer Linear 等）官方论文

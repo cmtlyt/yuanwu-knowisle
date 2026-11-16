@@ -47,12 +47,15 @@
 | S-QLoRA | 4-bit NF4 量化微调 | arXiv:2305.14314 | A | B2-01 |
 | S-DoRA | 权重分解 LoRA | arXiv:2402.09353 | A | B2-01 |
 | S-GaLore | 梯度低秩投影省显存 | arXiv:2403.03507 | A | B2-01 |
-| S-InstructGPT | RLHF 三阶段（对齐范式） | arXiv:2212.08073 | A | B2-02 |
+| S-InstructGPT | RLHF 三阶段（对齐范式） | arXiv:2203.02155 | A | B2-02 / B3-01 |
 | S-DPO | 直接偏好优化 | arXiv:2305.18290 | A | B2-02 |
 | S-GRPO | 组相对策略优化（DeepSeek） | arXiv:2402.03300 | A | B2-02 |
-| S-ConstAI | Constitutional AI（RLAIF 前驱） | Bai et al. 2022（**arXiv 号待补，不臆造**） | A（号待补） | B2-02 |
-| S-GPT3 | GPT-3 few-shot | arXiv:2005.1418 | A | B2-03 |
+| S-ConstAI | Constitutional AI（RLAIF 前驱） | arXiv:2212.08073 | A | B3-01 |
+| S-GPT3 | GPT-3 few-shot | arXiv:2005.14165 | A | B2-03 / B3-01 |
 | S-Chinchilla | 计算最优 scaling law | arXiv:2203.15556 | A | B2-03 |
+| S-LongRoPE | 长上下文 2M 外推 | arXiv:2402.13753 | A | B3-01 |
+| S-Jamba | 混合 Transformer-Mamba-MoE | arXiv:2403.19887 | A | B3-01 |
+| S-xLSTM | 扩展 LSTM（指数门控/矩阵记忆） | arXiv:2405.04517 | A | B3-01 |
 | S-GGUF | llama.cpp / GGUF 打包 | ggml-org/llama.cpp（官方仓库 + convert/quantize 工具） | A | B2-04 |
 | S-TensorRT-LLM | NVIDIA 推理引擎 | NVIDIA/TensorRT-LLM（官方仓库 + 文档） | A | B2-04 |
 | S-OPTIM | Optimum ONNX/ORT 导出 | HF optimum（官方文档） | A | B2-04 |
