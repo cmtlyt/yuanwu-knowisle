@@ -35,7 +35,7 @@
 | S-Switch | Switch Transformer | arXiv:2101.03961 | A | B1-07 |
 | S-GLaM | GLaM 1.2T | arXiv:2112.06905 | A | B1-07 |
 | S-Mixtral | Mixtral 8x7B | arXiv:2401.04088 | A | B1-07 |
-| S-Mamba | Mamba 选择性 SSM | arXiv:2402.03684 | A | B1-04 |
+| S-Mamba | Mamba 选择性 SSM | arXiv:2312.00752（**非 2402.03684**） | A | B1-04 / B4-01 |
 | S-Mamba2 | Mamba-2 SSD | state-spaces/mamba（2024） | A | B1-04 |
 | S-LLaDA | LLaDA 扩散 LLM | arXiv:2502.09992 | A | B1-05 |
 | S-DSV2 | DeepSeek-V2（MLA 首提） | arXiv:2405.04434 | A | B1-03 |
@@ -56,6 +56,9 @@
 | S-LongRoPE | 长上下文 2M 外推 | arXiv:2402.13753 | A | B3-01 |
 | S-Jamba | 混合 Transformer-Mamba-MoE | arXiv:2403.19887 | A | B3-01 |
 | S-xLSTM | 扩展 LSTM（指数门控/矩阵记忆） | arXiv:2405.04517 | A | B3-01 |
+| S-Zamba | 共享注意力 SSM 混合 | arXiv:2405.16712（**非 2407.11621**） | A | B4-01 |
+| S-FalconH1 | 并行混合头（注意力‖Mamba-2） | arXiv:2507.22448 | A | B4-01 |
+| S-Hedgehog | 可学习线性注意力（模仿 softmax） | arXiv:2402.04347（**非 2301.08299**） | A | B4-01 |
 | S-GGUF | llama.cpp / GGUF 打包 | ggml-org/llama.cpp（官方仓库 + convert/quantize 工具） | A | B2-04 |
 | S-TensorRT-LLM | NVIDIA 推理引擎 | NVIDIA/TensorRT-LLM（官方仓库 + 文档） | A | B2-04 |
 | S-OPTIM | Optimum ONNX/ORT 导出 | HF optimum（官方文档） | A | B2-04 |

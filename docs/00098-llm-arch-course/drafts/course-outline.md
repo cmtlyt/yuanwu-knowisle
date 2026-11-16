@@ -102,18 +102,21 @@
 ## M4 状态空间与混合架构
 
 ### S1 SSM 与 Mamba
-- 经典 SSM（S4 fixed dynamics）→ **Mamba 选择性 SSM**（Δ/B/C 随输入，线性复杂度、恒定推理内存、硬件感知并行扫描）。
-  - 来源：S-Mamba · A
+- 经典 SSM（S4 fixed dynamics）→ **Mamba 选择性 SSM**（Δ/B/C 随输入，线性复杂度、恒定推理内存、硬件感知并行扫描；官方 arXiv:2312.00752，**非 2402.03684**）。
+  - 来源：S-Mamba（arXiv:2312.00752）· A
 - **Mamba-2**：结构化状态空间对偶（SSD），数学上统一 SSM 与注意力；状态维 16→256，比 Mamba-1 快 2–8×。
   - 来源：S-Mamba2 · A
 
 ### S2 线性 Transformer 谱系
-- 线性注意力变体（Hedgehog 等，B 级待官方）；**xLSTM**（指数门控 + 标量/矩阵记忆，补齐「存储不可改/容量有限/难并行」三大 LSTM 缺陷，xLSTM 7B 主打快推理）。
-  - 来源：S-xLSTM（arXiv:2405.04517）· A；Hedgehog 等 B 级
+- **Hedgehog**（可学习线性注意力：可训练 MLP 特征图模仿 softmax 的「尖峰低熵 + 点积单调性」，从头/微调/预训练转换三场景恢复 >99% 质量）；**xLSTM**（指数门控 + 标量/矩阵记忆，补齐「存储不可改/容量有限/难并行」三大 LSTM 缺陷，xLSTM 7B 主打快推理）；谱系 Linear Transformer → Performer → DeltaNet/GLA/RetNet → RWKV。
+  - 来源：S-Hedgehog（arXiv:2402.04347）· A；S-xLSTM（arXiv:2405.04517）· A
 
 ### S3 混合架构
-- 生产趋势：「SSM + 少量全注意力」混合模型——**Jamba**（每 8 层放 1 层 Transformer + 7 层 Mamba + 部分层 MoE；7B 基座=12B 激活/52B 总参、单 80GB GPU、256K 上下文、长上下文吞吐最高 3×、KV cache 小一个数量级）、Zamba、Falcon-H1；少量注意力层补回远距离召回。
-  - 来源：S-Jamba（arXiv:2403.19887）· A；Zamba/Falcon-H1 仍 B 级（待各官方仓库升级）
+- 生产趋势：「SSM + 少量全注意力」混合模型，按注意力与 SSM 的组合方式分两支：
+  - **串行混合**（层间穿插）：**Jamba**（每 8 层放 1 层 Transformer + 7 层 Mamba + 部分层 MoE；7B 基座=12B 激活/52B 总参、单 80GB GPU、256K 上下文、长上下文吞吐最高 3×）、**Zamba**（Mamba 主干 + 单个共享注意力模块，1T token）。
+  - **并行混合**（同块内注意力‖Mamba-2 头）：**Falcon-H1**（34B 匹敌 70B 级，长上下文最高 8× 加速）、Hymba、Granite 4.0（Mamba-2:注意力 ≈ 9:1）。
+  - 共识：约 10% 注意力层最优，少量注意力承担「远距离召回」，SSM 层做「通用序列映射」。
+  - 来源：S-Jamba（arXiv:2403.19887）· A；S-Zamba（arXiv:2405.16712）· A；S-FalconH1（arXiv:2507.22448）· A
 
 ---
 
@@ -264,6 +267,12 @@
 
 ## 已升级 A 级官方来源（本批次确认）
 
+- **B4 批次（2026-11-16，arXiv 官方 abs 页逐一 WebFetch 核验）**：
+  - Zamba arXiv:**2405.16712**（Zyphra，**非 2407.11621**；Zamba2 套件 2411.15242）
+  - Falcon-H1 arXiv:**2507.22448**（TII，补定号）
+  - Hedgehog arXiv:**2402.04347**（Zhang/Bhatia/Kumbong/Ré, ICLR 2024，**非 2301.08299**）
+  - **Mamba 更正为 arXiv:2312.00752**（**B1 原记 2402.03684 是错号**，该号指向早期暗能量论文）
+  - Llama 2 arXiv:2307.09288 官方 abs 页可达性确认
 - **B3 批次（2026-11-16，arXiv 官方 abs 页逐一 WebFetch 核验）**：
   - LongRoPE arXiv:**2402.13753**（Microsoft，2M 上下文渐进外推）
   - Jamba arXiv:**2403.19887**（AI21，**非 2403.19897**）
@@ -281,7 +290,9 @@
 ## 仍待补 A 级官方页（下批次检索升级）
 
 - ~~LongRoPE arXiv:2402.13753~~ → **已补 A 级**（B3）
-- ~~Jamba arXiv:2403.19887~~ → **已补 A 级**（B3）；Zamba / Falcon-H1 仍 B 级（待各官方仓库）
-- ~~xLSTM arXiv:2405.04517~~ → **已补 A 级**（B3）；Hedgehog / 线性注意力其余谱系仍 B 级
-- Mamba 官方 arXiv 2402.03684 官方页可达性确认
-- Llama 官方 arXiv（2307.09288 / 2407.21783）官方页可达性确认
+- ~~Jamba arXiv:2403.19887~~ → **已补 A 级**（B3）；~~Zamba / Falcon-H1~~ → **已补 A 级**（B4：Zamba 2405.16712 / Falcon-H1 2507.22448）
+- ~~xLSTM arXiv:2405.04517~~ / ~~Hedgehog arXiv:2402.04347~~ → **已补 A 级**（B3/B4）
+- ~~Mamba arXiv:2312.00752~~ → **已核验更正**（B4，官方 abs 可达；原误传 2402.03684）
+- ~~Llama 2 arXiv:2307.09288 / Llama 3 arXiv:2407.21783~~ → **已核验**（B4，官方 abs 可达）
+
+> **本批次（B4）后，大纲全部架构/混合/线性注意力知识点均已挂到 A 级官方 abs 可达来源，「待补 A 级」清零。** 后续仅余各模型「数据配比 / 吞吐倍数」等 B 级经验值，按需升级。
