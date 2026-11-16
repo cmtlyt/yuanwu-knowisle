@@ -3,6 +3,7 @@ import { RXJS_COURSE } from './rxjs-course'
 import { AGENT_COURSE } from './agent-course'
 import { AGENT_HARNESS_COURSE } from './agent-harness-course'
 import { LANGCHAIN_COURSE } from './langchain-course'
+import { LLM_ARCH_COURSE } from './llm-arch-course'
 import type { CourseEntry } from '~/types/course'
 
 /**
@@ -79,6 +80,20 @@ export const COURSES: CourseEntry[] = [
     status: 'available',
     storageKey: 'knowisle:langchain-source:v1',
     data: LANGCHAIN_COURSE,
+  },
+  {
+    slug: 'llm-arch',
+    title: 'LLM 架构深度课',
+    subtitle: '11 模块 · 111 课 · 证据快照 2026-11-16',
+    tagline: '从 2017 Transformer 本体到 Mamba/DeepSeek/扩散 LLM，每个短板对应一次架构换法',
+    description:
+      '11 模块 51 阶段 111 课：M1 架构原理深挖（block 四件套 / 自回归 next-token / MHA·GQA·FFN / RMSNorm / RoPE）→ M2 注意力演进 → M3 MoE → M4 SSM/混合 → M5 扩散 LLM → M6 横评选型 → M7 DeepSeek → M8 预训练 → M9 微调 → M10 对齐 → M11 打包部署。每课配原理演练与即时反馈测验，数字与 arXiv 号标注官方核验快照。',
+    icon: '🧠',
+    color: '#78ceb3',
+    tags: ['LLM', 'Transformer', '注意力', 'MoE', 'SSM', '架构'],
+    status: 'available',
+    storageKey: 'knowisle:llm-arch:v1',
+    data: LLM_ARCH_COURSE,
   },
   {
     slug: 'more',
