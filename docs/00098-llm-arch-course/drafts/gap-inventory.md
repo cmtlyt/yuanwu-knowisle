@@ -27,7 +27,7 @@
 
 | # | 缺口 | 类型 | 现状 | 建议落点 | 建议来源 |
 |---|---|---|---|---|---|
-| M1-a | encoder-only（BERT）/ encoder-decoder（T5）范式 | 未成课 | M1-L02 只定位三范式，未展开为何 LLM 弃 enc/enc-dec | M1 Stage 1.1 加 1 课（对比 + 取舍数学） | S-Transformer17 + BERT arXiv:1810.04805 / T5 arXiv:1910.13461 |
+| M1-a | encoder-only（BERT）/ encoder-decoder（T5）范式 | 未成课 | M1-L02 只定位三范式，未展开为何 LLM 弃 enc/enc-dec | M1 Stage 1.1 加 1 课（对比 + 取舍数学） | S-Transformer17 + BERT arXiv:1810.04805 / T5 arXiv:**1910.10683**（非 1910.13461=BART）· A |
 | M1-b | 推理时逐 token 生成 + KV 复用原理 | 点到名 | KV cache 在 M2 讲，M1 没讲「生成阶段为何要缓存 K/V」 | M1 Stage 1.2 末加 1 课（训练 vs 推理差异 + 为何缓存） | S-Transformer17 · A |
 | M1-c | SwiGLU 门控 FFN 细节 | 点到名 | M1-L07 提 SwiGLU 未展开（vs GELU） | M1 Stage 1.3 扩 1 课 | Llama 3 官方（S-Llama3）· A |
 
@@ -52,8 +52,8 @@
 
 | # | 缺口 | 类型 | 现状 | 建议落点 | 建议来源 |
 |---|---|---|---|---|---|
-| M4-a | Hymba / Granite 4.0 | 点到名 | 大纲 M4 S3 提到并行混合两支，未成课/未挂来源 | M4 Stage 4.3 扩 1 课（并行混合代表 + 来源） | Hymba arXiv:2404.08801 / IBM Granite 官方 · A |
-| M4-b | RWKV / Performer / DeltaNet / GLA / RetNet | 点到名 | 谱系一句话带过，无单独讲解 | M4 Stage 4.2 扩 1–2 课 | RWKV(2309.05465) / Performer(2009.13529) / DeltaNet(2406.07271) / GLA(2312.06635) / RetNet(2307.08621) · A |
+| M4-a | Hymba / Granite 4.0 | 点到名 | 大纲 M4 S3 提到并行混合两支，未成课/未挂来源 | M4 Stage 4.3 扩 1 课（并行混合代表 + 来源） | Hymba arXiv:**2411.13676**（非 2404.08801=Megalodon）/ IBM Granite 官方（串联 9:1）· A |
+| M4-b | RWKV / Performer / DeltaNet / GLA / RetNet | 点到名 | 谱系一句话带过，无单独讲解 | M4 Stage 4.2 扩 1–2 课 | RWKV(**2305.13048**，非 2309.05465) / Performer(**2009.14794**，非 2009.13529) / DeltaNet(**2406.06484**，非 2406.07271) / GLA(2312.06635) / RetNet(2307.08621) · A |
 | M4-c | Mamba 训练实操（非仅推理） | 缺实操 | M4-L03 只跑推理 | M4 加 1 课（小 Mamba 训练 + 吞吐/KV 对比） | S-Mamba · A + 官方仓库 |
 
 ## M5 扩散 LLM（现 3 课，展示型无 capstone）
@@ -61,7 +61,7 @@
 | # | 缺口 | 类型 | 现状 | 建议落点 | 建议来源 |
 |---|---|---|---|---|---|
 | M5-a | SEDD（离散扩散理论） | 点到名 | 大纲提「理论前置 SEDD」未展开 | M5 Stage 5.1 扩 1 课 | SEDD arXiv:2310.16834 · A |
-| M5-b | Dream (Diffusion LLM) | 未成课 | 大纲初版提 Dream 后删了 | 若纳入 M5 代表模型 +1 课 | Dream arXiv:2407.04764 · A |
+| M5-b | Dream (Diffusion LLM) | 未成课 | 大纲初版提 Dream 后删了 | 若纳入 M5 代表模型 +1 课 | Dream arXiv:**2508.15487**（非 2407.04764=星团计数）· A |
 | M5-c | 扩散 LLM 局部编辑 / 可控生成 | 未成课 | 只讲生成范式，未讲可控性 | M5 加 1 课（inpainting/局部改写的双向优势） | S-LLaDA · A |
 | M5-d | Mercury（商用） | 仅背景 | C 级仅背景 | 维持背景，不进正文关键结论 | C 级 |
 
@@ -101,7 +101,7 @@
 | # | 缺口 | 类型 | 现状 | 建议落点 | 建议来源 |
 |---|---|---|---|---|---|
 | M10-a | 安全对齐 / 越狱 / 红队 | 未成课 | 只讲 RLHF/DPO/GRPO，未讲安全 | M10 加 1 课（越狱模式 + 对齐安全边界） | S-InstructGPT/S-ConstAI · A |
-| M10-b | DPO 变体（IPO / KTO） | 点到名 | 只讲 DPO，未提变体 | M10 加 1 课（无成对数据的 KTO） | IPO arXiv:2310.12040 / KTO arXiv:2402.17935 · A |
+| M10-b | DPO 变体（IPO / KTO） | 点到名 | 只讲 DPO，未提变体 | M10 加 1 课（无成对数据的 KTO） | IPO arXiv:**2310.12036**（非 2310.12040）/ KTO arXiv:**2402.01306**（非 2402.17935）· A |
 
 ## M11 参数打包与部署（现 5 课）
 
