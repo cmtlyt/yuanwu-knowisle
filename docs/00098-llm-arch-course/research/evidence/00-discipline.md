@@ -15,6 +15,8 @@
 3. 每个知识点在大纲里挂 `来源 ID（S-*）+ 可信级别 + arXiv/官方链接`。
 4. 第三方吞吐倍数（2–4× 等）挂 B 级并标注「待官方章节核实」，不入正文作关键结论。
 5. 核实日期：本批次 2026-11-16；arXiv 号为多方一致引用，关键处升级到官方页。
+6. **B5 批次（2026-11-16，arXiv 官方 abs 页逐一 WebFetch 核验）**：缺口补全批次新增 17 个 S-* 来源，全部官方 abs 可达或官方一手页。本批**多个猜测号被官方页拦下并更正**：T5≠1910.13461（该号实为 BART，T5 正号 **1910.10683**）；IPO≠2310.12040（该号实为 graphene 物理，IPO 正号 **2310.12036**）；KTO≠2402.17935（该号实为 Macdonald 多项式数学，KTO 正号 **2402.01306**）；Hyena≠2402.06416（实为 neutrino，正号 **2302.10866**）；RWKV≠2309.05465（实为量子 MOF，正号 **2305.13048**）；Hymba≠2404.08801（该号实为 Megalodon，正号 **2411.13676**）；Performer≠2009.13529（实为 VLBA 天文，正号 **2009.14794**）；DeltaNet≠2406.07271（实为 vehicle platoon，正号 **2406.06484**）；Dream≠2407.04764（实为 galaxy 星团计数，正号 **2508.15487**）。详见 `raw/B5-01` / `raw/B5-02`。
+7. **论文自报数字**（如 Hyena 64K 提速 100×、Hymba 超 Llama3.2-3B、Dream MMLU 打平 Qwen2.5-7B、GPTQ 175B 单卡等）挂 A 级（官方论文）但**正文须标注「论文自报」**，不与其他架构做跨论文的未受控横向比较时升关键结论。
 
 ## 来源登记表（S-*）
 
@@ -65,3 +67,20 @@
 | S-OPTIM | Optimum ONNX/ORT 导出 | HF optimum（官方文档） | A | B2-04 |
 | S-SAFE | safetensors 权重格式 | huggingface/safetensors（官方仓库） | A | B2-04 |
 | mFformer | 用户提及的命名 | **无官方来源** | C（疑似误记） | B1-09 |
+| S-Hyena | Hyena 隐式长卷积 + 数据门控 | arXiv:**2302.10866**（**非 2402.06416**） | A | B5-01 |
+| S-RWKV | RWKV 重发明 RNN | arXiv:**2305.13048**（**非 2309.05465**） | A | B5-01 |
+| S-RetNet | RetNet 保留机制 | arXiv:2307.08621 | A | B5-01 |
+| S-GLA | 门控线性注意力 + FlashLinearAttention | arXiv:2312.06635 | A | B5-01 |
+| S-DeltaNet | Delta 规则线性 Transformer 并行化 | arXiv:**2406.06484**（**非 2406.07271**） | A | B5-01 |
+| S-Hymba | NVIDIA 混合头（注意力‖Mamba-2） | arXiv:**2411.13676**（**非 2404.08801**，该号为 Megalodon） | A | B5-01 |
+| S-Performer | Performer/FAVOR+ 正交随机特征 | arXiv:**2009.14794**（**非 2009.13529**） | A | B5-01 |
+| S-SEDD | 离散扩散 score entropy（SEDD） | arXiv:2310.16834 | A | B5-01 |
+| S-Dream | Dream 7B 扩散 LLM | arXiv:**2508.15487**（**非 2407.04764**） | A | B5-01 |
+| S-Granite4 | IBM Granite 4.0 混合（Mamba-2:注意力≈9:1 串联） | IBM 官方公告页（ibm.com 一手，无 arXiv） | A | B5-02 |
+| S-R1 | DeepSeek-R1 RL 推理 | arXiv:2501.12948（Nature 645, 633–638, 2025） | A | B5-02 |
+| S-BERT | BERT 双向 encoder-only | arXiv:1810.04805 | A | B5-02 |
+| S-T5 | T5 text-to-text enc-dec | arXiv:**1910.10683**（**非 1910.13461**，该号为 BART） | A | B5-02 |
+| S-IPO | ΨPO / Identity 偏好优化 | arXiv:**2310.12036**（**非 2310.12040**） | A | B5-02 |
+| S-KTO | KTO 前视理论对齐（免偏好对） | arXiv:**2402.01306**（**非 2402.17935**） | A | B5-02 |
+| S-GPTQ | 一次性二序权重量化 | arXiv:2210.17323（ICLR 2023） | A | B5-02 |
+| S-AWQ | 激活感知 4-bit 权重量化 | arXiv:2306.00978（MLSys 2024 Best Paper） | A | B5-02 |

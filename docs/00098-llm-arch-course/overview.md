@@ -99,3 +99,17 @@
 - 体量总账：M1–M7（新）= 28 阶段/52 课/6 capstone；M8–M11（不变）= 14 阶段/32 课/4 capstone；**全课 ≈ 42 阶段/84 课/10 capstone/0 overview**。
 - 两份体量计划同步：`m1-m7-volume-plan.md`（M1 重写 + M6 升级 + 总账更新，改用模块内 reset 的暂定 id `M<mod>-L<nn>` 与 `m8-m11` 口径一致）；`m8-m11-volume-plan.md` 内容不变、仅更新「全课合计」交叉引用。
 - 仍属**草稿**（不落地 `app/data`）；落地时再统一重编全课连续 `L01…`（≈84）。
+
+## 后续补充（2026-11-16 晚，用户指令「全部都补全 33 缺口 + 检查 Mamba/RWKV/RetNet/Hyena 原理深度」）
+
+**检索批次推进到 B5（缺口补全批次）+ 33 缺口全部补进大纲与两份体量计划**：
+
+- **B5 来源核验**（`research/raw/B5-01` / `B5-02`，arXiv 官方 abs 页逐一 WebFetch）：新增 17 个 A 级 `S-*`（Hyena / RWKV / RetNet / GLA / DeltaNet / Hymba / Performer / SEDD / Dream / LLaMA / R1 / BERT / T5 / IPO / KTO / GPTQ / AWQ + Granite 4.0 官方页）。本批**9 个猜测号被官方页拦下并更正**（T5≠1910.13461=BART、IPO≠2310.12040、KTO≠2402.17935、Hyena≠2402.06416、RWKV≠2309.05465、Hymba≠2404.08801=Megalodon、Performer≠2009.13529、DeltaNet≠2406.07271、Dream≠2407.04764）。证据台账 `research/evidence/00-discipline.md` 已登记新 S-* 与 B5 批次纪律。
+- **Mamba/RWKV/RetNet/Hyena 原理深度**（用户特别要求）：M4 S2 扩为「线性/替代注意力谱系（原理深挖）」，逐家讲**状态更新公式 + 为什么线性 + 能省什么**（Performer FAVOR+ 核化 / GLA 门控线性 / DeltaNet delta rule / RetNet retention 三范式 / RWKV channel-directed / Hyena 隐式长卷积 FFT）；M4 S1 补 Mamba 训练实操；M4 S3 补 Hymba（并行头）vs Granite 4.0（串联 9:1）对照。
+- **33 缺口全部补全**（`drafts/gap-inventory.md` 逐条销账）：
+  - 新增课 27 节（M1×3 / M2×2 / M3×3 / M4×4 / M5×3 / M6×2 / M7×2 / M8×1 / M9×3 / M10×2 / M11×2），按模块尾部顺延 id、来源挂 B5 A 级。
+  - 来源升级 5 处（M2-a 线性谱系→Performer A；M8-a LLaMA 配比→2302.13971 A；M11-a GGUF 档位→llama.cpp 官方 A；M7-b mFformer 维持核实表；M2-d 与 M4 分工互引）。
+  - 仅背景维持 1 处（M5-d Mercury C 级不进关键结论）。
+- **体量总账刷新**：M1–M7 52→**71 课 / 29 阶段 / 6 capstone**；M8–M11 32→**40 课 / 14 阶段 / 4 capstone**；**全课 ≈ 111 课 / 43 阶段 / 10 capstone / 0 overview**。
+- 三份文件已同步：`drafts/course-outline.md`（33 缺口补进正文 + B5 来源登记）、`drafts/m1-m7-volume-plan.md`（追加课 + 总账）、`drafts/m8-m11-volume-plan.md`（追加课 + 总账 + 决策 #5）。`drafts/gap-inventory.md` 头部标注 33 项已补全。
+- 仍属**草稿**（不落地 `app/data`）；落地时按模块顺序重编全课连续 `L01…`（≈111）并统一 `prereqs`。

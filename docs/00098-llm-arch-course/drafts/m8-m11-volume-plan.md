@@ -22,11 +22,13 @@
 
 | 模块 | 阶段数 | 课时数 | capstone | 模块占比定位 |
 |---|---|---|---|---|
-| M8 预训练 | 3 | 10 | 1 | 概念 + **从零预训练实操**（125M 单卡冒烟起步）+ 继续/领域预训练 + 分布式 3D 并行 |
-| M9 微调 | 4 | 10 | 1 | 全课重心，PEFT 可单卡复现 |
-| M10 后训练 | 4 | 7 | 1 | 对齐三范式 + trl 实操 |
-| M11 打包部署 | 3 | 5 | 1 | 改参 → 合并 → 导出 → 服务化的工程闭环 |
-| **合计** | **14** | **32** | 4 | 占全课（含 M1–M7）的实操后半段 |
+| M8 预训练 | 3 | 10 (+1) | 1 | 概念 + **从零预训练实操**（125M 单卡冒烟起步）+ 继续/领域预训练 + 分布式 3D 并行 + 能力探针/涌现 |
+| M9 微调 | 4 | 10 (+3) | 1 | 全课重心，PEFT 可单卡复现 + 全参对照 + 指令数据构造 + GaLore |
+| M10 后训练 | 4 | 7 (+2) | 1 | 对齐三范式 + DPO 变体（IPO/KTO）+ 安全对齐 + trl 实操 |
+| M11 打包部署 | 3 | 5 (+2) | 1 | 改参 → 合并 → 导出（含推理侧量化）→ 服务化（多节点调优）工程闭环 |
+| **合计** | **14** | **32 (+8)** | 4 | 占全课（含 M1–M7）的实操后半段 |
+
+> **缺口补全批次（B5，用户 2026-11-16「全部都补全」）**：在 32 课基础上追加 8 节（M8-c / M9-a/b/c / M10-a/b / M11-b/c），新增课按模块尾部顺延 id、来源挂 B5 已核验 A 级 `S-*`。「待补 A 级」项中 **M8-a（LLaMA 数据配比）已升级 A 级**（S-LLaMA arXiv:2302.13971，B5-01 核验），只改来源口径不新增课；M8-b（过训练 token/参数）维持 B 级不作关键结论。M8–M11 课时 32 → **40**；全课 M1–M11 由 84 → **111 课 / 43 阶段 / 10 capstone / 0 overview**。
 
 - overview 课：本规划 **M8–M11 不安排 overview 课**（可选，且受全局 8% 护栏约束）；如需要模块导览，最多每模块 1 节且要写 `kindReason`。默认 0 节最稳妥。
 - capstone 4 个（每模块 1 个收尾），体量最大（3000/2500），是全课工程验收锚点。
@@ -56,7 +58,10 @@
 | M8-L07 | practice | 3 | [M8-L06] | from-scratch-pretrain | 4 | S-Transformer17 · A；HF 生态 · A | **从零预训练 125M 单卡冒烟**：数据 → 分词器 → GPT-2 级配置（≈125M）→ HF Trainer 训 10k 步 → loss 曲线 → 生成冒烟；最小可跑预训练闭环 |
 | M8-L08 | scenario | 4 | [M8-L07] | cpt | 4 | S-OPTIM 同族 HF 生态 · A | 继续/领域预训练端到端：基座 `--resume` + 领域语料 + loss 曲线 + 早停；与从零预训练差异（学习率/冻结/数据混合） |
 | M8-L09 | framework | 4 | [M8-L08] | dist-parallel | 4 | S-DSV3 · A（3D 并行） | TP/PP/ZeRO 概念对照 + `torchrun` 2 卡 ZeRO 冒烟（125M→700M）；何时用哪种并行 |
-| M8-L10 | capstone | 5 | [M8-L08,M8-L09] | capstone | 4 | S-Chinchilla/S-Transformer17 · A | 从零 700M 预训练 + 多卡 ZeRO 冒烟：可执行验收断言（loss 降、困惑度、token/参数核算对齐 Chinchilla 边界） |
+| M8-L11 | practice | 3 | [M8-L07] | cap-probe | 4 | S-GPT3（arXiv:2005.14165）· A | 预训练中途 zero-shot 能力探针（few-shot 分类/检索/简单推理）+ 涌现点观察；困惑度↓ ≠ 能力涌现，二者分开看（补 M8-c） |
+| M8-L12 | capstone | 5 | [M8-L08,M8-L09] | capstone | 4 | S-Chinchilla/S-Transformer17 · A | 从零 700M 预训练 + 多卡 ZeRO 冒烟：可执行验收断言（loss 降、困惑度、token/参数核算对齐 Chinchilla 边界） |
+
+> **M8-a 来源升级（不新增课）**：M8-L02「LLaMA 配比」的 `B 级（待回官方 A）` 升级为 `S-LLaMA（arXiv:2302.13971）· A`（B5-01 官方 abs 可达）；M8-b 过训练 token/参数维持 `B 级（唐杰/Epoch 复算）` 不作关键结论。
 
 ---
 
@@ -86,7 +91,14 @@
 | id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
 |---|---|---|---|---|---|---|---|
 | M9-L09 | theory | 3 | [M9-L07] | data-size | 4 | S-QLoRA · A | 数据量<模型容量时小数据常更优（QLoRA 9k>450k 指令子集）；过拟合识别 |
-| M9-L10 | capstone | 5 | [M9-L07,M9-L09] | capstone | 4 | S-LoRA/QLoRA · A | 小数据集 LoRA 微调 + 过拟合曲线验收（train/val loss 分离 + merge 后推理冒烟） |
+
+### Stage 9.5 缺口补全课（M9-a/b/c，B5 批次追加）
+| id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
+|---|---|---|---|---|---|---|---|
+| M9-L10 | theory | 3 | [M9-L06] | galore | 4 | S-GaLore（arXiv:2403.03507）· A | GaLore 机制展开：梯度低秩投影省显存（全参梯度投到低秩子空间存动量，显存 ~1/4，不冻基座）vs 全参/LoRA 选型；小模型显存/收敛对照冒烟（补 M9-a，M9-L06 由「备选」升展开） |
+| M9-L11 | practice | 4 | [M9-L01] | full-finetune-sft | 4 | HF 生态 · A | 小模型**全参 SFT** 实操（Qwen0.5B/GPT-2 级），与 LoRA/QLoRA 显存对照——直观看到冻结基座省多少显存、全参何时值得（补 M9-b） |
+| M9-L12 | framework | 3 | [M9-L07,M9-L09] | instr-data | 4 | S-QLoRA · A + HF 生态 · A | 指令/多任务数据构造：(指令—响应) schema、多任务混排比例、自举蒸馏、去重+难度分级；对照 S-QLoRA 数据集（9k 高质量 > 450k 泛指令）（补 M9-c） |
+| M9-L13 | capstone | 5 | [M9-L07,M9-L09,M9-L12] | capstone | 4 | S-LoRA/QLoRA · A | 小数据集 LoRA 微调 + 过拟合曲线验收（train/val loss 分离 + merge 后推理冒烟） |
 
 ---
 
@@ -113,7 +125,13 @@
 | id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
 |---|---|---|---|---|---|---|---|
 | M10-L06 | scenario | 4 | [M10-L03,M10-L04] | trl-align | 4 | S-OPTIM 同族 HF 生态 · A | trl：SFTTrainer/DPOTrainer/GRPOTrainer + `peft_config=LoraConfig()`；偏好对数据流 |
-| M10-L07 | capstone | 5 | [M10-L06] | capstone | 4 | S-DPO · A | 偏好对数据集构建 + DPO 对齐端到端；可执行验收（偏好胜率、KL 漂移、通用基准不掉） |
+
+### Stage 10.5 缺口补全课（M10-a/b，B5 批次追加）
+| id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
+|---|---|---|---|---|---|---|---|
+| M10-L07 | framework | 4 | [M10-L03] | dpo-variants | 4 | S-IPO（arXiv:**2310.12036**，非 2310.12040）/S-KTO（arXiv:**2402.01306**，非 2402.17935）· A | DPO 变体三法对照：IPO（ΨPO/Identity，始终正则避免过拟合）/ KTO（HALOs，只需二元「是否合意」免偏好对，1B–30B 匹配/超 DPO）；数据形态·正则行为·适用场景（补 M10-b） |
+| M10-L08 | scenario | 4 | [M10-L01,M10-L05] | safety-align | 4 | S-InstructGPT/S-ConstAI · A | 安全对齐/越狱/红队：越狱模式分类（角色扮演讲解/编码混淆/多语言绕过/提示注入）、红队攻击+修复循环、对齐安全边界（什么该拒/拒得得体）；与通用对齐的张力（补 M10-a） |
+| M10-L09 | capstone | 5 | [M10-L06,M10-L07] | capstone | 4 | S-DPO · A | 偏好对数据集构建 + DPO 对齐端到端；可执行验收（偏好胜率、KL 漂移、通用基准不掉） |
 
 ---
 
@@ -127,14 +145,20 @@
 ### Stage 11.2 导出格式
 | id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
 |---|---|---|---|---|---|---|---|
-| M11-L02 | practice | 3 | [M11-L01] | gguf-export | 4 | S-GGUF · A（量化档位 B 级） | GGUF：llama.cpp `convert-hf-to-gguf.py`+`llama-quantize`；Q4_K_M 甜点 + 各档位体积/质量表 |
+| M11-L02 | practice | 3 | [M11-L01] | gguf-export | 4 | S-GGUF · A（量化档位**已升 A**：llama.cpp 官方文档，B5 核验） | GGUF：llama.cpp `convert-hf-to-gguf.py`+`llama-quantize`；Q4_K_M 甜点 + 各档位体积/质量表（档位 F16→Q8_0→…→Q2_K 挂 llama.cpp 官方量化文档，补 M11-a） |
 | M11-L03 | practice | 4 | [M11-L01] | onnx-trt | 4 | S-OPTIM/S-TensorRT-LLM · A | ONNX/TensorRT：`optimum ORTModelForCausalLM(export=True)`→ONNX；TensorRT-LLM 编译 `.engine` |
 
 ### Stage 11.3 服务化
 | id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
 |---|---|---|---|---|---|---|---|
 | M11-L04 | scenario | 4 | [M11-L02,M11-L03] | serving | 4 | S-vLLM · A | vLLM/SGLang/TensorRT-LLM/llama-server（OpenAI 兼容端点）；KV cache、批量、多节点 |
-| M11-L05 | capstone | 5 | [M11-L04] | capstone | 4 | S-LoRA/vLLM/GGUF · A | 从 LoRA 到可服务新模型端到端：merge→GGUF/ONNX 双路→vLLM 起服务→OpenAI 兼容 API 冒烟；可执行验收断言 |
+
+### Stage 11.4 缺口补全课（M11-b/c，B5 批次追加）
+| id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
+|---|---|---|---|---|---|---|---|
+| M11-L05 | framework | 4 | [M11-L02] | inference-quant | 4 | S-GPTQ（arXiv:2210.17323）/S-AWQ（arXiv:2306.00978）· A；FP8 挂 S-FA3/S-DSV3 | 推理侧量化：权重量化 vs 激活量化区分；GPTQ（二阶一次性压 3–4bit）vs AWQ（激活感知只保 1% 显著权重通道）vs FP8；何时用哪种 + 吞吐/精度实测对照（挂 M6/M2 KV 量化主题）（补 M11-b） |
+| M11-L06 | practice | 4 | [M11-L04] | serving-tune | 4 | S-vLLM · A；并行概念 S-DSV3 · A | 多节点/吞吐调优实操：batch/并发/流式三旋钮对吞吐·延迟影响；压测（固定并发 P95/P99 + 吞吐曲线）；多节点挂 M7 3D 并行/跨节点 all-to-all；可复现压测脚本（与 M6 复用）（补 M11-c） |
+| M11-L07 | capstone | 5 | [M11-L04,M11-L05,M11-L06] | capstone | 4 | S-LoRA/vLLM/GGUF · A | 从 LoRA 到可服务新模型端到端：merge→GGUF/ONNX/量化双路→vLLM 起服务→OpenAI 兼容 API 冒烟；可执行验收断言 |
 
 ---
 
@@ -153,5 +177,7 @@
 2. **不需要每模块 1 节导览（overview）课**：M8–M11 overview 恒 **0 节**（M1–M7 同口径见 `m1-m7-volume-plan.md`），不再列"是否加导览"选项。
 3. **capstone 是否配看模块内容是否适合收尾**：M8/M9/M10/M11 各 1 capstone 保留（工程验收锚点适合）；M1–M7 中内容适合者配 capstone，仅展示型 **M5 扩散** 不配（M6 已升级为综合交付并配 capstone）——详见 `m1-m7-volume-plan.md`。
 4. **正文用 course-builder 草稿管线**（`gen-course.mjs`）批量生成后 `pnpm fmt`，不逐课手写。
+5. **补全 33 缺口（用户 2026-11-16「全部都补全」+ B5 来源核验批次）**：M8–M11 追加 8 节——M8 +1（L11 能力探针/涌现，M8-c）；M9 +3（L10 GaLore 展开 / L11 全参 SFT 实操 / L12 指令数据构造，M9-a/b/c）；M10 +2（L07 DPO 变体 IPO·KTO / L08 安全对齐，M10-a/b）；M11 +2（L05 推理侧量化 GPTQ·AWQ / L06 多节点吞吐调优，M11-b/c）。各 capstone 顺延重编号（M8-L12 / M9-L13 / M10-L09 / M11-L07）。M8-a（LLaMA 配比）、M11-a（GGUF 档位）只做**来源升级 A 级**不新增课；M8-b 维持 B 级。M8–M11 32→**40**；全课 84→**111 课 / 43 阶段 / 10 capstone / 0 overview**（追加课全部挂 B5 已核验 A 级 `S-*`）。
 
-> 全课 M1–M11 合计（2026-11-16 晚结构升级后）：M1–M7 = **52 课时 / 28 阶段 / 6 capstone**（M1 重写为架构原理深挖 5 阶段/11 课、M6 升级为综合交付 5 阶段/5 课含 capstone）；M8–M11 = **32 课时 / 14 阶段 / 4 capstone**；**全课 ≈ 84 课时 / 42 阶段 / 10 capstone，overview 恒 0**。暂定 id 按模块内序号（`M<mod>-L<nn>`，与 m1-m7 同口径）；统一 `L01…` 连续编号与 `prereqs` 改写待两计划都定稿后一次完成。
+> 全课 M1–M11 合计（2026-11-16 晚结构升级后）：M1–M7 = **52 课时 / 28 阶段 / 6 capstone**（M1 重写为架构原理深挖 5 阶段/11 课、M6 升级为综合交付 5 阶段/5 课含 capstone）；M8–M11 = **32 课时 / 14 阶段 / 4 capstone**；**全课 ≈ 84 课时 / 42 阶段 / 10 capstone，overview 恒 0**。
+> **缺口补全批次（B5，2026-11-16）后**：M1–M7 = **71 课时 / 29 阶段 / 6 capstone**（原 52 + 19）；M8–M11 = **40 课时 / 14 阶段 / 4 capstone**（原 32 + 8）；**全课 ≈ 111 课 / 43 阶段 / 10 capstone / 0 overview**。暂定 id 按模块内序号（`M<mod>-L<nn>`，追加课按模块尾部顺延不重排既有课）；统一 `L01…` 连续编号与 `prereqs` 改写待两计划都定稿后一次完成。
