@@ -13,6 +13,18 @@ import { L11 } from './l11.ts'
 import { L12 } from './l12.ts'
 import { L13 } from './l13.ts'
 import { L14 } from './l14.ts'
+import { L15 } from './l15.ts'
+import { L16 } from './l16.ts'
+import { L17 } from './l17.ts'
+import { L18 } from './l18.ts'
+import { L19 } from './l19.ts'
+import { L20 } from './l20.ts'
+import { L21 } from './l21.ts'
+import { L22 } from './l22.ts'
+import { L23 } from './l23.ts'
+import { L24 } from './l24.ts'
+import { L25 } from './l25.ts'
+import { L26 } from './l26.ts'
 
 /**
  * 本文件只做**聚合**：课型（`kind`）是每节课自己的元数据，写在各 `lNN.ts` 里
@@ -20,7 +32,7 @@ import { L14 } from './l14.ts'
  *
  * 全课连续编号 L01…L111，按模块顺序追加：
  *   M1 架构原理深挖 = L01–L14（本批已落地）
- *   M2 注意力演进   = L15–L26
+ *   M2 注意力演进   = L15–L26（本批已落地）
  *   M3 MoE         = L27–L36
  *   M4 SSM/混合    = L37–L46
  *   M5 扩散 LLM    = L47–L53
@@ -31,4 +43,31 @@ import { L14 } from './l14.ts'
  *   M10 对齐       = L95–L102
  *   M11 打包部署   = L103–L111
  */
-export const LESSONS: Lesson[] = [L01, L02, L03, L04, L05, L06, L07, L08, L09, L10, L11, L12, L13, L14]
+export const LESSONS: Lesson[] = [
+  L01,
+  L02,
+  L03,
+  L04,
+  L05,
+  L06,
+  L07,
+  L08,
+  L09,
+  L10,
+  L11,
+  L12,
+  L13,
+  L14,
+  L15,
+  L16,
+  L17,
+  L18,
+  L19,
+  L20,
+  L21,
+  L22,
+  L23,
+  L24,
+  L25,
+  L26,
+]
