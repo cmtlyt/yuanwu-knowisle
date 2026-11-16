@@ -22,7 +22,7 @@
 
 | 模块 | 阶段数 | 课时数 | capstone | 模块占比定位 |
 |---|---|---|---|---|
-| M8 预训练 | 3 | 10 | 1 | 概念 + **从零预训练实操**（125M 单卡冒烟）与继续预训练，分布式 3D 并行落地 |
+| M8 预训练 | 3 | 10 | 1 | 概念 + **从零预训练实操**（125M 单卡冒烟起步）+ 继续/领域预训练 + 分布式 3D 并行 |
 | M9 微调 | 4 | 10 | 1 | 全课重心，PEFT 可单卡复现 |
 | M10 后训练 | 4 | 7 | 1 | 对齐三范式 + trl 实操 |
 | M11 打包部署 | 3 | 5 | 1 | 改参 → 合并 → 导出 → 服务化的工程闭环 |
@@ -50,13 +50,13 @@
 | M8-L06 | practice | 3 | [M8-L04,M8-L05] | compute-budget | 4 | S-Chinchilla · A | 给定算力预算规划 N/D 实操（FLOPs≈6ND 估算 + Chinchilla 边界表 + 过训练系数） |
 
 ### Stage 8.3 实操：从零预训练 + 继续/领域预训练
-> 用户拍板：**预训练可实操**——不局限于继续预训练，从零小规模预训练也作为落地课时（125M 单卡冒烟起步，700M 多卡为进阶）。
+> 用户拍板：**预训练可以实操**——不局限于继续预训练，从零小规模预训练也作为落地课时（125M 单卡冒烟起步，700M 多卡为进阶）。
 | id | 课型 | 难度 | prereqs | concepts | quiz | 来源 | 正文目标 |
 |---|---|---|---|---|---|---|---|
-| M8-L07 | practice | 3 | [M8-L06] | from-scratch-pretrain | 4 | S-GPT3 架构 · A；HF 生态 · A | **从零预训练 125M 单卡冒烟**：数据 → 分词器 → GPT-2 级配置（≈125M）→ HF Trainer 训 10k 步 → loss 曲线 → 生成冒烟；最小可跑预训练闭环 |
+| M8-L07 | practice | 3 | [M8-L06] | from-scratch-pretrain | 4 | S-Transformer17 · A；HF 生态 · A | **从零预训练 125M 单卡冒烟**：数据 → 分词器 → GPT-2 级配置（≈125M）→ HF Trainer 训 10k 步 → loss 曲线 → 生成冒烟；最小可跑预训练闭环 |
 | M8-L08 | scenario | 4 | [M8-L07] | cpt | 4 | S-OPTIM 同族 HF 生态 · A | 继续/领域预训练端到端：基座 `--resume` + 领域语料 + loss 曲线 + 早停；与从零预训练差异（学习率/冻结/数据混合） |
 | M8-L09 | framework | 4 | [M8-L08] | dist-parallel | 4 | S-DSV3 · A（3D 并行） | TP/PP/ZeRO 概念对照 + `torchrun` 2 卡 ZeRO 冒烟（125M→700M）；何时用哪种并行 |
-| M8-L10 | capstone | 5 | [M8-L08,M8-L09] | capstone | 4 | S-Chinchilla/S-GPT3 · A | 从零 700M 预训练 + 多卡 ZeRO 冒烟：可执行验收断言（loss 降、困惑度、token/参数核算对齐 Chinchilla 边界） |
+| M8-L10 | capstone | 5 | [M8-L08,M8-L09] | capstone | 4 | S-Chinchilla/S-Transformer17 · A | 从零 700M 预训练 + 多卡 ZeRO 冒烟：可执行验收断言（loss 降、困惑度、token/参数核算对齐 Chinchilla 边界） |
 
 ---
 
@@ -151,7 +151,7 @@
 
 1. **预训练可实操**（原"全量不实操"作废）：M8 Stage 8.3 已扩为 4 节——`M8-L07` 从零 125M 单卡冒烟（新增 practice）+ `M8-L08` 继续/领域预训练 + `M8-L09` 多卡 ZeRO 冒烟 + `M8-L10` capstone（从零 700M）。M8 课时 9→**10**，总账合计 31→**32**。
 2. **不需要每模块 1 节导览（overview）课**：M8–M11 overview 恒 **0 节**（M1–M7 同口径见 `m1-m7-volume-plan.md`），不再列"是否加导览"选项。
-3. **capstone 是否配看模块内容是否适合收尾**：M8/M9/M10/M11 各 1 capstone 保留（工程验收锚点适合）；M1–M7 中内容适合者配 capstone，展示型/分析型模块（M5 扩散展示、M6 横向对比）不配——详见 `m1-m7-volume-plan.md`。
+3. **capstone 是否配看模块内容是否适合收尾**：M8/M9/M10/M11 各 1 capstone 保留（工程验收锚点适合）；M1–M7 中内容适合者配 capstone，仅展示型 **M5 扩散** 不配（M6 已升级为综合交付并配 capstone）——详见 `m1-m7-volume-plan.md`。
 4. **正文用 course-builder 草稿管线**（`gen-course.mjs`）批量生成后 `pnpm fmt`，不逐课手写。
 
-> 全课 M1–M11 合计：M1–M7 = 48 课时 / 25 阶段 / 5 capstone；M8–M11 = 32 课时 / 14 阶段 / 4 capstone；**全课 ≈ 80 课时 / 39 阶段 / 9 capstone，overview 恒 0**。统一 `L01…` 连续编号与 `prereqs` 改写待两计划都定稿后一次完成。
+> 全课 M1–M11 合计（2026-11-16 晚结构升级后）：M1–M7 = **52 课时 / 28 阶段 / 6 capstone**（M1 重写为架构原理深挖 5 阶段/11 课、M6 升级为综合交付 5 阶段/5 课含 capstone）；M8–M11 = **32 课时 / 14 阶段 / 4 capstone**；**全课 ≈ 84 课时 / 42 阶段 / 10 capstone，overview 恒 0**。暂定 id 按模块内序号（`M<mod>-L<nn>`，与 m1-m7 同口径）；统一 `L01…` 连续编号与 `prereqs` 改写待两计划都定稿后一次完成。

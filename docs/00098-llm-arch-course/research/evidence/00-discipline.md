@@ -42,6 +42,7 @@
 | S-DSV3 | DeepSeek-V3（MTP/无辅助均衡） | arXiv:2412.19437 | A | B1-01 |
 | S-DSM | DeepSeekMoE | arXiv:2401.06066 | A | B1-07 |
 | S-RMSNorm | RMSNorm（Zhang & Sennrich 2019） | arXiv:1910.07467 | A | B1-11 |
+| S-Transformer17 | 原始 Transformer（"Attention Is All You Need"，Vaswani et al. 2017） | arXiv:1706.03762 | A | B1-11（本次「架构原理深挖」新增，经典官方一手） |
 | S-PEFT | PEFT 综述 / Adapter 谱系 | arXiv:2403.14608 | A | B2-01 |
 | S-LoRA | LoRA 低秩适配 | arXiv:2106.09685 | A | B2-01 |
 | S-QLoRA | 4-bit NF4 量化微调 | arXiv:2305.14314 | A | B2-01 |

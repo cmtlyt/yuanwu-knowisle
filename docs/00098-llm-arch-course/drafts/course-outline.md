@@ -8,12 +8,12 @@
 
 | 模块 | 主题 | 阶段数 | 定位 |
 |---|---|---|---|
-| M1 | 自回归 Transformer 基线 | 4 | 所有架构的「地基」 |
+| M1 | 架构原理深挖（Transformer 本体） | 5 | 从注意力数学到范式取舍，末节「架构谱系地图」串起 M2–M5 |
 | M2 | 注意力机制演进 | 4 | 从 MHA 到高效注意力与推理系统 |
 | M3 | 混合专家 MoE | 4 | 参数规模解耦算力 |
 | M4 | 状态空间与混合架构 | 3 | 替代自回归的第二条路线 |
 | M5 | 扩散 LLM | 2 | 第三条生成范式 |
-| M6 | 横向对比与选型 | 3 | 能力/成本/延迟矩阵 |
+| M6 | 横向对比与选型（综合交付） | 5 | 五维矩阵 + 可执行对比实验 + 选型报告 |
 | M7 | DeepSeek 专讲 | 5 | 单一模型架构创新深挖 |
 | M8 | 预训练（基座炼成） | 3 | 从零预训练的概念与可落地实操 |
 | M9 | 模型微调（Full / PEFT） | 4 | 微调概念 + 对应实操 |
@@ -24,29 +24,52 @@
 
 ---
 
-## M1 自回归 Transformer 基线
+## M1 架构原理深挖（Transformer 本体）
 
-### S1 自回归范式与 decoder-only
-- 自回归「预测下一 token」目标；decoder-only vs encoder/encoder-decoder 取舍。
-  - 来源：S-Llama2 · A；背景 Transformer 原始论文 arXiv:1706.03762 · A
-- 现代 LLM 统一为 decoder-only + RMSNorm + RoPE + 大词表（Llama 系范式）。
+> 本模块把「Transformer 本身怎么工作」讲到**原理层**：注意力数学 → 多头/block/FFN → 归一化/位置编码 → 三范式 → 现代配方 → 架构谱系地图。
+> 末节 S5「架构谱系地图」明确：**每个「其他架构」= 解决 Transformer 某弱点**，并指向 M2–M5（MoE/SSM/线性/扩散）。
+
+### S1 2017 Transformer 原文与自回归目标
+- 原始 Transformer 论文（arXiv:1706.03762，Vaswani et al. 2017）的**核心机制**：自注意力 + FFN + 残差 + 层归一化的 block 结构；「注意力是一切的基础」思想。
+  - 来源：S-Transformer17 · A
+- 自回归「预测下一 token」目标（next-token cross-entropy）；decoder-only 范式从 2017 双向 encoder-decoder → 现代 LLM 的取舍演进。
+  - 来源：S-Llama2 · A
+- 现代 LLM 统一为 **decoder-only + RMSNorm + RoPE + 大词表**（Llama 系范式）。
   - 来源：S-Llama3 · A
 
-### S2 位置编码演进
-- 谱系：绝对/正弦 → 可学习相对偏置 → **RoPE 旋转**。RoPE 用旋转矩阵把位置编进 Q/K，注意力只依赖相对距离；三大特性：相对感知、保范、无查表。
+### S2 注意力机制原理（QKV 数学 → 多头）
+- **QKV 注意力**数学：`Attention(Q,K,V)=softmax(QKᵀ/√d_k)V`，缩放因子 `1/√d_k` 防 softmax 饱和；因果掩码保证自回归。
+  - 来源：S-Transformer17 · A；FlashAttention IO 印证 S-FA · A
+- **多头（Multi-Head）**：`n_h` 个并行头 `n_h × d_h = d_model`，多头 = 多子空间建模；谱系 MHA → MQA（全共享 KV，省内存伤质量）→ GQA（分组折中，Llama 主流）。
+  - 来源：S-GQA · A；MQA Shazeer 2019 · A
+- 参数与 FLOPs：单 token 注意力 ≈ `4·d_model² + 2·n_h·d_h·N²`（N 为序列长），与 FFN 的 O(d²) 相对照（M6 成本建模复用）。
+
+### S3 现代 LLM 的 Block 结构（FFN + 归一化 + 残差）
+- **FFN 是 block 大头**：两层线性 + 非线性（GELU/SiLU/SwiGLU），中间维度 ≈ 8/3·d_model，参数占比常 2/3 以上（M3 MoE 的改造目标）。
+  - 来源：S-Transformer17 · A；Llama SwiGLU · A
+- **残差连接**（residual）：每个 sublayer 输出加回输入（skip），深网可训练的关键；Pre-Norm/Post-Norm 位置差异。
+- **归一化**：标准 LayerNorm → **RMSNorm**（去 re-centering 只 re-scaling，省 7–64% 计算，Llama 起成标配）。
+  - 来源：S-RMSNorm（arXiv:1910.07467）· A
+
+### S4 位置编码演进
+- 谱系：绝对/正弦 → 可学习相对偏置 → **RoPE 旋转**（旋转矩阵把位置编进 Q/K，注意力只依赖相对距离；三大特性：相对感知、保范、无查表）。
   - 来源：S-RoPE · A
 - 长上下文外推：Position Interpolation → **NTK / YaRN**（频率分带 + 温度缩放）→ LongRoPE（逐维搜索 + 渐进训练）。
-  - 来源：S-YaRN · A；LongRoPE arXiv:2402.13753 · A（待补官方页）
+  - 来源：S-YaRN · A；LongRoPE arXiv:2402.13753 · A
 - **ALiBi**：注意力 logit 加线性距离惩罚，免重训外推（与 RoPE 互补的路线）。
   - 来源：S-ALiBi · A
 
-### S3 归一化与残差
-- Pre-Norm / Post-Norm；**RMSNorm** 替代标准 LayerNorm（Llama 起成标配）。
-  - 来源：S-RMSNorm（arXiv:1910.07467）· A；Llama config · A
-
-### S4 Tokenizer 与词表
+### S5 Tokenizer / 词表 + 范式与架构谱系地图
 - BPE / byte-level；词表规模权衡（Llama 2 的 32K → Llama 3 的 128K）；多语言词表与 OOV。
   - 来源：S-Llama3 · A（128K 词表）
+- 三范式定位：**encoder**（BERT 类，双向理解）/ **encoder-decoder**（T5 类，seq2seq）/ **decoder-only**（现代 LLM，自回归生成）——为何 LLM 选了 decoder-only。
+  - 来源：S-Transformer17 + S-Llama3 · A
+- **架构谱系地图（本模块收口）**：把「其他架构」定位成「解决 Transformer 某弱点」，指向后续模块——
+  - 序列建模 O(N²) 内存/延迟 → **SSM/线性注意力**（M4，Jamba/Mamba）
+  - FFN 参数大头 + 算力天花板 → **MoE**（M3，细粒度专家 + 共享专家）
+  - 单向不可编辑/不可逆 → **扩散 LLM**（M5，LLaDA）
+  - KV cache 存储瓶颈 → **MLA/GQA**（M7 DeepSeek / M2 注意力演进）
+  - 来源：综合 S-Transformer17 + 各模块 A 级来源（S-Mamba 2312.00752 / S-DSV3 / S-LLaDA / S-GQA / S-Jamba 等）
 
 ---
 
@@ -135,18 +158,30 @@
 
 ---
 
-## M6 横向对比与选型
+## M6 横向对比与选型（综合交付）
+
+> 本模块是 M2–M5 的**收口实操**：先给静态对比（矩阵/选型/成本建模），再上**可执行对比实验**，最后产一份**选型报告 capstone**。
 
 ### S1 能力/成本/延迟矩阵
-- 自回归 Transformer / MoE / SSM / 扩散 LLM 在「质量 / 训练成本 / 推理延迟 / 长上下文 / 可控性」维度的对比。
+- 自回归 Transformer / MoE / SSM / 扩散 LLM 在「质量 / 训练成本 / 推理延迟 / 长上下文 / 可控性」五维矩阵。
   - 来源：综合各模块 A 级来源；成本数据挂 DeepSeek（S-DSV3 2.788M H800 时）· A
 
 ### S2 选型判据
 - 何时用 MoE（大参数小激活）、何时用 SSM（长序列内存敏感）、何时用 Diffusion（需要双向/可编辑生成）。
+  - 来源：综合各模块 A 级
 
 ### S3 推理成本建模
 - 总参 vs 激活参（MoE 的「身份证号」）；激活参数量决定单 token FLOPs；长上下文 KV 成本随上下文线性增长。
   - 来源：S-DSV3（671B/37B 成本类比）· A
+
+### S4 可执行对比实验（同规模实测）
+- 固定 ~125M 规模，跑 **Transformer / MoE / SSM(Mamba) / 线性注意力** 四模型，实测：吞吐（token/s）· 峰值 KV/显存 · 同语料 loss/困惑度 · 长上下文（4K/16K）退化曲线；产出可复现脚本 + 数据表。
+  - 来源：架构来源复用 M2–M4 A 级；工具链 S-OPTIM 同族 HF 生态 · A；并行冒烟 S-DSV3 · A
+- 验收点：四模型在同算力预算下各维度排序与「S3 成本建模」的理论预测是否一致（可执行断言：吞吐/KV 内存/困惑度数值落区间）。
+
+### S5 选型报告 capstone
+- 给一个「真实需求」场景（预算 + 延迟 + 上下文 + 是否需编辑/双向），基于 S1–S4 数据写一份**架构选型决策报告**：推荐架构 + 量化依据 + 反例（选错的代价）；可执行验收断言（结论可由 S4 数据复现、关键数字挂 A 级来源）。
+  - 来源：S-DSV3/S-LoRA 同族 · A
 
 ---
 
@@ -286,6 +321,7 @@
 - GQA arXiv:2305.13245（Ainslie et al. 2023，EMNLP 2023）
 - ALiBi arXiv:2108.12409（Press et al. 2022）
 - expert-choice arXiv:2202.09368（Zhou et al. 2022）
+- **S-Transformer17 arXiv:1706.03762（Vaswani et al. 2017，"Attention Is All You Need"，原始 Transformer 官方论文）**——M1「架构原理深挖」S1/S2/S3 的核心 A 级来源
 
 ## 仍待补 A 级官方页（下批次检索升级）
 
