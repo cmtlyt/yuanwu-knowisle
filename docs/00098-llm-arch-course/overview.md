@@ -77,3 +77,15 @@
 - **M8–M11 课时体量规划**落在 `drafts/m8-m11-volume-plan.md`：每课时给暂定 id（`M<mod>-L<nn>`）、kind、难度、prereqs、concepts、quiz 数、正文/代码体量目标（对齐 `scripts/content-gate.mjs` 00055 阈值）、来源 S-*；合计 14 阶段 / 31 课时 / 4 capstone。
 - 检索批次已推进到 **B4**（含 arXiv 官方 abs 页逐一 WebFetch 核验，纠出 InstructGPT/GPT-3/Mamba/Zamba/Hedgehog/Jamba/xLSTM 等 7 处错号）；M4 混合与线性注意力谱系已升 A 级，「待补 A 级」清零。
 - 体量规划仍属**草稿**（不落地 `app/data`），定稿与全课连续编号（M1–M7 体量）后另开任务用 course-builder 管线生成。
+
+## 后续补充（2026-11-16 晚，用户指令「先补 M1–M7 体量规划」+ 4 项拍板）
+
+- **M1–M7 课时体量规划**落在 `drafts/m1-m7-volume-plan.md`：每课时给暂定 id（`M<mod>-L<nn>`）、kind、难度、prereqs、concepts、quiz 数、正文/代码体量目标、来源 S-*；合计 25 阶段 / 48 课时 / 5 capstone（M1/M2/M3/M4/M7 各 1，M5 展示型与 M6 分析型不配）。
+- 与 M8–M11 合并：全课 **≈80 课时 / 39 阶段 / 9 capstone / 0 overview**。
+- **用户 4 项拍板（2026-11-16）已回填两份计划**：
+  1. 先补 M1–M7 体量规划（此前只有 M8–M11）→ 已产 `m1-m7-volume-plan.md`。
+  2. **预训练可实操**（作废原「全量不实操」）→ M8 Stage 8.3 扩为 4 节，新增 `M8-L07` 从零 125M 单卡冒烟，M8 课时 9→**10**（M8–M11 合计 31→**32**）。
+  3. **不加每模块导览**：全课 overview 恒 **0** 节（不触发 8% 护栏）。
+  4. **capstone 按内容适配**：可构建/可验证产出的模块才配（M1/M2/M3/M4/M7 + M8/M9/M10/M11），展示型 M5 与分析型 M6 不配。
+- 正文生成方式定：course-builder 草稿管线 `gen-course.mjs` 批量生成后 `pnpm fmt`。
+- 仍属**草稿**（不落地 `app/data`）；定稿后按模块顺序重编全课连续 `L01…`（≈80）并统一 `prereqs`，另开任务实施。
