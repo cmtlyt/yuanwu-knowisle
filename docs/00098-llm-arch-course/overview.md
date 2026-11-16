@@ -70,3 +70,10 @@
 - 遵守「历史记录不可矫正」：不改任何旧 `docs/NNNNN-*/` 记录。
 - **不确定的创新名（如 mFformer）必须以检索结果为准**：若官方无此命名，在台账中如实标注「未找到官方来源，疑似误记」，不臆造。
 - 课程数据层（`app/data/`）**本次不动**；大纲定稿且用户批准后另开任务落地。
+
+## 后续补充（2026-11-16，用户指令「细化 M8–M11 体量」）
+
+- 大纲已从 7 模块扩到 **M1–M11**：新增 **M8 预训练 / M9 微调 / M10 后训练 / M11 打包部署**（均挂 S-* 来源 + 对应实操）。
+- **M8–M11 课时体量规划**落在 `drafts/m8-m11-volume-plan.md`：每课时给暂定 id（`M<mod>-L<nn>`）、kind、难度、prereqs、concepts、quiz 数、正文/代码体量目标（对齐 `scripts/content-gate.mjs` 00055 阈值）、来源 S-*；合计 14 阶段 / 31 课时 / 4 capstone。
+- 检索批次已推进到 **B4**（含 arXiv 官方 abs 页逐一 WebFetch 核验，纠出 InstructGPT/GPT-3/Mamba/Zamba/Hedgehog/Jamba/xLSTM 等 7 处错号）；M4 混合与线性注意力谱系已升 A 级，「待补 A 级」清零。
+- 体量规划仍属**草稿**（不落地 `app/data`），定稿与全课连续编号（M1–M7 体量）后另开任务用 course-builder 管线生成。
